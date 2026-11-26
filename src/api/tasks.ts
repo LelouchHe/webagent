@@ -99,6 +99,7 @@ export interface TaskSendResult {
 export interface TaskReport {
   sourceTaskId: string;
   targetTaskId: string;
+  targetIsLocal: boolean;
   status: Exclude<TaskUpdateStatus, "waiting">;
   body: string;
   sourceLabel: string;

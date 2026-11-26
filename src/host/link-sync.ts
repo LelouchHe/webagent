@@ -7,9 +7,13 @@ import {
 import {
   SyncFeedConsumer,
   SyncFeedProtocolError,
+  SyncOutbox,
   type SyncFeedConsumerOptions,
   type SyncFeedEntry,
   type SyncFeedTransport,
+  type SyncRequestResult,
+  type SyncRequestTransport,
+  type SyncTimer,
 } from "../shared/sync/index.ts";
 import type { LinkApplyEffects, OutboxRow, Store } from "../store.ts";
 
@@ -162,6 +166,9 @@ export interface LinkSyncHubOptions {
   store: Store;
   transport: SyncFeedTransport<unknown>;
   retryDelay: SyncFeedConsumerOptions["retryDelay"];
+  handshakeTimeoutMs?: number;
+  onConnecting?: () => void;
+  onConnected?: () => void;
   onFailure?: SyncFeedConsumerOptions["onFailure"];
   onProtocolError?: SyncFeedConsumerOptions["onProtocolError"];
   clock?: SyncFeedConsumerOptions["clock"];
@@ -171,16 +178,26 @@ export interface LinkSyncHubOptions {
 export class LinkSyncHubConsumer {
   private readonly options: LinkSyncHubOptions;
   private readonly consumer: SyncFeedConsumer<unknown>;
+  private appliedPos: number | null = null;
 
   constructor(options: LinkSyncHubOptions) {
     this.options = options;
     this.consumer = new SyncFeedConsumer({
       port: {
-        applied: () => options.store.getOutboxCursor("child", options.host),
+        applied: () => {
+          this.appliedPos ??= options.store.getOutboxCursor(
+            "child",
+            options.host,
+          );
+          return this.appliedPos;
+        },
         apply: (entry, expected) => this.apply(entry, expected),
       },
       transport: options.transport,
       retryDelay: options.retryDelay,
+      handshakeTimeoutMs: options.handshakeTimeoutMs,
+      onConnecting: options.onConnecting,
+      onConnected: options.onConnected,
       onFailure: options.onFailure,
       onProtocolError: options.onProtocolError,
       clock: options.clock,
@@ -213,6 +230,7 @@ export class LinkSyncHubConsumer {
         envelope,
       });
       if (result.committed) {
+        this.appliedPos = entry.pos;
         executeLinkEffects(
           this.options.store,
           result.effects,
@@ -226,6 +244,137 @@ export class LinkSyncHubConsumer {
       }
       throw error;
     }
+  }
+}
+
+export interface LinkSyncHubPusherOptions {
+  host: string;
+  store: Store;
+  transport: SyncRequestTransport<LinkEnvelope, unknown>;
+  timeoutMs?: number;
+  retryDelay: (attempt: number, result: SyncRequestResult<unknown>) => number;
+  timer?: SyncTimer;
+  onAuthFailure?: () => void;
+  onLinkFault?: (result: SyncRequestResult<unknown>) => void;
+}
+
+const DEFAULT_SYNC_TIMER: SyncTimer = {
+  setTimeout: (callback, ms) => {
+    const timer = setTimeout(callback, ms);
+    timer.unref();
+    return timer;
+  },
+  clearTimeout: (handle) => {
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
+  },
+};
+
+export class LinkSyncHubPusher {
+  private readonly options: LinkSyncHubPusherOptions;
+  private readonly outbox: SyncOutbox<LinkEnvelope, unknown>;
+
+  constructor(options: LinkSyncHubPusherOptions) {
+    this.options = options;
+    this.outbox = new SyncOutbox({
+      port: {
+        next: () => this.next(),
+        finish: (entry, result) => this.finish(entry, result),
+      },
+      transport: options.transport,
+      timer: options.timer ?? DEFAULT_SYNC_TIMER,
+      timeoutMs: options.timeoutMs ?? 8_000,
+      retryDelay: options.retryDelay,
+    });
+  }
+
+  start(): void {
+    this.outbox.start();
+  }
+
+  stop(): void {
+    this.outbox.stop();
+  }
+
+  wake(): void {
+    this.outbox.wake();
+  }
+
+  handedOffPosition(position: number): void {
+    this.outbox.handedOffPosition(position);
+  }
+
+  private next() {
+    const pushed = this.options.store.getOutboxPushCursor(
+      "child",
+      this.options.host,
+    );
+    const rows = this.options.store.listOutbox(
+      "child",
+      this.options.host,
+      pushed,
+      1,
+    );
+    if (rows.length === 0) return undefined;
+    const row = rows[0];
+    return {
+      id: row.entry_id,
+      position: row.pos,
+      request: parseLinkEnvelope({
+        id: row.entry_id,
+        category: row.category,
+        data: JSON.parse(row.data_json) as unknown,
+      }),
+    };
+  }
+
+  private finish(
+    entry: { id: string; position: number; request: LinkEnvelope },
+    result: SyncRequestResult<unknown>,
+  ): boolean {
+    const pushed = this.options.store.getOutboxPushCursor(
+      "child",
+      this.options.host,
+    );
+    if (pushed >= entry.position) return true;
+    if (result.kind === "success") {
+      if (result.status !== HTTP_STATUS.ACCEPTED) return false;
+      this.options.store.advanceOutboxPushCursor(
+        "child",
+        this.options.host,
+        entry.id,
+      );
+      return true;
+    }
+    if (result.kind === "rejected") {
+      if (
+        result.status === HTTP_STATUS.UNAUTHORIZED ||
+        result.status === HTTP_STATUS.FORBIDDEN
+      ) {
+        this.options.onAuthFailure?.();
+        return false;
+      }
+      if (entry.request.category === "receipt") {
+        this.options.onLinkFault?.(result);
+        return false;
+      }
+      const reason =
+        result.body &&
+        typeof result.body === "object" &&
+        typeof (result.body as { error?: unknown }).error === "string"
+          ? (result.body as { error: string }).error
+          : `http_${result.status}`;
+      const effects = this.options.store.rejectOutboxHead(
+        "child",
+        this.options.host,
+        entry.id,
+        reason,
+      );
+      this.options.store.broadcastDeliveryStatus(effects.deliveryStatusIds, {
+        suppressFailureNotice: true,
+      });
+      return true;
+    }
+    return false;
   }
 }
 

@@ -894,6 +894,9 @@ async function restartInstance(
   instance.abortSse.abort();
   await stopSpecServer(instance.server);
   const stopped = whileStopped ? await whileStopped() : null;
+  instance.env.WEBAGENT_REGRESSION_UUID_EPOCH = String(
+    Number(instance.env.WEBAGENT_REGRESSION_UUID_EPOCH ?? 0) + 1,
+  );
   instance.server = await startSpecServer(instance.configPath, {
     nodeArgs: instance.nodeArgs,
     env: instance.env,

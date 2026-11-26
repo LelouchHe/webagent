@@ -111,13 +111,8 @@ export function createLocalTaskOps(deps: {
   tasks: TaskManager;
   cancelTimeoutMs?: number;
   broadcastTaskCancelNotice?: (event: TaskCancelNotice) => void;
-  broadcastTaskUpdate?: (event: {
-    taskId: string;
-    seq: number;
-    data: Record<string, unknown>;
-  }) => void;
 }): TaskOps {
-  const { store, tasks, broadcastTaskCancelNotice, broadcastTaskUpdate } = deps;
+  const { store, tasks, broadcastTaskCancelNotice } = deps;
 
   /**
    * The single authority check for one MCP operation. It lives here because
@@ -582,29 +577,26 @@ export function createLocalTaskOps(deps: {
       // `waiting` only records the status. `done` and `blocked` settle the
       // target's open account and are delivered to its source, or fall back to
       // the current parent when no account is open.
-      const { silenceWatchMs, event } = tasks.settleAgentUpdate(
+      const { silenceWatchMs } = tasks.settleAgentUpdate(
         sourceTaskId,
         status,
         body,
         ({ targetTaskId, targetIsLocal }) => {
-          if (!targetIsLocal || status === "waiting") return;
+          if (status === "waiting") return;
           recordReport?.({
             sourceTaskId,
             targetTaskId,
+            targetIsLocal,
             status,
             body,
             sourceLabel:
               store.getTask(sourceTaskId)?.title ?? sourceTaskId.slice(0, 8),
-            targetLabel:
-              store.getTask(targetTaskId)?.title ?? targetTaskId.slice(0, 8),
+            targetLabel: targetIsLocal
+              ? (store.getTask(targetTaskId)?.title ?? targetTaskId.slice(0, 8))
+              : targetTaskId.slice(0, 8),
           });
         },
       );
-      broadcastTaskUpdate?.({
-        taskId: sourceTaskId,
-        seq: event.seq,
-        data: JSON.parse(event.data) as Record<string, unknown>,
-      });
       if (silenceWatchMs === undefined) return {};
       return {
         note: `No visible wake source; the requester is notified after ${formatSilence(silenceWatchMs)} without agent activity.`,

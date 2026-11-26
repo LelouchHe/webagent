@@ -108,7 +108,7 @@ describe("TaskManager collaboration delivery drain", () => {
     assert.equal(store.getTask("target")?.workflow_status, "running");
   });
 
-  it("resolves a remote child's live mirror title when its report is drained", async () => {
+  it("uses the persisted envelope source label when a remote report is drained", async () => {
     store.enqueueReportDelivery({
       id: "remote-report",
       deliveryId: "remote-report-delivery",
@@ -116,10 +116,8 @@ describe("TaskManager collaboration delivery drain", () => {
       sourceTaskId: "remote-child",
       targetTaskId: "target",
       body: "Task status: done\ncomplete",
+      sourceLabel: 'Child "quoted"',
     });
-    tasks.setRemoteCollaborationTitle((taskId) =>
-      taskId === "remote-child" ? 'Child "quoted"' : undefined,
-    );
     const prompts: string[] = [];
     await tasks.drainCollaborationDeliveries("target", {
       ...mockBridgeStubs(),

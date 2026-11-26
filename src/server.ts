@@ -13,13 +13,18 @@ import { ExecutionAuthority } from "./execution-authority.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
 import { createMcpEndpoint } from "./mcp/server.ts";
 import { createLocalTaskOps } from "./host/local/adapter.ts";
+import { createRoutedTaskOps, createTaskHost } from "./host/tasks.ts";
 import {
-  createRemoteReportEnqueuer,
-  createRoutedTaskOps,
-  createTaskHost,
-} from "./host/tasks.ts";
-import { createRemoteReportHandler } from "./host/collaboration.ts";
-import { createHostCollaborationCommand } from "./host/local/collaboration.ts";
+  LinkSyncHubConsumer,
+  LinkSyncHubPusher,
+  LinkSyncOwner,
+} from "./host/link-sync.ts";
+import { HostConnection } from "./host/remote/connection.ts";
+import { retryDelay } from "./host/remote/state.ts";
+import {
+  SSE_HEARTBEAT_INTERVAL_MS,
+  STREAM_STALL_TIMEOUT_MS,
+} from "./shared/stream-supervisor.ts";
 import { createTaskOpsCore } from "./task-ops.ts";
 import { buildTaskCreatedBroadcast } from "./task-created-message.ts";
 import {
@@ -188,10 +193,15 @@ sseManager.startHeartbeat();
 
 const authStore = new AuthStore(pathJoin(config.data_dir, "auth.json"));
 const ticketStore = new TicketStore();
-const receiveRemoteReport = createRemoteReportHandler({
-  store,
-  enqueueReport: createRemoteReportEnqueuer({ store, tasks }),
+const linkSyncOwner = new LinkSyncOwner(store, {
+  drainTask: (taskId) => {
+    void tasks.drainCollaborationDeliveries(taskId);
+  },
 });
+const linkHeartbeat = setInterval(() => {
+  linkSyncOwner.heartbeat();
+}, SSE_HEARTBEAT_INTERVAL_MS);
+linkHeartbeat.unref();
 const hostRegistry = new HostRegistry(config.hosts, {
   listLinks: () =>
     store.listRemoteChildren().map((link) => ({
@@ -199,11 +209,75 @@ const hostRegistry = new HostRegistry(config.hosts, {
       remoteTaskId: link.remote_task_id,
       host: link.remote_host,
     })),
-  onRemoteEvent: receiveRemoteReport,
+  createLinkWorker: ({ host, connection, onState }) => {
+    const pusher = new LinkSyncHubPusher({
+      host,
+      store,
+      transport: connection.pushTransport(),
+      retryDelay: (attempt) => retryDelay(attempt),
+      onAuthFailure: () => {
+        onState("unreachable", "unauthorized");
+      },
+      onLinkFault: () => {
+        onState("unreachable", "invalid_response");
+      },
+    });
+    const consumer = new LinkSyncHubConsumer({
+      host,
+      store,
+      transport: connection.feedTransport(),
+      retryDelay: (attempt) => retryDelay(attempt),
+      handshakeTimeoutMs: STREAM_STALL_TIMEOUT_MS,
+      clock: { now: () => performance.now() },
+      onConnecting: () => {
+        onState("connecting");
+      },
+      onConnected: () => {
+        onState("connected");
+        pusher.wake();
+      },
+      onFailure: ({ kind, error }) => {
+        onState(
+          "unreachable",
+          kind === "stalled" ? "network" : HostConnection.failureReason(error),
+        );
+      },
+      onProtocolError: () => {
+        onState("unreachable", "invalid_response");
+      },
+      effects: {
+        drainTask: (taskId) => {
+          void tasks.drainCollaborationDeliveries(taskId);
+        },
+        pushed: (position) => {
+          pusher.handedOffPosition(position);
+        },
+      },
+    });
+    return {
+      start: () => {
+        consumer.start();
+        pusher.start();
+      },
+      stop: () => {
+        consumer.stop();
+        pusher.stop();
+      },
+      wakeOutbox: () => {
+        pusher.wake();
+      },
+    };
+  },
 });
-tasks.setRemoteCollaborationTitle((taskId) =>
-  hostRegistry.remoteTitleForTaskId(taskId),
-);
+store.onOutboxCommitted((entries) => {
+  for (const entry of entries) {
+    if (entry.remote_role === "parent") {
+      linkSyncOwner.publish(entry.entry_id);
+    } else {
+      hostRegistry.wakeOutbox(entry.remote_host);
+    }
+  }
+});
 // In-memory image signing secret; regenerated on every restart so previously
 // leaked URLs become invalid the moment the server is bounced.
 const attachmentSecret = randomBytes(32);
@@ -214,7 +288,6 @@ sseManager.setRevocationCheck(
 );
 sseManager.setAttachmentSecret(attachmentSecret);
 sseManager.setLabelMapProvider((taskId) => tasks.getLabelMap(taskId));
-sseManager.setHostEventParent((taskId) => store.getExternalParentId(taskId));
 
 // Broadcast runtime state patches to all SSE clients interested in the task.
 tasks.state.onPatch((event) => {
@@ -225,9 +298,6 @@ const broadcastCollaboration = (input: CollaborationBroadcastRequest): void => {
   sseManager.broadcast(buildCollaborationBroadcast(input));
 };
 tasks.setCollaborationBroadcast(broadcastCollaboration);
-tasks.setCollaborationPromptBroadcast((event, seq) => {
-  sseManager.broadcastHost(event, seq);
-});
 tasks.setDeliveryStatusBroadcast((event) => {
   sseManager.broadcast(event);
 });
@@ -249,15 +319,6 @@ const localTaskOps = createLocalTaskOps({
     // One record, one frame: the transcript row is the whole cancellation and
     // rides the generic system-message path.
     sseManager.broadcast(event);
-  },
-  broadcastTaskUpdate: ({ taskId, seq, data }) => {
-    sseManager.broadcastHost(
-      { type: "task_update", taskId, ...data } as Extract<
-        AgentEvent,
-        { type: "task_update" }
-      >,
-      seq,
-    );
   },
 });
 const taskOps = createTaskOpsCore({
@@ -301,7 +362,7 @@ const requestHandler = createRequestHandler({
   store,
   tasks,
   taskOps: routedTaskOps,
-  hostCollaboration: createHostCollaborationCommand({ store, tasks }),
+  linkSyncOwner,
   sseManager,
   clientRegistry,
   publicDir: PUBLIC_DIR,
@@ -377,6 +438,7 @@ function createAgentTransport(agentId: string): AgentBridge {
 
 async function shutdown() {
   console.log("\n[server] shutting down...");
+  clearInterval(linkHeartbeat);
   hostRegistry.stopAll();
   sseManager.stopHeartbeat();
   messageCleanup.stop();

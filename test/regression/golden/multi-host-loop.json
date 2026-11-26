@@ -195,7 +195,7 @@
                 }
               ]
             ],
-            "reads": 20
+            "reads": 7
           }
         },
         {
@@ -445,7 +445,7 @@
                 }
               ]
             ],
-            "reads": 25
+            "reads": 24
           }
         }
       ]
@@ -473,7 +473,7 @@
           "mock": [],
           "sql": {
             "writes": [],
-            "reads": 8
+            "reads": 12
           }
         },
         {
@@ -789,7 +789,7 @@
                   "type": "system_message",
                   "taskId": "00000000-0000-4000-8000-000000000002",
                   "kind": "collaboration",
-                  "messageId": "00000000-0000-4000-8000-000000000003",
+                  "messageId": "00000000-0000-4000-8001-000000000008",
                   "sourceTaskId": "00000000-0000-4000-8001-000000000001",
                   "sourceLabel": "root",
                   "targetTaskId": "00000000-0000-4000-8000-000000000002",
@@ -816,7 +816,7 @@
                     "runtime": {
                       "pendingPermissions": [
                         {
-                          "requestId": "00000000-0000-4000-8000-000000000007",
+                          "requestId": "00000000-0000-4000-8000-000000000006",
                           "toolName": "",
                           "title": "Run delegated remote work",
                           "options": [
@@ -846,7 +846,7 @@
                 },
                 {
                   "type": "permission_request",
-                  "requestId": "00000000-0000-4000-8000-000000000007",
+                  "requestId": "00000000-0000-4000-8000-000000000006",
                   "taskId": "00000000-0000-4000-8000-000000000002",
                   "title": "Run delegated remote work",
                   "toolCallId": "tool-1",
@@ -870,7 +870,7 @@
                 {
                   "type": "permission_response",
                   "taskId": "00000000-0000-4000-8000-000000000002",
-                  "requestId": "00000000-0000-4000-8000-000000000007",
+                  "requestId": "00000000-0000-4000-8000-000000000006",
                   "optionName": "allow",
                   "denied": false
                 },
@@ -935,7 +935,7 @@
                 {
                   "type": "collaboration_delivery",
                   "taskId": "00000000-0000-4000-8001-000000000001",
-                  "messageId": "00000000-0000-4000-8000-000000000003",
+                  "messageId": "00000000-0000-4000-8001-000000000008",
                   "status": "delivered",
                   "deliveredAt": "2026-09-13T21:00:00.000Z"
                 }
@@ -1058,8 +1058,8 @@
                     "00000000-0000-4000-8000-000000000002",
                     2,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000003\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"dispatch remote wait\"}",
-                    "msg:00000000-0000-4000-8000-000000000003",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000008\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"dispatch remote wait\"}",
+                    "msg:00000000-0000-4000-8001-000000000008",
                     1789333200000
                   ]
                 }
@@ -1073,7 +1073,7 @@
                     "00000000-0000-4000-8000-000000000002",
                     3,
                     "collaboration_prompt",
-                    "{\"messageIds\":[\"00000000-0000-4000-8000-000000000003\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8001-000000000001):\\n---8<---\\ndispatch remote wait\\n---8<---\",\"truncated\":false,\"rawSize\":98}",
+                    "{\"messageIds\":[\"00000000-0000-4000-8001-000000000008\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8001-000000000001):\\n---8<---\\ndispatch remote wait\\n---8<---\",\"truncated\":false,\"rawSize\":98}",
                     "system",
                     1789333200000
                   ]
@@ -1103,7 +1103,7 @@
                     "00000000-0000-4000-8000-000000000002",
                     5,
                     "permission_request",
-                    "{\"requestId\":\"00000000-0000-4000-8000-000000000007\",\"title\":\"Run delegated remote work\",\"toolCallId\":\"tool-1\",\"options\":[{\"optionId\":\"allow\",\"name\":\"Allow\",\"kind\":\"allow_once\"},{\"optionId\":\"deny\",\"name\":\"Deny\",\"kind\":\"reject_once\"}]}",
+                    "{\"requestId\":\"00000000-0000-4000-8000-000000000006\",\"title\":\"Run delegated remote work\",\"toolCallId\":\"tool-1\",\"options\":[{\"optionId\":\"allow\",\"name\":\"Allow\",\"kind\":\"allow_once\"},{\"optionId\":\"deny\",\"name\":\"Deny\",\"kind\":\"reject_once\"}]}",
                     "agent",
                     1789333200000
                   ]
@@ -1118,7 +1118,7 @@
                     "00000000-0000-4000-8000-000000000002",
                     6,
                     "permission_response",
-                    "{\"requestId\":\"00000000-0000-4000-8000-000000000007\",\"optionName\":\"allow\",\"denied\":false}",
+                    "{\"requestId\":\"00000000-0000-4000-8000-000000000006\",\"optionName\":\"allow\",\"denied\":false}",
                     "system",
                     1789333200000
                   ]
@@ -1160,7 +1160,7 @@
                   "method": "run",
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8000-000000000003",
+                    "00000000-0000-4000-8001-000000000008",
                     "00000000-0000-4000-8001-000000000001",
                     "00000000-0000-4000-8000-000000000002",
                     "agent",
@@ -1173,7 +1173,7 @@
                   "method": "run",
                   "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8000-000000000003",
+                    "00000000-0000-4000-8001-000000000008",
                     "00000000-0000-4000-8000-000000000002",
                     "target",
                     1789333200000
@@ -1184,33 +1184,20 @@
                   "method": "run",
                   "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8000-000000000004",
-                    "00000000-0000-4000-8000-000000000003",
+                    "00000000-0000-4000-8001-000000000008",
+                    "00000000-0000-4000-8001-000000000008",
                     "00000000-0000-4000-8000-000000000002",
-                    "00000000-0000-4000-8000-000000000003:00000000-0000-4000-8000-000000000002",
+                    "00000000-0000-4000-8001-000000000008:00000000-0000-4000-8000-000000000002",
                     "queued",
                     1789333200000,
                     null,
                     null,
                     null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT OR IGNORE INTO client_ops (task_id, client_op_id, result_json, created_at) VALUES (?, ?, ?, ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-000000000001",
+                    "parent",
+                    "hub-connection",
                     "00000000-0000-4000-8001-000000000008",
-                    "{\"status\":202,\"body\":{\"messageId\":\"00000000-0000-4000-8000-000000000003\",\"deliveryId\":\"00000000-0000-4000-8000-000000000004\",\"status\":\"queued\",\"clientOpId\":\"00000000-0000-4000-8001-000000000008\"}}",
-                    1789333200000
+                    "root",
+                    "message"
                   ]
                 }
               ],
@@ -1221,8 +1208,23 @@
                   "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
                   "args": [
                     1789333200000,
-                    "00000000-0000-4000-8000-000000000004",
+                    "00000000-0000-4000-8001-000000000008",
                     "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000005",
+                    "parent",
+                    "hub-connection",
+                    0,
+                    "receipt",
+                    "{\"originalEntryId\":\"00000000-0000-4000-8001-000000000008\",\"status\":\"delivered\"}",
+                    null,
+                    1789333200000
                   ]
                 }
               ],
@@ -1305,7 +1307,7 @@
                 }
               ]
             ],
-            "reads": 84
+            "reads": 73
           }
         },
         {
@@ -1339,7 +1341,7 @@
                   "type": "system_message",
                   "taskId": "00000000-0000-4000-8001-000000000001",
                   "kind": "collaboration",
-                  "messageId": "00000000-0000-4000-8000-000000000003",
+                  "messageId": "00000000-0000-4000-8001-000000000008",
                   "sourceTaskId": "00000000-0000-4000-8001-000000000001",
                   "sourceLabel": "root",
                   "targetTaskId": "00000000-0000-4000-8000-000000000002",
@@ -1399,7 +1401,7 @@
                 {
                   "type": "collaboration_delivery",
                   "taskId": "00000000-0000-4000-8001-000000000001",
-                  "messageId": "00000000-0000-4000-8000-000000000003",
+                  "messageId": "00000000-0000-4000-8001-000000000008",
                   "status": "delivered",
                   "deliveredAt": "2026-09-13T21:00:00.000Z"
                 }
@@ -1476,6 +1478,14 @@
               [
                 {
                   "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["child", "owner", 1]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
@@ -1522,11 +1532,12 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO messages\n             (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n             VALUES (?, ?, ?, 'agent', ?, ?)",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8000-000000000003",
+                    "00000000-0000-4000-8001-000000000008",
                     "00000000-0000-4000-8001-000000000001",
                     "00000000-0000-4000-8000-000000000002",
+                    "agent",
                     "dispatch remote wait",
                     1789333200000
                   ]
@@ -1534,23 +1545,33 @@
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO deliveries\n             (id, message_id, recipient_task_id, idempotency_key, status, queued_at)\n             VALUES (?, ?, ?, ?, 'queued', ?)",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8001-000000000009",
-                    "00000000-0000-4000-8000-000000000003",
-                    "00000000-0000-4000-8000-000000000002",
-                    "00000000-0000-4000-8000-000000000003:00000000-0000-4000-8000-000000000002",
+                    "00000000-0000-4000-8001-000000000008",
+                    "00000000-0000-4000-8001-000000000001",
+                    "source",
                     1789333200000
                   ]
                 },
                 {
                   "kind": "write",
                   "method": "run",
-                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
+                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8000-000000000003",
-                    "00000000-0000-4000-8001-000000000001",
-                    1789333200000
+                    "00000000-0000-4000-8001-000000000009",
+                    "00000000-0000-4000-8001-000000000008",
+                    "00000000-0000-4000-8000-000000000002",
+                    "00000000-0000-4000-8001-000000000008:00000000-0000-4000-8000-000000000002",
+                    "queued",
+                    1789333200000,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
                   ]
                 },
                 {
@@ -1561,8 +1582,23 @@
                     "00000000-0000-4000-8001-000000000001",
                     9,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000003\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"dispatch remote wait\",\"deliveryStatus\":\"queued\"}",
-                    "msg:00000000-0000-4000-8000-000000000003",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000008\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"dispatch remote wait\",\"deliveryStatus\":\"queued\"}",
+                    "msg:00000000-0000-4000-8001-000000000008",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000008",
+                    "child",
+                    "owner",
+                    0,
+                    "message",
+                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"sourceLabel\":\"root\",\"body\":\"dispatch remote wait\"}",
+                    "00000000-0000-4000-8001-000000000009",
                     1789333200000
                   ]
                 }
@@ -1585,6 +1621,18 @@
                     "00000000-0000-4000-8001-000000000009",
                     "queued"
                   ]
+                },
+                {
+                  "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["child", "owner", 1]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox_cursors (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, ?, 0)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET applied_pos = excluded.applied_pos",
+                  "args": ["child", "owner", 1]
                 }
               ],
               [
@@ -1599,7 +1647,7 @@
                 }
               ]
             ],
-            "reads": 46
+            "reads": 45
           }
         }
       ]
@@ -1836,7 +1884,7 @@
         "queuedReports": [
           {
             "status": "queued",
-            "idempotency_key": "remote-report:owner:00000000-0000-4000-8000-000000000002:12"
+            "source_category": "report"
           }
         ],
         "hubRestart": {
@@ -1855,7 +1903,7 @@
           {
             "source_task_id": "00000000-0000-4000-8000-000000000002",
             "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
-            "idempotency_key": "remote-report:owner:00000000-0000-4000-8000-000000000002:12",
+            "source_category": "report",
             "status": "delivered"
           }
         ]
@@ -1957,7 +2005,7 @@
                     "00000000-0000-4000-8000-000000000002",
                     11,
                     "user_message",
-                    "{\"text\":\"finish after owner restart\",\"clientOpId\":\"00000000-0000-4000-8000-000000000003\"}",
+                    "{\"text\":\"finish after owner restart\",\"clientOpId\":\"00000000-0000-4000-8000-0000000003eb\"}",
                     "user",
                     1789333200000
                   ]
@@ -2005,6 +2053,24 @@
                 {
                   "kind": "write",
                   "method": "run",
+                  "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8000-0000000003ed",
+                    "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["parent", "hub-connection", 2]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
                   "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
                   "args": [
                     1789333200000,
@@ -2045,10 +2111,70 @@
                     "agent",
                     1789333200000
                   ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-0000000003ec",
+                    "00000000-0000-4000-8000-000000000002",
+                    "00000000-0000-4000-8001-000000000001",
+                    "agent",
+                    "Task status: done\nRemote work completed after restart.",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-0000000003ec",
+                    "00000000-0000-4000-8000-000000000002",
+                    "source",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-0000000003ed",
+                    "00000000-0000-4000-8000-0000000003ec",
+                    "00000000-0000-4000-8001-000000000001",
+                    "00000000-0000-4000-8000-0000000003ec:00000000-0000-4000-8001-000000000001",
+                    "queued",
+                    1789333200000,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-0000000003ec",
+                    "parent",
+                    "hub-connection",
+                    1,
+                    "report",
+                    "{\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"Remote loop child\",\"body\":\"Task status: done\\nRemote work completed after restart.\"}",
+                    "00000000-0000-4000-8000-0000000003ed",
+                    1789333200000
+                  ]
                 }
               ]
             ],
-            "reads": 118
+            "reads": 100
           }
         },
         {
@@ -2057,6 +2183,14 @@
           "mock": [],
           "sql": {
             "writes": [
+              [
+                {
+                  "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["child", "owner", 2]
+                }
+              ],
               [
                 {
                   "kind": "write",
@@ -2104,8 +2238,8 @@
                     "00000000-0000-4000-8001-000000000001",
                     16,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000000b\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"sourceLabel\":\"Remote loop child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Remote loop child\\\" sent @root\",\"body\":\"Task status: done\\nRemote work completed after restart.\"}",
-                    "msg:00000000-0000-4000-8001-00000000000b",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-0000000003ec\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"sourceLabel\":\"Remote loop child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Remote loop child\\\" sent @root\",\"body\":\"Task status: done\\nRemote work completed after restart.\"}",
+                    "msg:00000000-0000-4000-8000-0000000003ec",
                     1789333200000
                   ]
                 }
@@ -2119,7 +2253,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     17,
                     "collaboration_prompt",
-                    "{\"messageIds\":[\"00000000-0000-4000-8001-00000000000b\"],\"text\":\"From \\\"Remote loop child\\\" (task id 00000000-0000-4000-8000-000000000002):\\n---8<---\\nTask status: done\\nRemote work completed after restart.\\n---8<---\",\"truncated\":false,\"rawSize\":145}",
+                    "{\"messageIds\":[\"00000000-0000-4000-8000-0000000003ec\"],\"text\":\"From \\\"Remote loop child\\\" (task id 00000000-0000-4000-8000-000000000002):\\n---8<---\\nTask status: done\\nRemote work completed after restart.\\n---8<---\",\"truncated\":false,\"rawSize\":145}",
                     "system",
                     1789333200000
                   ]
@@ -2146,7 +2280,7 @@
                   "method": "run",
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8001-00000000000b",
+                    "00000000-0000-4000-8000-0000000003ec",
                     "00000000-0000-4000-8000-000000000002",
                     "00000000-0000-4000-8001-000000000001",
                     "agent",
@@ -2159,7 +2293,7 @@
                   "method": "run",
                   "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8001-00000000000b",
+                    "00000000-0000-4000-8000-0000000003ec",
                     "00000000-0000-4000-8001-000000000001",
                     "target",
                     1789333200000
@@ -2170,21 +2304,27 @@
                   "method": "run",
                   "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8001-00000000000c",
-                    "00000000-0000-4000-8001-00000000000b",
+                    "00000000-0000-4000-8000-0000000003ec",
+                    "00000000-0000-4000-8000-0000000003ec",
                     "00000000-0000-4000-8001-000000000001",
-                    "remote-report:owner:00000000-0000-4000-8000-000000000002:12",
+                    "00000000-0000-4000-8000-0000000003ec:00000000-0000-4000-8001-000000000001",
                     "queued",
                     1789333200000,
                     null,
                     null,
                     null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null
+                    "child",
+                    "owner",
+                    "00000000-0000-4000-8000-0000000003ec",
+                    "Remote loop child",
+                    "report"
                   ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox_cursors (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, ?, 0)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET applied_pos = excluded.applied_pos",
+                  "args": ["child", "owner", 2]
                 }
               ],
               [
@@ -2194,8 +2334,23 @@
                   "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
                   "args": [
                     1789333200000,
-                    "00000000-0000-4000-8001-00000000000c",
+                    "00000000-0000-4000-8000-0000000003ec",
                     "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-00000000000c",
+                    "child",
+                    "owner",
+                    1,
+                    "receipt",
+                    "{\"originalEntryId\":\"00000000-0000-4000-8000-0000000003ec\",\"status\":\"delivered\"}",
+                    null,
+                    1789333200000
                   ]
                 }
               ],
@@ -2230,7 +2385,7 @@
                 }
               ]
             ],
-            "reads": 125
+            "reads": 96
           }
         }
       ]
@@ -2242,7 +2397,7 @@
           {
             "source_task_id": "00000000-0000-4000-8000-000000000002",
             "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
-            "idempotency_key": "remote-report:owner:00000000-0000-4000-8000-000000000002:12"
+            "source_category": "report"
           }
         ],
         "links": [
@@ -2261,7 +2416,7 @@
           "mock": [],
           "sql": {
             "writes": [],
-            "reads": 13
+            "reads": 1
           }
         },
         {
@@ -2293,7 +2448,7 @@
                 }
               ]
             ],
-            "reads": 64
+            "reads": 50
           }
         }
       ]
@@ -2301,27 +2456,21 @@
     {
       "name": "replayed-dispatch-keeps-owner-message-id",
       "response": {
-        "first": {
+        "replayed": {
           "status": 202,
           "body": {
-            "messageId": "00000000-0000-4000-8000-000000000004",
-            "deliveryId": "00000000-0000-4000-8000-000000000005",
-            "status": "queued",
-            "clientOpId": "replay-dispatch-op"
+            "accepted": true
           }
         },
-        "second": {
-          "status": 202,
+        "conflict": {
+          "status": 409,
           "body": {
-            "messageId": "00000000-0000-4000-8000-000000000004",
-            "deliveryId": "00000000-0000-4000-8000-000000000005",
-            "status": "queued",
-            "clientOpId": "replay-dispatch-op"
+            "error": "link_op_conflict"
           }
         },
         "messages": [
           {
-            "id": "00000000-0000-4000-8000-000000000004",
+            "id": "00000000-0000-4000-8001-0000000007d4",
             "count": 1
           }
         ]
@@ -2406,8 +2555,8 @@
                     "00000000-0000-4000-8000-000000000002",
                     15,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000004\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"replayed dispatch\"}",
-                    "msg:00000000-0000-4000-8000-000000000004",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-0000000007d4\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"replayed dispatch\"}",
+                    "msg:00000000-0000-4000-8001-0000000007d4",
                     1789333200000
                   ]
                 }
@@ -2421,7 +2570,7 @@
                     "00000000-0000-4000-8000-000000000002",
                     16,
                     "collaboration_prompt",
-                    "{\"messageIds\":[\"00000000-0000-4000-8000-000000000004\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8001-000000000001):\\n---8<---\\nreplayed dispatch\\n---8<---\",\"truncated\":false,\"rawSize\":95}",
+                    "{\"messageIds\":[\"00000000-0000-4000-8001-0000000007d4\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8001-000000000001):\\n---8<---\\nreplayed dispatch\\n---8<---\",\"truncated\":false,\"rawSize\":95}",
                     "system",
                     1789333200000
                   ]
@@ -2463,7 +2612,7 @@
                   "method": "run",
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8000-000000000004",
+                    "00000000-0000-4000-8001-0000000007d4",
                     "00000000-0000-4000-8001-000000000001",
                     "00000000-0000-4000-8000-000000000002",
                     "agent",
@@ -2476,7 +2625,7 @@
                   "method": "run",
                   "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8000-000000000004",
+                    "00000000-0000-4000-8001-0000000007d4",
                     "00000000-0000-4000-8000-000000000002",
                     "target",
                     1789333200000
@@ -2487,33 +2636,20 @@
                   "method": "run",
                   "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8000-000000000005",
-                    "00000000-0000-4000-8000-000000000004",
+                    "00000000-0000-4000-8001-0000000007d4",
+                    "00000000-0000-4000-8001-0000000007d4",
                     "00000000-0000-4000-8000-000000000002",
-                    "00000000-0000-4000-8000-000000000004:00000000-0000-4000-8000-000000000002",
+                    "00000000-0000-4000-8001-0000000007d4:00000000-0000-4000-8000-000000000002",
                     "queued",
                     1789333200000,
                     null,
                     null,
                     null,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT OR IGNORE INTO client_ops (task_id, client_op_id, result_json, created_at) VALUES (?, ?, ?, ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-000000000001",
-                    "replay-dispatch-op",
-                    "{\"status\":202,\"body\":{\"messageId\":\"00000000-0000-4000-8000-000000000004\",\"deliveryId\":\"00000000-0000-4000-8000-000000000005\",\"status\":\"queued\",\"clientOpId\":\"replay-dispatch-op\"}}",
-                    1789333200000
+                    "parent",
+                    "hub-connection",
+                    "00000000-0000-4000-8001-0000000007d4",
+                    "root",
+                    "message"
                   ]
                 }
               ],
@@ -2524,8 +2660,41 @@
                   "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
                   "args": [
                     1789333200000,
-                    "00000000-0000-4000-8000-000000000005",
+                    "00000000-0000-4000-8000-0000000003f0",
                     "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["parent", "hub-connection", 4]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8001-0000000007d4",
+                    "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-0000000003ee",
+                    "parent",
+                    "hub-connection",
+                    2,
+                    "receipt",
+                    "{\"originalEntryId\":\"00000000-0000-4000-8001-0000000007d4\",\"status\":\"delivered\"}",
+                    null,
+                    1789333200000
                   ]
                 }
               ],
@@ -2548,6 +2717,66 @@
                     "agent",
                     1789333200000
                   ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-0000000003ef",
+                    "00000000-0000-4000-8000-000000000002",
+                    "00000000-0000-4000-8001-000000000001",
+                    "agent",
+                    "Task status: done\nReplay deduplicated.",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-0000000003ef",
+                    "00000000-0000-4000-8000-000000000002",
+                    "source",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-0000000003f0",
+                    "00000000-0000-4000-8000-0000000003ef",
+                    "00000000-0000-4000-8001-000000000001",
+                    "00000000-0000-4000-8000-0000000003ef:00000000-0000-4000-8001-000000000001",
+                    "queued",
+                    1789333200000,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-0000000003ef",
+                    "parent",
+                    "hub-connection",
+                    3,
+                    "report",
+                    "{\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"Remote loop child\",\"body\":\"Task status: done\\nReplay deduplicated.\"}",
+                    "00000000-0000-4000-8000-0000000003f0",
+                    1789333200000
+                  ]
                 }
               ],
               [
@@ -2559,7 +2788,7 @@
                 }
               ]
             ],
-            "reads": 47
+            "reads": 61
           }
         },
         {
@@ -2582,6 +2811,83 @@
                   "kind": "acp",
                   "method": "session/prompt",
                   "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "text": "send replayed dispatch"
+                },
+                {
+                  "kind": "mcp",
+                  "method": "initialize",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "protocolVersion": "2025-06-18",
+                      "capabilities": {
+                        "tools": {
+                          "listChanged": true
+                        }
+                      },
+                      "serverInfo": {
+                        "name": "lelouchhe_webagent",
+                        "version": "0.1.0"
+                      },
+                      "instructions": "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.\nMessages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.\nAn agent's task_send to a direct child opens one account for that edge when it is delivered; the child's task_update(done|blocked) settles it.\nWhile an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target notifies the requester (target_removed).\nAn agent's message that cannot be delivered notifies its sender (target_removed).\nTask history is the event log; summaries and updates are self-reports."
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 1
+                  }
+                },
+                {
+                  "kind": "mcp",
+                  "method": "notifications/initialized",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "status": 202,
+                  "result": null
+                },
+                {
+                  "kind": "mcp",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "tool": "task_list",
+                  "arguments": {},
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "{\"tasks\":[{\"id\":\"00000000-0000-4000-8001-000000000001\",\"title\":\"root\",\"relation\":\"self\",\"workflowStatus\":\"idle\",\"executionState\":\"agent\",\"lastAgentActivityAt\":null,\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"},{\"id\":\"00000000-0000-4000-8000-000000000002\",\"relation\":\"child\",\"host\":\"owner\",\"title\":\"Remote loop child\",\"workflowStatus\":\"done\",\"executionState\":\"idle\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\",\"lastAgentActivityAt\":\"2026-09-13T21:00:00.000Z\"}]}"
+                        }
+                      ]
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 2
+                  }
+                },
+                {
+                  "kind": "mcp",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "tool": "task_send",
+                  "arguments": {
+                    "target": "00000000-0000-4000-8000-000000000002",
+                    "body": "replayed dispatch"
+                  },
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "{\"accepted\":true}"
+                        }
+                      ]
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 3
+                  }
+                },
+                {
+                  "kind": "acp",
+                  "method": "session/prompt",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
                   "text": "From \"Remote loop child\" (task id 00000000-0000-4000-8000-000000000002):\n---8<---\nTask status: done\nReplay deduplicated.\n---8<---"
                 }
               ]
@@ -2592,16 +2898,17 @@
               [
                 {
                   "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-000000000001",
-                    19,
-                    "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000003\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"sourceLabel\":\"Remote loop child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Remote loop child\\\" sent @root\",\"body\":\"Task status: done\\nReplay deduplicated.\"}",
-                    "msg:00000000-0000-4000-8001-000000000003",
-                    1789333200000
-                  ]
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["child", "owner", 3]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["child", "owner", 4]
                 }
               ],
               [
@@ -2611,10 +2918,10 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
-                    20,
-                    "collaboration_prompt",
-                    "{\"messageIds\":[\"00000000-0000-4000-8001-000000000003\"],\"text\":\"From \\\"Remote loop child\\\" (task id 00000000-0000-4000-8000-000000000002):\\n---8<---\\nTask status: done\\nReplay deduplicated.\\n---8<---\",\"truncated\":false,\"rawSize\":129}",
-                    "system",
+                    19,
+                    "user_message",
+                    "{\"text\":\"send replayed dispatch\",\"clientOpId\":\"00000000-0000-4000-8001-0000000007d3\"}",
+                    "user",
                     1789333200000
                   ]
                 }
@@ -2628,7 +2935,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     21,
                     "assistant_message",
-                    "{\"text\":\"Remote report received.\"}",
+                    "{\"text\":\"Replayed dispatch sent.\"}",
                     "agent",
                     1789333200000
                   ]
@@ -2653,9 +2960,69 @@
                 {
                   "kind": "write",
                   "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    23,
+                    "system_message",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-0000000003ef\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"sourceLabel\":\"Remote loop child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Remote loop child\\\" sent @root\",\"body\":\"Task status: done\\nReplay deduplicated.\"}",
+                    "msg:00000000-0000-4000-8000-0000000003ef",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    24,
+                    "collaboration_prompt",
+                    "{\"messageIds\":[\"00000000-0000-4000-8000-0000000003ef\"],\"text\":\"From \\\"Remote loop child\\\" (task id 00000000-0000-4000-8000-000000000002):\\n---8<---\\nTask status: done\\nReplay deduplicated.\\n---8<---\",\"truncated\":false,\"rawSize\":129}",
+                    "system",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    25,
+                    "assistant_message",
+                    "{\"text\":\"Remote report received.\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    26,
+                    "prompt_done",
+                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-2\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8001-000000000003",
+                    "00000000-0000-4000-8000-0000000003ef",
                     "00000000-0000-4000-8000-000000000002",
                     "00000000-0000-4000-8001-000000000001",
                     "agent",
@@ -2668,7 +3035,7 @@
                   "method": "run",
                   "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8001-000000000003",
+                    "00000000-0000-4000-8000-0000000003ef",
                     "00000000-0000-4000-8001-000000000001",
                     "target",
                     1789333200000
@@ -2679,10 +3046,63 @@
                   "method": "run",
                   "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "00000000-0000-4000-8001-000000000004",
-                    "00000000-0000-4000-8001-000000000003",
+                    "00000000-0000-4000-8000-0000000003ef",
+                    "00000000-0000-4000-8000-0000000003ef",
                     "00000000-0000-4000-8001-000000000001",
-                    "remote-report:owner:00000000-0000-4000-8000-000000000002:17",
+                    "00000000-0000-4000-8000-0000000003ef:00000000-0000-4000-8001-000000000001",
+                    "queued",
+                    1789333200000,
+                    null,
+                    null,
+                    null,
+                    "child",
+                    "owner",
+                    "00000000-0000-4000-8000-0000000003ef",
+                    "Remote loop child",
+                    "report"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox_cursors (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, ?, 0)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET applied_pos = excluded.applied_pos",
+                  "args": ["child", "owner", 4]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-0000000007d4",
+                    "00000000-0000-4000-8001-000000000001",
+                    "00000000-0000-4000-8000-000000000002",
+                    "agent",
+                    "replayed dispatch",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-0000000007d4",
+                    "00000000-0000-4000-8001-000000000001",
+                    "source",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-0000000007d5",
+                    "00000000-0000-4000-8001-0000000007d4",
+                    "00000000-0000-4000-8000-000000000002",
+                    "00000000-0000-4000-8001-0000000007d4:00000000-0000-4000-8000-000000000002",
                     "queued",
                     1789333200000,
                     null,
@@ -2694,6 +3114,42 @@
                     null,
                     null
                   ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    20,
+                    "system_message",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-0000000007d4\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"replayed dispatch\",\"deliveryStatus\":\"queued\"}",
+                    "msg:00000000-0000-4000-8001-0000000007d4",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-0000000007d4",
+                    "child",
+                    "owner",
+                    2,
+                    "message",
+                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"sourceLabel\":\"root\",\"body\":\"replayed dispatch\"}",
+                    "00000000-0000-4000-8001-0000000007d5",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO recent_paths (cwd, last_used_at)\n       VALUES (?, ?)\n       ON CONFLICT(cwd) DO UPDATE SET last_used_at = excluded.last_used_at",
+                  "args": ["/", 1789333200000]
                 }
               ],
               [
@@ -2703,8 +3159,58 @@
                   "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
                   "args": [
                     1789333200000,
-                    "00000000-0000-4000-8001-000000000004",
+                    "00000000-0000-4000-8000-0000000003ef",
                     "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-0000000007d6",
+                    "child",
+                    "owner",
+                    3,
+                    "receipt",
+                    "{\"originalEntryId\":\"00000000-0000-4000-8000-0000000003ef\",\"status\":\"delivered\"}",
+                    null,
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8001-0000000007d5",
+                    "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["child", "owner", 3]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox_cursors (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, ?, 0)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET applied_pos = excluded.applied_pos",
+                  "args": ["child", "owner", 3]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8001-000000000001"
                   ]
                 }
               ],
@@ -2725,7 +3231,7 @@
                 }
               ]
             ],
-            "reads": 54
+            "reads": 101
           }
         }
       ]
@@ -2733,9 +3239,9 @@
     {
       "name": "wrong-source-cannot-dispatch",
       "response": {
-        "status": 403,
+        "status": 400,
         "body": {
-          "error": "Host is not the target's external parent"
+          "error": "link_mismatch"
         }
       },
       "instances": [
@@ -2745,7 +3251,7 @@
           "mock": [],
           "sql": {
             "writes": [],
-            "reads": 2
+            "reads": 3
           }
         },
         {
@@ -2782,7 +3288,80 @@
         {
           "name": "owner",
           "sse": [],
-          "mock": [],
+          "mock": [
+            {
+              "sessionId": "*",
+              "calls": [
+                {
+                  "kind": "acp",
+                  "method": "initialize"
+                }
+              ]
+            },
+            {
+              "sessionId": "00000000-0000-4000-8000-000000000001",
+              "calls": [
+                {
+                  "kind": "acp",
+                  "method": "session/prompt",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "text": "From \"root\" (task id 00000000-0000-4000-8001-000000000001):\n---8<---\nunreachable dispatch\n---8<---"
+                },
+                {
+                  "kind": "mcp",
+                  "method": "initialize",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "protocolVersion": "2025-06-18",
+                      "capabilities": {
+                        "tools": {
+                          "listChanged": true
+                        }
+                      },
+                      "serverInfo": {
+                        "name": "lelouchhe_webagent",
+                        "version": "0.1.0"
+                      },
+                      "instructions": "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.\nMessages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.\nAn agent's task_send to a direct child opens one account for that edge when it is delivered; the child's task_update(done|blocked) settles it.\nWhile an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target notifies the requester (target_removed).\nAn agent's message that cannot be delivered notifies its sender (target_removed).\nTask history is the event log; summaries and updates are self-reports."
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 1
+                  }
+                },
+                {
+                  "kind": "mcp",
+                  "method": "notifications/initialized",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "status": 202,
+                  "result": null
+                },
+                {
+                  "kind": "mcp",
+                  "sessionId": "00000000-0000-4000-8000-000000000001",
+                  "tool": "task_update",
+                  "arguments": {
+                    "status": "done",
+                    "body": "Queued dispatch completed after reconnect."
+                  },
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "{\"accepted\":true}"
+                        }
+                      ]
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 2
+                  }
+                }
+              ]
+            }
+          ],
           "sql": {
             "writes": [
               [
@@ -2791,6 +3370,158 @@
                   "method": "run",
                   "sql": "DELETE FROM inbox_messages WHERE created_at < ?",
                   "args": [1786741200000]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000002",
+                    20,
+                    "system_message",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-0000000007d8\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"unreachable dispatch\"}",
+                    "msg:00000000-0000-4000-8001-0000000007d8",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000002",
+                    21,
+                    "collaboration_prompt",
+                    "{\"messageIds\":[\"00000000-0000-4000-8001-0000000007d8\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8001-000000000001):\\n---8<---\\nunreachable dispatch\\n---8<---\",\"truncated\":false,\"rawSize\":98}",
+                    "system",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000002",
+                    23,
+                    "assistant_message",
+                    "{\"text\":\"Queued dispatch received.\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000002",
+                    24,
+                    "prompt_done",
+                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-0000000007d8",
+                    "00000000-0000-4000-8001-000000000001",
+                    "00000000-0000-4000-8000-000000000002",
+                    "agent",
+                    "unreachable dispatch",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-0000000007d8",
+                    "00000000-0000-4000-8000-000000000002",
+                    "target",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-0000000007d8",
+                    "00000000-0000-4000-8001-0000000007d8",
+                    "00000000-0000-4000-8000-000000000002",
+                    "00000000-0000-4000-8001-0000000007d8:00000000-0000-4000-8000-000000000002",
+                    "queued",
+                    1789333200000,
+                    null,
+                    null,
+                    null,
+                    "parent",
+                    "hub-connection",
+                    "00000000-0000-4000-8001-0000000007d8",
+                    "root",
+                    "message"
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8000-0000000007d5",
+                    "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["parent", "hub-connection", 6]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8001-0000000007d8",
+                    "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-0000000007d3",
+                    "parent",
+                    "hub-connection",
+                    4,
+                    "receipt",
+                    "{\"originalEntryId\":\"00000000-0000-4000-8001-0000000007d8\",\"status\":\"delivered\"}",
+                    null,
+                    1789333200000
+                  ]
                 }
               ],
               [
@@ -2806,9 +3537,98 @@
                   "sql": "UPDATE tasks SET title = 'root' WHERE id = ? AND title IS NULL",
                   "args": ["00000000-0000-4000-8000-000000000001"]
                 }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+                  "args": ["done", "00000000-0000-4000-8000-000000000002"]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-000000000002",
+                    22,
+                    "task_update",
+                    "{\"status\":\"done\",\"body\":\"Queued dispatch completed after reconnect.\",\"reason\":\"settled\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-0000000007d4",
+                    "00000000-0000-4000-8000-000000000002",
+                    "00000000-0000-4000-8001-000000000001",
+                    "agent",
+                    "Task status: done\nQueued dispatch completed after reconnect.",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-0000000007d4",
+                    "00000000-0000-4000-8000-000000000002",
+                    "source",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-0000000007d5",
+                    "00000000-0000-4000-8000-0000000007d4",
+                    "00000000-0000-4000-8001-000000000001",
+                    "00000000-0000-4000-8000-0000000007d4:00000000-0000-4000-8001-000000000001",
+                    "queued",
+                    1789333200000,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-0000000007d4",
+                    "parent",
+                    "hub-connection",
+                    5,
+                    "report",
+                    "{\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"Remote loop child\",\"body\":\"Task status: done\\nQueued dispatch completed after reconnect.\"}",
+                    "00000000-0000-4000-8000-0000000007d5",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+                  "args": ["running", "00000000-0000-4000-8000-000000000002"]
+                }
               ]
             ],
-            "reads": 63
+            "reads": 117
           }
         },
         {
@@ -2865,7 +3685,7 @@
                       "content": [
                         {
                           "type": "text",
-                          "text": "{\"tasks\":[{\"id\":\"00000000-0000-4000-8001-000000000001\",\"title\":\"root\",\"relation\":\"self\",\"workflowStatus\":\"idle\",\"executionState\":\"agent\",\"lastAgentActivityAt\":\"2026-09-13T21:00:00.000Z\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"},{\"id\":\"00000000-0000-4000-8000-000000000002\",\"relation\":\"child\",\"host\":\"owner\",\"title\":\"Remote loop child\",\"workflowStatus\":\"done\",\"executionState\":\"idle\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\",\"lastAgentActivityAt\":\"2026-09-13T21:00:00.000Z\",\"unreachable\":true}]}"
+                          "text": "{\"tasks\":[{\"id\":\"00000000-0000-4000-8001-000000000001\",\"title\":\"root\",\"relation\":\"self\",\"workflowStatus\":\"idle\",\"executionState\":\"agent\",\"lastAgentActivityAt\":\"2026-09-13T21:00:00.000Z\",\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"},{\"id\":\"00000000-0000-4000-8000-000000000002\",\"relation\":\"child\",\"host\":\"owner\",\"unreachable\":true}]}"
                         }
                       ]
                     },
@@ -2887,14 +3707,19 @@
                       "content": [
                         {
                           "type": "text",
-                          "text": "Remote task send failed: fetch failed"
+                          "text": "{\"accepted\":true}"
                         }
-                      ],
-                      "isError": true
+                      ]
                     },
                     "jsonrpc": "2.0",
                     "id": 3
                   }
+                },
+                {
+                  "kind": "acp",
+                  "method": "session/prompt",
+                  "sessionId": "00000000-0000-4000-8001-000000000001",
+                  "text": "From \"Remote loop child\" (task id 00000000-0000-4000-8000-000000000002):\n---8<---\nTask status: done\nQueued dispatch completed after reconnect.\n---8<---"
                 }
               ]
             }
@@ -2904,13 +3729,29 @@
               [
                 {
                   "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["child", "owner", 5]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["child", "owner", 6]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
-                    23,
+                    27,
                     "user_message",
-                    "{\"text\":\"probe unreachable remote\",\"clientOpId\":\"00000000-0000-4000-8001-000000000007\"}",
+                    "{\"text\":\"probe unreachable remote\",\"clientOpId\":\"00000000-0000-4000-8001-0000000007d7\"}",
                     "user",
                     1789333200000
                   ]
@@ -2923,7 +3764,7 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
-                    24,
+                    29,
                     "assistant_message",
                     "{\"text\":\"Unreachable outcome observed.\"}",
                     "agent",
@@ -2938,10 +3779,198 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
-                    25,
+                    30,
                     "prompt_done",
-                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-2\"}",
+                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-3\"}",
                     "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    31,
+                    "system_message",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-0000000007d4\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"sourceLabel\":\"Remote loop child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Remote loop child\\\" sent @root\",\"body\":\"Task status: done\\nQueued dispatch completed after reconnect.\"}",
+                    "msg:00000000-0000-4000-8000-0000000007d4",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    32,
+                    "collaboration_prompt",
+                    "{\"messageIds\":[\"00000000-0000-4000-8000-0000000007d4\"],\"text\":\"From \\\"Remote loop child\\\" (task id 00000000-0000-4000-8000-000000000002):\\n---8<---\\nTask status: done\\nQueued dispatch completed after reconnect.\\n---8<---\",\"truncated\":false,\"rawSize\":151}",
+                    "system",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    33,
+                    "assistant_message",
+                    "{\"text\":\"Remote report received.\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    34,
+                    "prompt_done",
+                    "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-4\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-0000000007d4",
+                    "00000000-0000-4000-8000-000000000002",
+                    "00000000-0000-4000-8001-000000000001",
+                    "agent",
+                    "Task status: done\nQueued dispatch completed after reconnect.",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-0000000007d4",
+                    "00000000-0000-4000-8001-000000000001",
+                    "target",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8000-0000000007d4",
+                    "00000000-0000-4000-8000-0000000007d4",
+                    "00000000-0000-4000-8001-000000000001",
+                    "00000000-0000-4000-8000-0000000007d4:00000000-0000-4000-8001-000000000001",
+                    "queued",
+                    1789333200000,
+                    null,
+                    null,
+                    null,
+                    "child",
+                    "owner",
+                    "00000000-0000-4000-8000-0000000007d4",
+                    "Remote loop child",
+                    "report"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox_cursors (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, ?, 0)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET applied_pos = excluded.applied_pos",
+                  "args": ["child", "owner", 6]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-0000000007d8",
+                    "00000000-0000-4000-8001-000000000001",
+                    "00000000-0000-4000-8000-000000000002",
+                    "agent",
+                    "unreachable dispatch",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-0000000007d8",
+                    "00000000-0000-4000-8001-000000000001",
+                    "source",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO deliveries\n           (id, message_id, recipient_task_id, idempotency_key, status, queued_at,\n            delivered_at, failed_at, failure_reason,\n            source_remote_role, source_remote_host, source_entry_id, source_label,\n            source_category)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-0000000007d9",
+                    "00000000-0000-4000-8001-0000000007d8",
+                    "00000000-0000-4000-8000-000000000002",
+                    "00000000-0000-4000-8001-0000000007d8:00000000-0000-4000-8000-000000000002",
+                    "queued",
+                    1789333200000,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    28,
+                    "system_message",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-0000000007d8\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"unreachable dispatch\",\"deliveryStatus\":\"queued\"}",
+                    "msg:00000000-0000-4000-8001-0000000007d8",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-0000000007d8",
+                    "child",
+                    "owner",
+                    4,
+                    "message",
+                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"sourceLabel\":\"root\",\"body\":\"unreachable dispatch\"}",
+                    "00000000-0000-4000-8001-0000000007d9",
                     1789333200000
                   ]
                 }
@@ -2958,15 +3987,82 @@
                 {
                   "kind": "write",
                   "method": "run",
+                  "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8000-0000000007d4",
+                    "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox\n           (entry_id, remote_role, remote_host, prev, category, data_json,\n            delivery_id, created_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-0000000007da",
+                    "child",
+                    "owner",
+                    5,
+                    "receipt",
+                    "{\"originalEntryId\":\"00000000-0000-4000-8000-0000000007d4\",\"status\":\"delivered\"}",
+                    null,
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE deliveries\n               SET status = 'delivered', delivered_at = ?, failed_at = NULL,\n                   failure_reason = NULL\n               WHERE id = ? AND status = ?",
+                  "args": [
+                    1789333200000,
+                    "00000000-0000-4000-8001-0000000007d9",
+                    "queued"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "get",
+                  "sql": "INSERT INTO outbox_cursors\n             (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, 0, ?)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET pushed_pos = MAX(pushed_pos, excluded.pushed_pos)\n           RETURNING pushed_pos",
+                  "args": ["child", "owner", 5]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO outbox_cursors (remote_role, remote_host, applied_pos, pushed_pos)\n           VALUES (?, ?, ?, 0)\n           ON CONFLICT (remote_role, remote_host)\n           DO UPDATE SET applied_pos = excluded.applied_pos",
+                  "args": ["child", "owner", 5]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
                   "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
                   "args": [
                     1789333200000,
                     "00000000-0000-4000-8001-000000000001"
                   ]
                 }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+                  "args": ["idle", "00000000-0000-4000-8001-000000000001"]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
+                  "args": ["running", "00000000-0000-4000-8001-000000000001"]
+                }
               ]
             ],
-            "reads": 58
+            "reads": 95
           }
         }
       ]
@@ -3031,16 +4127,16 @@
             "task_id": "00000000-0000-4000-8000-000000000002",
             "seq": 2,
             "type": "system_message",
-            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000003\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"dispatch remote wait\"}",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000008\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"dispatch remote wait\"}",
             "created_at": 1789333200000,
-            "from_ref": "msg:00000000-0000-4000-8000-000000000003"
+            "from_ref": "msg:00000000-0000-4000-8001-000000000008"
           },
           {
             "id": 3,
             "task_id": "00000000-0000-4000-8000-000000000002",
             "seq": 3,
             "type": "collaboration_prompt",
-            "data": "{\"messageIds\":[\"00000000-0000-4000-8000-000000000003\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8001-000000000001):\\n---8<---\\ndispatch remote wait\\n---8<---\",\"truncated\":false,\"rawSize\":98}",
+            "data": "{\"messageIds\":[\"00000000-0000-4000-8001-000000000008\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8001-000000000001):\\n---8<---\\ndispatch remote wait\\n---8<---\",\"truncated\":false,\"rawSize\":98}",
             "created_at": 1789333200000,
             "from_ref": "system"
           },
@@ -3058,7 +4154,7 @@
             "task_id": "00000000-0000-4000-8000-000000000002",
             "seq": 5,
             "type": "permission_request",
-            "data": "{\"requestId\":\"00000000-0000-4000-8000-000000000007\",\"title\":\"Run delegated remote work\",\"toolCallId\":\"tool-1\",\"options\":[{\"optionId\":\"allow\",\"name\":\"Allow\",\"kind\":\"allow_once\"},{\"optionId\":\"deny\",\"name\":\"Deny\",\"kind\":\"reject_once\"}]}",
+            "data": "{\"requestId\":\"00000000-0000-4000-8000-000000000006\",\"title\":\"Run delegated remote work\",\"toolCallId\":\"tool-1\",\"options\":[{\"optionId\":\"allow\",\"name\":\"Allow\",\"kind\":\"allow_once\"},{\"optionId\":\"deny\",\"name\":\"Deny\",\"kind\":\"reject_once\"}]}",
             "created_at": 1789333200000,
             "from_ref": "agent"
           },
@@ -3067,7 +4163,7 @@
             "task_id": "00000000-0000-4000-8000-000000000002",
             "seq": 6,
             "type": "permission_response",
-            "data": "{\"requestId\":\"00000000-0000-4000-8000-000000000007\",\"optionName\":\"allow\",\"denied\":false}",
+            "data": "{\"requestId\":\"00000000-0000-4000-8000-000000000006\",\"optionName\":\"allow\",\"denied\":false}",
             "created_at": 1789333200000,
             "from_ref": "system"
           },
@@ -3112,7 +4208,7 @@
             "task_id": "00000000-0000-4000-8000-000000000002",
             "seq": 11,
             "type": "user_message",
-            "data": "{\"text\":\"finish after owner restart\",\"clientOpId\":\"00000000-0000-4000-8000-000000000003\"}",
+            "data": "{\"text\":\"finish after owner restart\",\"clientOpId\":\"00000000-0000-4000-8000-0000000003eb\"}",
             "created_at": 1789333200000,
             "from_ref": "user"
           },
@@ -3148,16 +4244,16 @@
             "task_id": "00000000-0000-4000-8000-000000000002",
             "seq": 15,
             "type": "system_message",
-            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000004\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"replayed dispatch\"}",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-0000000007d4\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"replayed dispatch\"}",
             "created_at": 1789333200000,
-            "from_ref": "msg:00000000-0000-4000-8000-000000000004"
+            "from_ref": "msg:00000000-0000-4000-8001-0000000007d4"
           },
           {
             "id": 16,
             "task_id": "00000000-0000-4000-8000-000000000002",
             "seq": 16,
             "type": "collaboration_prompt",
-            "data": "{\"messageIds\":[\"00000000-0000-4000-8000-000000000004\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8001-000000000001):\\n---8<---\\nreplayed dispatch\\n---8<---\",\"truncated\":false,\"rawSize\":95}",
+            "data": "{\"messageIds\":[\"00000000-0000-4000-8001-0000000007d4\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8001-000000000001):\\n---8<---\\nreplayed dispatch\\n---8<---\",\"truncated\":false,\"rawSize\":95}",
             "created_at": 1789333200000,
             "from_ref": "system"
           },
@@ -3187,11 +4283,56 @@
             "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-2\"}",
             "created_at": 1789333200000,
             "from_ref": "agent"
+          },
+          {
+            "id": 20,
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "seq": 20,
+            "type": "system_message",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-0000000007d8\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"unreachable dispatch\"}",
+            "created_at": 1789333200000,
+            "from_ref": "msg:00000000-0000-4000-8001-0000000007d8"
+          },
+          {
+            "id": 21,
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "seq": 21,
+            "type": "collaboration_prompt",
+            "data": "{\"messageIds\":[\"00000000-0000-4000-8001-0000000007d8\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8001-000000000001):\\n---8<---\\nunreachable dispatch\\n---8<---\",\"truncated\":false,\"rawSize\":98}",
+            "created_at": 1789333200000,
+            "from_ref": "system"
+          },
+          {
+            "id": 22,
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "seq": 22,
+            "type": "task_update",
+            "data": "{\"status\":\"done\",\"body\":\"Queued dispatch completed after reconnect.\",\"reason\":\"settled\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 23,
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "seq": 23,
+            "type": "assistant_message",
+            "data": "{\"text\":\"Queued dispatch received.\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 24,
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "seq": 24,
+            "type": "prompt_done",
+            "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
           }
         ],
         "messages": [
           {
-            "id": "00000000-0000-4000-8000-000000000003",
+            "id": "00000000-0000-4000-8001-000000000008",
             "source_task_id": "00000000-0000-4000-8001-000000000001",
             "direct_target_task_id": "00000000-0000-4000-8000-000000000002",
             "source_actor": "agent",
@@ -3199,34 +4340,106 @@
             "created_at": 1789333200000
           },
           {
-            "id": "00000000-0000-4000-8000-000000000004",
+            "id": "00000000-0000-4000-8000-0000000003ec",
+            "source_task_id": "00000000-0000-4000-8000-000000000002",
+            "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
+            "source_actor": "agent",
+            "body": "Task status: done\nRemote work completed after restart.",
+            "created_at": 1789333200000
+          },
+          {
+            "id": "00000000-0000-4000-8001-0000000007d4",
             "source_task_id": "00000000-0000-4000-8001-000000000001",
             "direct_target_task_id": "00000000-0000-4000-8000-000000000002",
             "source_actor": "agent",
             "body": "replayed dispatch",
             "created_at": 1789333200000
+          },
+          {
+            "id": "00000000-0000-4000-8000-0000000003ef",
+            "source_task_id": "00000000-0000-4000-8000-000000000002",
+            "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
+            "source_actor": "agent",
+            "body": "Task status: done\nReplay deduplicated.",
+            "created_at": 1789333200000
+          },
+          {
+            "id": "00000000-0000-4000-8001-0000000007d8",
+            "source_task_id": "00000000-0000-4000-8001-000000000001",
+            "direct_target_task_id": "00000000-0000-4000-8000-000000000002",
+            "source_actor": "agent",
+            "body": "unreachable dispatch",
+            "created_at": 1789333200000
+          },
+          {
+            "id": "00000000-0000-4000-8000-0000000007d4",
+            "source_task_id": "00000000-0000-4000-8000-000000000002",
+            "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
+            "source_actor": "agent",
+            "body": "Task status: done\nQueued dispatch completed after reconnect.",
+            "created_at": 1789333200000
           }
         ],
         "message_projections": [
           {
-            "message_id": "00000000-0000-4000-8000-000000000003",
+            "message_id": "00000000-0000-4000-8001-000000000008",
             "task_id": "00000000-0000-4000-8000-000000000002",
             "role": "target",
             "created_at": 1789333200000
           },
           {
-            "message_id": "00000000-0000-4000-8000-000000000004",
+            "message_id": "00000000-0000-4000-8000-0000000003ec",
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "role": "source",
+            "created_at": 1789333200000
+          },
+          {
+            "message_id": "00000000-0000-4000-8001-0000000007d4",
             "task_id": "00000000-0000-4000-8000-000000000002",
             "role": "target",
+            "created_at": 1789333200000
+          },
+          {
+            "message_id": "00000000-0000-4000-8000-0000000003ef",
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "role": "source",
+            "created_at": 1789333200000
+          },
+          {
+            "message_id": "00000000-0000-4000-8001-0000000007d8",
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "role": "target",
+            "created_at": 1789333200000
+          },
+          {
+            "message_id": "00000000-0000-4000-8000-0000000007d4",
+            "task_id": "00000000-0000-4000-8000-000000000002",
+            "role": "source",
             "created_at": 1789333200000
           }
         ],
         "deliveries": [
           {
-            "id": "00000000-0000-4000-8000-000000000004",
-            "message_id": "00000000-0000-4000-8000-000000000003",
+            "id": "00000000-0000-4000-8001-000000000008",
+            "message_id": "00000000-0000-4000-8001-000000000008",
             "recipient_task_id": "00000000-0000-4000-8000-000000000002",
-            "idempotency_key": "00000000-0000-4000-8000-000000000003:00000000-0000-4000-8000-000000000002",
+            "idempotency_key": "00000000-0000-4000-8001-000000000008:00000000-0000-4000-8000-000000000002",
+            "status": "delivered",
+            "queued_at": 1789333200000,
+            "delivered_at": 1789333200000,
+            "failed_at": null,
+            "failure_reason": null,
+            "source_remote_role": "parent",
+            "source_remote_host": "hub-connection",
+            "source_entry_id": "00000000-0000-4000-8001-000000000008",
+            "source_label": "root",
+            "source_category": "message"
+          },
+          {
+            "id": "00000000-0000-4000-8000-0000000003ed",
+            "message_id": "00000000-0000-4000-8000-0000000003ec",
+            "recipient_task_id": "00000000-0000-4000-8001-000000000001",
+            "idempotency_key": "00000000-0000-4000-8000-0000000003ec:00000000-0000-4000-8001-000000000001",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -3239,10 +4452,58 @@
             "source_category": null
           },
           {
-            "id": "00000000-0000-4000-8000-000000000005",
-            "message_id": "00000000-0000-4000-8000-000000000004",
+            "id": "00000000-0000-4000-8001-0000000007d4",
+            "message_id": "00000000-0000-4000-8001-0000000007d4",
             "recipient_task_id": "00000000-0000-4000-8000-000000000002",
-            "idempotency_key": "00000000-0000-4000-8000-000000000004:00000000-0000-4000-8000-000000000002",
+            "idempotency_key": "00000000-0000-4000-8001-0000000007d4:00000000-0000-4000-8000-000000000002",
+            "status": "delivered",
+            "queued_at": 1789333200000,
+            "delivered_at": 1789333200000,
+            "failed_at": null,
+            "failure_reason": null,
+            "source_remote_role": "parent",
+            "source_remote_host": "hub-connection",
+            "source_entry_id": "00000000-0000-4000-8001-0000000007d4",
+            "source_label": "root",
+            "source_category": "message"
+          },
+          {
+            "id": "00000000-0000-4000-8000-0000000003f0",
+            "message_id": "00000000-0000-4000-8000-0000000003ef",
+            "recipient_task_id": "00000000-0000-4000-8001-000000000001",
+            "idempotency_key": "00000000-0000-4000-8000-0000000003ef:00000000-0000-4000-8001-000000000001",
+            "status": "delivered",
+            "queued_at": 1789333200000,
+            "delivered_at": 1789333200000,
+            "failed_at": null,
+            "failure_reason": null,
+            "source_remote_role": null,
+            "source_remote_host": null,
+            "source_entry_id": null,
+            "source_label": null,
+            "source_category": null
+          },
+          {
+            "id": "00000000-0000-4000-8001-0000000007d8",
+            "message_id": "00000000-0000-4000-8001-0000000007d8",
+            "recipient_task_id": "00000000-0000-4000-8000-000000000002",
+            "idempotency_key": "00000000-0000-4000-8001-0000000007d8:00000000-0000-4000-8000-000000000002",
+            "status": "delivered",
+            "queued_at": 1789333200000,
+            "delivered_at": 1789333200000,
+            "failed_at": null,
+            "failure_reason": null,
+            "source_remote_role": "parent",
+            "source_remote_host": "hub-connection",
+            "source_entry_id": "00000000-0000-4000-8001-0000000007d8",
+            "source_label": "root",
+            "source_category": "message"
+          },
+          {
+            "id": "00000000-0000-4000-8000-0000000007d5",
+            "message_id": "00000000-0000-4000-8000-0000000007d4",
+            "recipient_task_id": "00000000-0000-4000-8001-000000000001",
+            "idempotency_key": "00000000-0000-4000-8000-0000000007d4:00000000-0000-4000-8001-000000000001",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -3255,20 +4516,7 @@
             "source_category": null
           }
         ],
-        "client_ops": [
-          {
-            "task_id": "00000000-0000-4000-8001-000000000001",
-            "client_op_id": "00000000-0000-4000-8001-000000000008",
-            "result_json": "{\"status\":202,\"body\":{\"messageId\":\"00000000-0000-4000-8000-000000000003\",\"deliveryId\":\"00000000-0000-4000-8000-000000000004\",\"status\":\"queued\",\"clientOpId\":\"00000000-0000-4000-8001-000000000008\"}}",
-            "created_at": 1789333200000
-          },
-          {
-            "task_id": "00000000-0000-4000-8001-000000000001",
-            "client_op_id": "replay-dispatch-op",
-            "result_json": "{\"status\":202,\"body\":{\"messageId\":\"00000000-0000-4000-8000-000000000004\",\"deliveryId\":\"00000000-0000-4000-8000-000000000005\",\"status\":\"queued\",\"clientOpId\":\"replay-dispatch-op\"}}",
-            "created_at": 1789333200000
-          }
-        ],
+        "client_ops": [],
         "recent_paths": [
           {
             "cwd": "/",
@@ -3383,9 +4631,9 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 9,
             "type": "system_message",
-            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000003\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"dispatch remote wait\",\"deliveryStatus\":\"queued\"}",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000008\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"dispatch remote wait\",\"deliveryStatus\":\"queued\"}",
             "created_at": 1789333200000,
-            "from_ref": "msg:00000000-0000-4000-8000-000000000003"
+            "from_ref": "msg:00000000-0000-4000-8001-000000000008"
           },
           {
             "id": 10,
@@ -3446,16 +4694,16 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 16,
             "type": "system_message",
-            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000000b\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"sourceLabel\":\"Remote loop child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Remote loop child\\\" sent @root\",\"body\":\"Task status: done\\nRemote work completed after restart.\"}",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-0000000003ec\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"sourceLabel\":\"Remote loop child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Remote loop child\\\" sent @root\",\"body\":\"Task status: done\\nRemote work completed after restart.\"}",
             "created_at": 1789333200000,
-            "from_ref": "msg:00000000-0000-4000-8001-00000000000b"
+            "from_ref": "msg:00000000-0000-4000-8000-0000000003ec"
           },
           {
             "id": 17,
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 17,
             "type": "collaboration_prompt",
-            "data": "{\"messageIds\":[\"00000000-0000-4000-8001-00000000000b\"],\"text\":\"From \\\"Remote loop child\\\" (task id 00000000-0000-4000-8000-000000000002):\\n---8<---\\nTask status: done\\nRemote work completed after restart.\\n---8<---\",\"truncated\":false,\"rawSize\":145}",
+            "data": "{\"messageIds\":[\"00000000-0000-4000-8000-0000000003ec\"],\"text\":\"From \\\"Remote loop child\\\" (task id 00000000-0000-4000-8000-000000000002):\\n---8<---\\nTask status: done\\nRemote work completed after restart.\\n---8<---\",\"truncated\":false,\"rawSize\":145}",
             "created_at": 1789333200000,
             "from_ref": "system"
           },
@@ -3472,26 +4720,26 @@
             "id": 19,
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 19,
-            "type": "system_message",
-            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000003\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"sourceLabel\":\"Remote loop child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Remote loop child\\\" sent @root\",\"body\":\"Task status: done\\nReplay deduplicated.\"}",
+            "type": "user_message",
+            "data": "{\"text\":\"send replayed dispatch\",\"clientOpId\":\"00000000-0000-4000-8001-0000000007d3\"}",
             "created_at": 1789333200000,
-            "from_ref": "msg:00000000-0000-4000-8001-000000000003"
+            "from_ref": "user"
           },
           {
             "id": 20,
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 20,
-            "type": "collaboration_prompt",
-            "data": "{\"messageIds\":[\"00000000-0000-4000-8001-000000000003\"],\"text\":\"From \\\"Remote loop child\\\" (task id 00000000-0000-4000-8000-000000000002):\\n---8<---\\nTask status: done\\nReplay deduplicated.\\n---8<---\",\"truncated\":false,\"rawSize\":129}",
+            "type": "system_message",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-0000000007d4\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"replayed dispatch\",\"deliveryStatus\":\"queued\"}",
             "created_at": 1789333200000,
-            "from_ref": "system"
+            "from_ref": "msg:00000000-0000-4000-8001-0000000007d4"
           },
           {
             "id": 21,
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 21,
             "type": "assistant_message",
-            "data": "{\"text\":\"Remote report received.\"}",
+            "data": "{\"text\":\"Replayed dispatch sent.\"}",
             "created_at": 1789333200000,
             "from_ref": "agent"
           },
@@ -3508,33 +4756,114 @@
             "id": 23,
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 23,
-            "type": "user_message",
-            "data": "{\"text\":\"probe unreachable remote\",\"clientOpId\":\"00000000-0000-4000-8001-000000000007\"}",
+            "type": "system_message",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-0000000003ef\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"sourceLabel\":\"Remote loop child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Remote loop child\\\" sent @root\",\"body\":\"Task status: done\\nReplay deduplicated.\"}",
             "created_at": 1789333200000,
-            "from_ref": "user"
+            "from_ref": "msg:00000000-0000-4000-8000-0000000003ef"
           },
           {
             "id": 24,
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 24,
+            "type": "collaboration_prompt",
+            "data": "{\"messageIds\":[\"00000000-0000-4000-8000-0000000003ef\"],\"text\":\"From \\\"Remote loop child\\\" (task id 00000000-0000-4000-8000-000000000002):\\n---8<---\\nTask status: done\\nReplay deduplicated.\\n---8<---\",\"truncated\":false,\"rawSize\":129}",
+            "created_at": 1789333200000,
+            "from_ref": "system"
+          },
+          {
+            "id": 25,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 25,
+            "type": "assistant_message",
+            "data": "{\"text\":\"Remote report received.\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 26,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 26,
+            "type": "prompt_done",
+            "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-2\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 27,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 27,
+            "type": "user_message",
+            "data": "{\"text\":\"probe unreachable remote\",\"clientOpId\":\"00000000-0000-4000-8001-0000000007d7\"}",
+            "created_at": 1789333200000,
+            "from_ref": "user"
+          },
+          {
+            "id": 28,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 28,
+            "type": "system_message",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-0000000007d8\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000002\",\"targetLabel\":\"Remote loop child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Remote loop child\\\"\",\"body\":\"unreachable dispatch\",\"deliveryStatus\":\"queued\"}",
+            "created_at": 1789333200000,
+            "from_ref": "msg:00000000-0000-4000-8001-0000000007d8"
+          },
+          {
+            "id": 29,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 29,
             "type": "assistant_message",
             "data": "{\"text\":\"Unreachable outcome observed.\"}",
             "created_at": 1789333200000,
             "from_ref": "agent"
           },
           {
-            "id": 25,
+            "id": 30,
             "task_id": "00000000-0000-4000-8001-000000000001",
-            "seq": 25,
+            "seq": 30,
             "type": "prompt_done",
-            "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-2\"}",
+            "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-3\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 31,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 31,
+            "type": "system_message",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-0000000007d4\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000002\",\"sourceLabel\":\"Remote loop child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Remote loop child\\\" sent @root\",\"body\":\"Task status: done\\nQueued dispatch completed after reconnect.\"}",
+            "created_at": 1789333200000,
+            "from_ref": "msg:00000000-0000-4000-8000-0000000007d4"
+          },
+          {
+            "id": 32,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 32,
+            "type": "collaboration_prompt",
+            "data": "{\"messageIds\":[\"00000000-0000-4000-8000-0000000007d4\"],\"text\":\"From \\\"Remote loop child\\\" (task id 00000000-0000-4000-8000-000000000002):\\n---8<---\\nTask status: done\\nQueued dispatch completed after reconnect.\\n---8<---\",\"truncated\":false,\"rawSize\":151}",
+            "created_at": 1789333200000,
+            "from_ref": "system"
+          },
+          {
+            "id": 33,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 33,
+            "type": "assistant_message",
+            "data": "{\"text\":\"Remote report received.\"}",
+            "created_at": 1789333200000,
+            "from_ref": "agent"
+          },
+          {
+            "id": 34,
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "seq": 34,
+            "type": "prompt_done",
+            "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-4\"}",
             "created_at": 1789333200000,
             "from_ref": "agent"
           }
         ],
         "messages": [
           {
-            "id": "00000000-0000-4000-8000-000000000003",
+            "id": "00000000-0000-4000-8001-000000000008",
             "source_task_id": "00000000-0000-4000-8001-000000000001",
             "direct_target_task_id": "00000000-0000-4000-8000-000000000002",
             "source_actor": "agent",
@@ -3542,7 +4871,7 @@
             "created_at": 1789333200000
           },
           {
-            "id": "00000000-0000-4000-8001-00000000000b",
+            "id": "00000000-0000-4000-8000-0000000003ec",
             "source_task_id": "00000000-0000-4000-8000-000000000002",
             "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
             "source_actor": "agent",
@@ -3550,29 +4879,71 @@
             "created_at": 1789333200000
           },
           {
-            "id": "00000000-0000-4000-8001-000000000003",
+            "id": "00000000-0000-4000-8001-0000000007d4",
+            "source_task_id": "00000000-0000-4000-8001-000000000001",
+            "direct_target_task_id": "00000000-0000-4000-8000-000000000002",
+            "source_actor": "agent",
+            "body": "replayed dispatch",
+            "created_at": 1789333200000
+          },
+          {
+            "id": "00000000-0000-4000-8000-0000000003ef",
             "source_task_id": "00000000-0000-4000-8000-000000000002",
             "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
             "source_actor": "agent",
             "body": "Task status: done\nReplay deduplicated.",
             "created_at": 1789333200000
+          },
+          {
+            "id": "00000000-0000-4000-8001-0000000007d8",
+            "source_task_id": "00000000-0000-4000-8001-000000000001",
+            "direct_target_task_id": "00000000-0000-4000-8000-000000000002",
+            "source_actor": "agent",
+            "body": "unreachable dispatch",
+            "created_at": 1789333200000
+          },
+          {
+            "id": "00000000-0000-4000-8000-0000000007d4",
+            "source_task_id": "00000000-0000-4000-8000-000000000002",
+            "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
+            "source_actor": "agent",
+            "body": "Task status: done\nQueued dispatch completed after reconnect.",
+            "created_at": 1789333200000
           }
         ],
         "message_projections": [
           {
-            "message_id": "00000000-0000-4000-8000-000000000003",
+            "message_id": "00000000-0000-4000-8001-000000000008",
             "task_id": "00000000-0000-4000-8001-000000000001",
             "role": "source",
             "created_at": 1789333200000
           },
           {
-            "message_id": "00000000-0000-4000-8001-00000000000b",
+            "message_id": "00000000-0000-4000-8000-0000000003ec",
             "task_id": "00000000-0000-4000-8001-000000000001",
             "role": "target",
             "created_at": 1789333200000
           },
           {
-            "message_id": "00000000-0000-4000-8001-000000000003",
+            "message_id": "00000000-0000-4000-8001-0000000007d4",
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "role": "source",
+            "created_at": 1789333200000
+          },
+          {
+            "message_id": "00000000-0000-4000-8000-0000000003ef",
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "role": "target",
+            "created_at": 1789333200000
+          },
+          {
+            "message_id": "00000000-0000-4000-8001-0000000007d8",
+            "task_id": "00000000-0000-4000-8001-000000000001",
+            "role": "source",
+            "created_at": 1789333200000
+          },
+          {
+            "message_id": "00000000-0000-4000-8000-0000000007d4",
             "task_id": "00000000-0000-4000-8001-000000000001",
             "role": "target",
             "created_at": 1789333200000
@@ -3581,9 +4952,9 @@
         "deliveries": [
           {
             "id": "00000000-0000-4000-8001-000000000009",
-            "message_id": "00000000-0000-4000-8000-000000000003",
+            "message_id": "00000000-0000-4000-8001-000000000008",
             "recipient_task_id": "00000000-0000-4000-8000-000000000002",
-            "idempotency_key": "00000000-0000-4000-8000-000000000003:00000000-0000-4000-8000-000000000002",
+            "idempotency_key": "00000000-0000-4000-8001-000000000008:00000000-0000-4000-8000-000000000002",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -3596,10 +4967,26 @@
             "source_category": null
           },
           {
-            "id": "00000000-0000-4000-8001-00000000000c",
-            "message_id": "00000000-0000-4000-8001-00000000000b",
+            "id": "00000000-0000-4000-8000-0000000003ec",
+            "message_id": "00000000-0000-4000-8000-0000000003ec",
             "recipient_task_id": "00000000-0000-4000-8001-000000000001",
-            "idempotency_key": "remote-report:owner:00000000-0000-4000-8000-000000000002:12",
+            "idempotency_key": "00000000-0000-4000-8000-0000000003ec:00000000-0000-4000-8001-000000000001",
+            "status": "delivered",
+            "queued_at": 1789333200000,
+            "delivered_at": 1789333200000,
+            "failed_at": null,
+            "failure_reason": null,
+            "source_remote_role": "child",
+            "source_remote_host": "owner",
+            "source_entry_id": "00000000-0000-4000-8000-0000000003ec",
+            "source_label": "Remote loop child",
+            "source_category": "report"
+          },
+          {
+            "id": "00000000-0000-4000-8001-0000000007d5",
+            "message_id": "00000000-0000-4000-8001-0000000007d4",
+            "recipient_task_id": "00000000-0000-4000-8000-000000000002",
+            "idempotency_key": "00000000-0000-4000-8001-0000000007d4:00000000-0000-4000-8000-000000000002",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -3612,10 +4999,26 @@
             "source_category": null
           },
           {
-            "id": "00000000-0000-4000-8001-000000000004",
-            "message_id": "00000000-0000-4000-8001-000000000003",
+            "id": "00000000-0000-4000-8000-0000000003ef",
+            "message_id": "00000000-0000-4000-8000-0000000003ef",
             "recipient_task_id": "00000000-0000-4000-8001-000000000001",
-            "idempotency_key": "remote-report:owner:00000000-0000-4000-8000-000000000002:17",
+            "idempotency_key": "00000000-0000-4000-8000-0000000003ef:00000000-0000-4000-8001-000000000001",
+            "status": "delivered",
+            "queued_at": 1789333200000,
+            "delivered_at": 1789333200000,
+            "failed_at": null,
+            "failure_reason": null,
+            "source_remote_role": "child",
+            "source_remote_host": "owner",
+            "source_entry_id": "00000000-0000-4000-8000-0000000003ef",
+            "source_label": "Remote loop child",
+            "source_category": "report"
+          },
+          {
+            "id": "00000000-0000-4000-8001-0000000007d9",
+            "message_id": "00000000-0000-4000-8001-0000000007d8",
+            "recipient_task_id": "00000000-0000-4000-8000-000000000002",
+            "idempotency_key": "00000000-0000-4000-8001-0000000007d8:00000000-0000-4000-8000-000000000002",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -3626,6 +5029,22 @@
             "source_entry_id": null,
             "source_label": null,
             "source_category": null
+          },
+          {
+            "id": "00000000-0000-4000-8000-0000000007d4",
+            "message_id": "00000000-0000-4000-8000-0000000007d4",
+            "recipient_task_id": "00000000-0000-4000-8001-000000000001",
+            "idempotency_key": "00000000-0000-4000-8000-0000000007d4:00000000-0000-4000-8001-000000000001",
+            "status": "delivered",
+            "queued_at": 1789333200000,
+            "delivered_at": 1789333200000,
+            "failed_at": null,
+            "failure_reason": null,
+            "source_remote_role": "child",
+            "source_remote_host": "owner",
+            "source_entry_id": "00000000-0000-4000-8000-0000000007d4",
+            "source_label": "Remote loop child",
+            "source_category": "report"
           }
         ],
         "client_ops": [],

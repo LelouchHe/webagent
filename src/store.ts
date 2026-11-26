@@ -500,7 +500,11 @@ export class Store {
   private readonly deliveryStatusObservers: Array<
     (change: CollaborationDeliveryStatusChange) => void
   > = [];
-  private readonly pendingRemoteDeliveryAcks = new Set<string>();
+  private outboxWriteDepth = 0;
+  private pendingOutboxEntries: OutboxRow[] = [];
+  private readonly outboxObservers: Array<
+    (entries: readonly OutboxRow[]) => void
+  > = [];
   /**
    * Binding facts belong to the outermost successful commit, not to any one
    * recursive Store method. Every binding write registers its before/after
@@ -577,6 +581,34 @@ export class Store {
     this.bindingObservers.push(observer);
   }
 
+  onOutboxCommitted(observer: (entries: readonly OutboxRow[]) => void): void {
+    this.outboxObservers.push(observer);
+  }
+
+  private writeOutbox<T>(fn: () => T): T {
+    const checkpoint = this.pendingOutboxEntries.length;
+    this.outboxWriteDepth += 1;
+    let result: T;
+    try {
+      result = this.db.transaction(fn)();
+    } catch (error) {
+      this.pendingOutboxEntries.length = checkpoint;
+      this.outboxWriteDepth -= 1;
+      if (this.outboxWriteDepth === 0) this.pendingOutboxEntries = [];
+      throw error;
+    }
+    this.outboxWriteDepth -= 1;
+    if (this.outboxWriteDepth === 0) this.flushOutboxEntries();
+    return result;
+  }
+
+  private flushOutboxEntries(): void {
+    const batch = this.pendingOutboxEntries;
+    this.pendingOutboxEntries = [];
+    if (batch.length === 0) return;
+    for (const observer of this.outboxObservers) observer(batch);
+  }
+
   /**
    * Run `fn` as one binding-write scope. Nested scopes join the outer one, and
    * a failing scope rewinds the pending batch to the checkpoint it started at
@@ -587,7 +619,7 @@ export class Store {
     this.bindingWriteDepth += 1;
     let result: T;
     try {
-      result = this.db.transaction(fn)();
+      result = this.writeOutbox(fn);
     } catch (error) {
       this.pendingBindingChanges.length = checkpoint;
       this.bindingWriteDepth -= 1;
@@ -1417,6 +1449,26 @@ export class Store {
       | undefined;
   }
 
+  getRemoteChildTitle(
+    localParentTaskId: string,
+    remoteTaskId: string,
+  ): string | null {
+    const row = this.db
+      .prepare(
+        `SELECT json_extract(data, '$.taskTitle') AS title
+         FROM events
+         WHERE task_id = ? AND type = 'system_message'
+           AND json_extract(data, '$.kind') = 'task_created'
+           AND json_extract(data, '$.taskId') = ?
+         ORDER BY seq DESC
+         LIMIT 1`,
+      )
+      .get(localParentTaskId, remoteTaskId) as { title: unknown } | undefined;
+    return typeof row?.title === "string" && row.title.trim().length > 0
+      ? row.title
+      : null;
+  }
+
   recordRemoteChild(
     localParentTaskId: string,
     remoteTaskId: string,
@@ -1987,7 +2039,7 @@ export class Store {
     // Everything this operation persists — detach, transcript fact, and the
     // queued cross-tree delivery marks — commits or rolls back together. The
     // caller drops the in-memory obligation edge only after this returns.
-    const archived = this.db.transaction(() => {
+    const archived = this.writeOutbox(() => {
       const parentPath = this.getTaskPath(parentId) ?? parentId;
       this.db
         .prepare(
@@ -2023,7 +2075,7 @@ export class Store {
         },
         failedDeliveryIds,
       };
-    })();
+    });
     const { result, failedDeliveryIds } = archived;
     this.broadcastDeliveryStatus(failedDeliveryIds);
     return result;
@@ -3097,7 +3149,7 @@ export class Store {
       throw new Error("link_receipt_has_delivery");
     }
     const dataJson = stringifyLinkData(input.data);
-    return this.db.transaction(() =>
+    return this.writeOutbox(() =>
       this.enqueueOutboxInTransaction({
         entryId: input.id ?? randomUUID(),
         remoteRole: input.remoteRole,
@@ -3107,7 +3159,7 @@ export class Store {
         deliveryId: input.category === "receipt" ? null : input.deliveryId,
         createdAt: input.createdAt ?? Date.now(),
       }),
-    )();
+    );
   }
 
   applyLinkPushOperation(input: {
@@ -3115,7 +3167,7 @@ export class Store {
     remoteHost: string;
     envelope: LinkEnvelope;
   }): LinkApplyEffects {
-    return this.db.transaction(() => {
+    return this.writeOutbox(() => {
       if (input.envelope.category !== "receipt") {
         const existing = this.getInboundLinkDelivery(
           input.remoteRole,
@@ -3149,7 +3201,75 @@ export class Store {
         input.envelope,
       );
       return effects;
-    })();
+    });
+  }
+
+  enqueueLinkMessage(input: {
+    id?: string;
+    deliveryId?: string;
+    remoteRole: LinkRemoteRole;
+    remoteHost: string;
+    sourceTaskId: string;
+    targetTaskId: string;
+    sourceLabel: string;
+    targetLabel: string;
+    body: string;
+    createdAt?: number;
+  }): OutboxRow {
+    const entryId = input.id ?? randomUUID();
+    const deliveryId = input.deliveryId ?? randomUUID();
+    const createdAt = input.createdAt ?? Date.now();
+    return this.writeOutbox(() => {
+      this.requireLiveTask(input.sourceTaskId);
+      const envelope: LinkEnvelope = {
+        id: entryId,
+        category: "message",
+        data: {
+          sourceTaskId: input.sourceTaskId,
+          targetTaskId: input.targetTaskId,
+          sourceLabel: input.sourceLabel,
+          body: input.body,
+        },
+      };
+      this.insertDeliveryMessage({
+        id: entryId,
+        deliveryId,
+        sourceTaskId: input.sourceTaskId,
+        recipientTaskId: input.targetTaskId,
+        sourceActor: "agent",
+        body: input.body,
+        idempotencyKey: `${entryId}:${input.targetTaskId}`,
+        createdAt,
+        status: "queued",
+        projection: "source",
+      });
+      this.saveEvent(
+        input.sourceTaskId,
+        "system_message",
+        {
+          ...buildCollaborationSystemMessage({
+            messageId: entryId,
+            sourceTaskId: input.sourceTaskId,
+            sourceLabel: input.sourceLabel,
+            targetTaskId: input.targetTaskId,
+            targetLabel: input.targetLabel,
+            role: "source",
+            body: input.body,
+          }),
+          deliveryStatus: "queued",
+        },
+        { from_ref: `msg:${entryId}` },
+      );
+      return this.enqueueOutboxInTransaction({
+        entryId,
+        remoteRole: input.remoteRole,
+        remoteHost: input.remoteHost,
+        category: "message",
+        dataJson: stringifyLinkData(envelope.data),
+        deliveryId,
+        createdAt,
+      });
+    });
   }
 
   enqueueLinkReport(input: {
@@ -3166,7 +3286,7 @@ export class Store {
     const entryId = input.id ?? randomUUID();
     const deliveryId = input.deliveryId ?? randomUUID();
     const createdAt = input.createdAt ?? Date.now();
-    return this.db.transaction(() => {
+    return this.writeOutbox(() => {
       this.requireLiveTask(input.sourceTaskId);
       const envelope: LinkEnvelope = {
         id: entryId,
@@ -3199,7 +3319,7 @@ export class Store {
         deliveryId,
         createdAt,
       });
-    })();
+    });
   }
 
   getOutboxCursor(remoteRole: LinkRemoteRole, remoteHost: string): number {
@@ -3219,7 +3339,7 @@ export class Store {
     nextApplied: number;
     envelope: LinkEnvelope;
   }): { committed: boolean; effects: LinkApplyEffects } {
-    return this.db.transaction(() => {
+    return this.writeOutbox(() => {
       const applied = this.getOutboxCursor(input.remoteRole, input.remoteHost);
       if (applied !== input.expectedApplied) {
         return { committed: false, effects: emptyLinkApplyEffects() };
@@ -3241,7 +3361,7 @@ export class Store {
         )
         .run(input.remoteRole, input.remoteHost, input.nextApplied);
       return { committed: true, effects };
-    })();
+    });
   }
 
   listOutbox(
@@ -3578,7 +3698,9 @@ export class Store {
         input.deliveryId,
         input.createdAt,
       );
-    return this.getOutbox(input.entryId)!;
+    const row = this.getOutbox(input.entryId)!;
+    this.pendingOutboxEntries.push(row);
+    return row;
   }
 
   /**
@@ -3675,7 +3797,6 @@ export class Store {
     deliveryId?: string;
   }): void {
     const createdAt = Date.now();
-    const acknowledged: { deliveryId: string | null } = { deliveryId: null };
     this.db.transaction(() => {
       this.requireLiveTask(input.sourceTaskId);
       if (input.deliveryId === undefined) {
@@ -3705,26 +3826,6 @@ export class Store {
             `${input.id}:${input.directTargetTaskId}`,
             createdAt,
           );
-        if (this.pendingRemoteDeliveryAcks.delete(input.id)) {
-          const delivery = this.db
-            .prepare(
-              `SELECT id FROM deliveries
-               WHERE message_id = ? AND status = 'queued'`,
-            )
-            .get(input.id) as { id: string } | undefined;
-          if (delivery) {
-            if (
-              this.transitionDeliveryStatusInTransaction(
-                delivery.id,
-                "queued",
-                "delivered",
-                createdAt,
-              )
-            ) {
-              acknowledged.deliveryId = delivery.id;
-            }
-          }
-        }
       }
       this.db
         .prepare(
@@ -3753,52 +3854,6 @@ export class Store {
         { from_ref: `msg:${input.id}` },
       );
     })();
-    if (acknowledged.deliveryId) {
-      this.broadcastDeliveryStatus([acknowledged.deliveryId]);
-    }
-  }
-
-  markDeliveryDeliveredByMessage(
-    messageId: string,
-    deliveredAt = Date.now(),
-  ): boolean {
-    const changed = this.db.transaction(() => {
-      const row = this.db
-        .prepare(
-          `SELECT id FROM deliveries
-           WHERE message_id = ? AND status = 'queued'
-           LIMIT 1`,
-        )
-        .get(messageId) as { id: string } | undefined;
-      return row
-        ? this.transitionDeliveryStatusInTransaction(
-            row.id,
-            "queued",
-            "delivered",
-            deliveredAt,
-          )
-        : false;
-    })();
-    if (!changed) {
-      const exists = this.db
-        .prepare("SELECT 1 FROM deliveries WHERE message_id = ? LIMIT 1")
-        .get(messageId);
-      if (!exists) {
-        this.pendingRemoteDeliveryAcks.add(messageId);
-        if (this.pendingRemoteDeliveryAcks.size > 1024) {
-          const oldest = this.pendingRemoteDeliveryAcks.values().next().value;
-          if (oldest !== undefined) {
-            this.pendingRemoteDeliveryAcks.delete(oldest);
-          }
-        }
-      }
-      return false;
-    }
-    const delivery = this.db
-      .prepare("SELECT id FROM deliveries WHERE message_id = ?")
-      .get(messageId) as { id: string } | undefined;
-    if (delivery) this.broadcastDeliveryStatus([delivery.id]);
-    return true;
   }
 
   /**
@@ -4082,7 +4137,7 @@ export class Store {
   ): {
     event: EventRow;
   } {
-    return this.db.transaction(() => {
+    return this.writeOutbox(() => {
       this.requireLiveTask(taskId);
       this.db
         .prepare("UPDATE tasks SET workflow_status = ? WHERE id = ?")
@@ -4101,7 +4156,7 @@ export class Store {
       );
       record?.();
       return { event };
-    })();
+    });
   }
 
   getCollaborationMessage(id: string): CollaborationMessageRow | undefined {
@@ -4196,7 +4251,7 @@ export class Store {
    */
   claimQueuedDeliveries(recipientTaskId: string): CollaborationDeliveryRow[] {
     const deliveredAt = Date.now();
-    const claimed = this.db.transaction(() => {
+    const claimed = this.writeOutbox(() => {
       const ids = this.db
         .prepare(
           `SELECT d.id FROM deliveries d
@@ -4223,7 +4278,7 @@ export class Store {
         if (delivery) rows.push(delivery);
       }
       return rows;
-    })();
+    });
     this.broadcastDeliveryStatus(claimed.map((delivery) => delivery.id));
     return claimed;
   }
@@ -4237,7 +4292,7 @@ export class Store {
     failureReason: string,
     failedAt = Date.now(),
   ): void {
-    const changed = this.db.transaction(() => {
+    const changed = this.writeOutbox(() => {
       const changedIds: string[] = [];
       for (const id of ids) {
         if (
@@ -4253,7 +4308,7 @@ export class Store {
         }
       }
       return changedIds;
-    })();
+    });
     this.broadcastDeliveryStatus(changed);
   }
 
@@ -4263,7 +4318,7 @@ export class Store {
     failureReason: string,
     failedAt = Date.now(),
   ): CollaborationDeliveryRow[] {
-    const failed = this.db.transaction(() => {
+    const failed = this.writeOutbox(() => {
       const ids = this.db
         .prepare(
           `SELECT id FROM deliveries
@@ -4291,7 +4346,7 @@ export class Store {
         if (delivery) rows.push(delivery);
       }
       return rows;
-    })();
+    });
     this.broadcastDeliveryStatus(failed.map((delivery) => delivery.id));
     return failed;
   }
@@ -4300,7 +4355,7 @@ export class Store {
     taskId: string,
   ): Array<{ id: string; messageId: string }> {
     const failedAt = Date.now();
-    const failed = this.db.transaction(() => {
+    const failed = this.writeOutbox(() => {
       const rows = this.db
         .prepare(
           `SELECT id, message_id FROM deliveries
@@ -4319,7 +4374,7 @@ export class Store {
           "cleared_before_delivery",
         ),
       );
-    })();
+    });
     const ids = failed.map((row) => row.id);
     this.broadcastDeliveryStatus(ids);
     return failed.map((row) => ({ id: row.id, messageId: row.message_id }));

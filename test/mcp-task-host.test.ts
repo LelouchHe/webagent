@@ -27,9 +27,6 @@ import {
 } from "../src/host/tasks.ts";
 import { HostRegistry } from "../src/host/remote/registry.ts";
 import { projectTaskHistoryRow } from "../src/task-history.ts";
-import { createRemoteReportHandler } from "../src/host/collaboration.ts";
-import { createHostCollaborationCommand } from "../src/host/local/collaboration.ts";
-import { HostExternalParentError } from "../src/api/collaboration.ts";
 import type { AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
 
@@ -437,10 +434,7 @@ describe("MCP Task tool host", () => {
       ...local,
       ...createRemoteRoutedTaskOps({
         local,
-        remote: new HostRegistry(
-          {},
-          { listLinks: () => [], onRemoteEvent: () => {} },
-        ),
+        remote: new HostRegistry({}, { listLinks: () => [] }),
         store,
         tasks,
         broadcastCollaboration: () => {},
@@ -472,10 +466,7 @@ describe("MCP Task tool host", () => {
     const local = createLocalTaskOps({ store, tasks });
     const routed = createRemoteRoutedTaskOps({
       local,
-      remote: new HostRegistry(
-        {},
-        { listLinks: () => [], onRemoteEvent: () => {} },
-      ),
+      remote: new HostRegistry({}, { listLinks: () => [] }),
       store,
       tasks,
       broadcastCollaboration: () => {},
@@ -510,10 +501,7 @@ describe("MCP Task tool host", () => {
     const local = createLocalTaskOps({ store, tasks });
     const routed = createRemoteRoutedTaskOps({
       local,
-      remote: new HostRegistry(
-        {},
-        { listLinks: () => [], onRemoteEvent: () => {} },
-      ),
+      remote: new HostRegistry({}, { listLinks: () => [] }),
       store,
       tasks,
       broadcastCollaboration: () => {},
@@ -556,84 +544,6 @@ describe("MCP Task tool host", () => {
     assert.equal(store.claimQueuedDeliveries("alpha").length, 1);
     assert.equal(store.claimQueuedDeliveries("alpha").length, 0);
     assert.equal(store.enqueueReportDelivery(input), false);
-  });
-
-  it("tracks a remote dispatch from queued through owner prompt delivery after restart", () => {
-    const ownerDb = mkdtempSync(join(tmpdir(), "webagent-remote-delivery-"));
-    let reopened: Store | undefined;
-    try {
-      const messageId = "remote-shared-message";
-      const deliveryStore = new Store(ownerDb);
-      deliveryStore.createTask(
-        "parent",
-        ownerDb,
-        "auto",
-        "test-agent",
-        "parent-session",
-      );
-      deliveryStore.recordRemoteChild("parent", "remote-child", "owner");
-      deliveryStore.recordCallerSend({
-        id: messageId,
-        sourceTaskId: "parent",
-        directTargetTaskId: "remote-child",
-        sourceLabel: "parent",
-        targetLabel: "remote child",
-        body: "work",
-      });
-      assert.equal(
-        deliveryStore
-          .getCollaborationDeliveriesForMessages([messageId])
-          .get(messageId)?.status,
-        "queued",
-      );
-      const handler = createRemoteReportHandler({
-        store: deliveryStore,
-        enqueueReport: () => false,
-      });
-      handler("owner", "remote-child", {
-        seq: 7,
-        data: {
-          type: "collaboration_prompt",
-          taskId: "remote-child",
-          messageIds: [messageId],
-        },
-      });
-      assert.equal(
-        deliveryStore
-          .getCollaborationDeliveriesForMessages([messageId])
-          .get(messageId)?.status,
-        "delivered",
-      );
-      deliveryStore.close();
-      reopened = new Store(ownerDb);
-      assert.equal(
-        reopened
-          .getCollaborationDeliveriesForMessages([messageId])
-          .get(messageId)?.status,
-        "delivered",
-      );
-    } finally {
-      reopened?.close();
-      rmSync(ownerDb, { recursive: true, force: true });
-    }
-  });
-
-  it("applies an owner delivery acknowledgment before the queued write", () => {
-    const messageId = "early-ack-message";
-    assert.equal(store.markDeliveryDeliveredByMessage(messageId), false);
-    store.recordCallerSend({
-      id: messageId,
-      sourceTaskId: "alpha",
-      directTargetTaskId: "remote-child",
-      sourceLabel: "Alpha",
-      targetLabel: "Remote child",
-      body: "work",
-    });
-    assert.equal(
-      store.getCollaborationDeliveriesForMessages([messageId]).get(messageId)
-        ?.status,
-      "delivered",
-    );
   });
 
   it("opens an account for an external parent's dispatch but not for a remote child's report", () => {
@@ -683,49 +593,6 @@ describe("MCP Task tool host", () => {
       tasks.hasOpenObligation("external-parent", "owned-remote-child"),
       true,
     );
-  });
-
-  it("refuses a host dispatch from a source other than the external parent", () => {
-    store.createDeferredRemoteTask({
-      id: "owned-child",
-      cwd: dir,
-      source: "host",
-      agentId: "test-agent",
-      externalParentId: "right-parent",
-      remoteHost: "peer",
-      title: "Owned child",
-      creationAnchor: {},
-    });
-    const command = createHostCollaborationCommand({ store, tasks });
-    assert.throws(
-      () =>
-        command.receive({
-          sourceTaskId: "wrong-parent",
-          targetTaskId: "owned-child",
-          body: "work",
-        }),
-      HostExternalParentError,
-    );
-  });
-
-  it("accepts a maximum-length valid task title as remote source label", () => {
-    store.createDeferredRemoteTask({
-      id: "long-label-child",
-      cwd: dir,
-      source: "host",
-      agentId: "test-agent",
-      externalParentId: "long-label-parent",
-      remoteHost: "peer",
-      title: "Owned child",
-      creationAnchor: {},
-    });
-    const received = createHostCollaborationCommand({ store, tasks }).receive({
-      sourceTaskId: "long-label-parent",
-      targetTaskId: "long-label-child",
-      sourceLabel: "x".repeat(256),
-      body: "work",
-    });
-    assert.equal(typeof received.messageId, "string");
   });
 
   it("checks a stale agent caller before resolving Host configuration", async () => {
@@ -968,7 +835,6 @@ describe("MCP Task tool host", () => {
       { owner: { url: "http://owner.example", token: "wat_hub" } },
       {
         listLinks: () => [],
-        onRemoteEvent: () => {},
         fetch: async (input) => {
           const url =
             typeof input === "string"
@@ -2012,10 +1878,7 @@ describe("MCP Task tool host", () => {
       ...local,
       ...createRemoteRoutedTaskOps({
         local,
-        remote: new HostRegistry(
-          {},
-          { listLinks: () => [], onRemoteEvent: () => {} },
-        ),
+        remote: new HostRegistry({}, { listLinks: () => [] }),
         store,
         tasks,
         broadcastCollaboration: () => {},

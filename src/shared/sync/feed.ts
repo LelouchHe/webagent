@@ -36,6 +36,9 @@ export interface SyncFeedConsumerOptions<TData = unknown> {
   port: SyncFeedPort<TData>;
   transport: SyncFeedTransport<TData>;
   retryDelay: (failures: number, failure: StreamFailure) => number;
+  handshakeTimeoutMs?: number;
+  onConnecting?: () => void;
+  onConnected?: () => void;
   onFailure?: (failure: StreamFailure) => void;
   onProtocolError?: (error: SyncFeedProtocolError) => void;
   clock?: Partial<StreamClock>;
@@ -45,21 +48,25 @@ export class SyncFeedConsumer<TData = unknown> {
   private readonly supervisor: StreamSupervisor;
   private readonly port: SyncFeedPort<TData>;
   private readonly transport: SyncFeedTransport<TData>;
+  private readonly onConnecting?: () => void;
+  private readonly onConnected?: () => void;
+  private readonly onProtocolError?: SyncFeedConsumerOptions["onProtocolError"];
   private serial = Promise.resolve();
 
   constructor(options: SyncFeedConsumerOptions<TData>) {
     this.port = options.port;
     this.transport = options.transport;
+    this.onConnecting = options.onConnecting;
+    this.onConnected = options.onConnected;
+    this.onProtocolError = options.onProtocolError;
     this.supervisor = new StreamSupervisor({
       run: (attempt) => this.run(attempt),
       retryDelay: options.retryDelay,
+      handshakeTimeoutMs: options.handshakeTimeoutMs,
       onFailure: options.onFailure,
       clock: options.clock,
     });
-    this.onProtocolError = options.onProtocolError;
   }
-
-  private readonly onProtocolError?: SyncFeedConsumerOptions["onProtocolError"];
 
   start(): StreamAttempt {
     return this.supervisor.start();
@@ -74,13 +81,17 @@ export class SyncFeedConsumer<TData = unknown> {
   }
 
   private async run(attempt: StreamAttempt): Promise<void> {
+    this.onConnecting?.();
     const applied = await this.port.applied();
     if (!attempt.isCurrent()) return;
+    this.supervisor.beginHandshake(attempt);
     await this.transport.watch({
       after: applied,
       signal: attempt.signal,
       connected: () => {
+        if (!attempt.isCurrent()) return;
         this.supervisor.connected(attempt);
+        this.onConnected?.();
       },
       activity: () => {
         this.supervisor.noteActivity(attempt);

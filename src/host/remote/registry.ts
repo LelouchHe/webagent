@@ -8,13 +8,8 @@ import type {
   TaskQueryResult,
   TaskReadInput,
   TaskReadResult,
-  TaskSendResult,
 } from "../../api/tasks.ts";
-import {
-  buildTaskHistoryQuery,
-  type CanonicalTaskHistoryEvent,
-} from "../../task-history.ts";
-import { randomUUID } from "node:crypto";
+import { buildTaskHistoryQuery } from "../../task-history.ts";
 import {
   TaskHostNotConfiguredError,
   TaskRemoteCreateNotSentError,
@@ -22,18 +17,11 @@ import {
   TaskRemoteCreateUnknownError,
 } from "../../api/tasks.ts";
 import { log } from "../../log.ts";
-import { HTTP_STATUS } from "../../http-status.ts";
-import { isWorkflowStatus } from "../../shared/workflow-status.ts";
-import {
-  HostConnection,
-  HostRequestError,
-  type HostStreamEvent,
-} from "./connection.ts";
-import {
-  retryDelay,
-  type HostRuntimeState,
-  type HostConnectionState,
-  type HostUnreachableReason,
+import { HostConnection, REMOTE_STATUS_TIMEOUT_MS } from "./connection.ts";
+import type {
+  HostRuntimeState,
+  HostConnectionState,
+  HostUnreachableReason,
 } from "./state.ts";
 
 const hlog = log.scope("hosts");
@@ -44,20 +32,31 @@ export interface RemoteTask {
   host: string;
 }
 
+export interface HostLinkWorker {
+  start(): void;
+  stop(): void;
+  wakeOutbox(): void;
+}
+
 export interface HostRegistryOptions {
   fetch?: typeof globalThis.fetch;
+  statusTimeoutMs?: number;
   listLinks: () => RemoteTask[];
-  onRemoteEvent: (
-    host: string,
-    childId: string,
-    event: HostStreamEvent,
-  ) => void;
+  createLinkWorker?: (input: {
+    host: string;
+    connection: HostConnection;
+    onState: (
+      state: HostConnectionState,
+      reason?: HostUnreachableReason,
+    ) => void;
+  }) => HostLinkWorker;
 }
 
 export class HostRegistry implements RemoteTaskCreateTransport {
   private readonly states = new Map<string, HostRuntimeState>();
   private readonly connections = new Map<string, HostConnection>();
-  private readonly mirrors = new Map<string, TaskListItem>();
+  private readonly workers = new Map<string, HostLinkWorker>();
+  private readonly statusTimeoutMs: number;
   private started = false;
   private readonly options?: HostRegistryOptions;
 
@@ -66,6 +65,7 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     options?: HostRegistryOptions,
   ) {
     this.options = options;
+    this.statusTimeoutMs = options?.statusTimeoutMs ?? REMOTE_STATUS_TIMEOUT_MS;
     for (const [name, config] of Object.entries(configs)) {
       this.states.set(name, {
         name,
@@ -74,37 +74,37 @@ export class HostRegistry implements RemoteTaskCreateTransport {
         reason: null,
         since: Date.now(),
       });
-      this.connections.set(
-        name,
-        new HostConnection(config, {
-          fetch: options?.fetch,
-          retryDelay: (attempt) => retryDelay(attempt),
-          subscriptionParentIds: () =>
-            (this.options?.listLinks() ?? [])
-              .filter((link) => link.host === name)
-              .map((link) => link.localTaskId),
-          onState: (state, reason) => {
-            this.transition(name, state, reason);
-          },
-          onConnected: (isCurrent) => {
-            return this.refresh(name, isCurrent);
-          },
-          onEvent: (event) => {
-            this.applyEvent(name, event);
-          },
-        }),
-      );
+      const connection = new HostConnection(config, {
+        fetch: options?.fetch,
+      });
+      this.connections.set(name, connection);
+      if (options?.createLinkWorker) {
+        this.workers.set(
+          name,
+          options.createLinkWorker({
+            host: name,
+            connection,
+            onState: (state, reason) => {
+              this.transition(name, state, reason);
+            },
+          }),
+        );
+      }
     }
   }
 
   start(): void {
     if (this.started) return;
     this.started = true;
-    for (const connection of this.connections.values()) connection.start();
+    for (const worker of this.workers.values()) worker.start();
   }
 
   stopAll(): void {
-    for (const connection of this.connections.values()) connection.stop();
+    for (const worker of this.workers.values()) worker.stop();
+  }
+
+  wakeOutbox(host: string): void {
+    this.workers.get(host)?.wakeOutbox();
   }
 
   list(): HostRuntimeState[] {
@@ -119,35 +119,8 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     if (!connection) throw new TaskHostNotConfiguredError(host);
     const attempt = await connection.createTask(input);
     switch (attempt.kind) {
-      case "success": {
-        // A create sent without a connection id, or on a connection that has
-        // since been replaced, may predate the ticket that would carry its
-        // parent; reconnect so the next ticket includes the committed link.
-        if (
-          attempt.connectionId === null ||
-          attempt.connectionId !== connection.currentConnectionId
-        ) {
-          connection.reconnect();
-        }
-        const { task } = attempt.result;
-        this.mirror(nameKey(host, task.id), {
-          id: task.id,
-          relation: "child",
-          host,
-          title: task.title ?? task.id,
-          workflowStatus: task.workflowStatus,
-        });
-        try {
-          await this.refreshChild(connection, host, task.id, () => true);
-        } catch (error) {
-          hlog.warn("remote create snapshot failed", {
-            host,
-            taskId: task.id,
-            error: String(error),
-          });
-        }
+      case "success":
         return attempt.result;
-      }
       case "rejected":
         throw new TaskRemoteCreateRejectedError(
           host,
@@ -161,41 +134,23 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     }
   }
 
-  listRemoteChildren(localParentTaskId: string): TaskListItem[] {
+  async listRemoteChildren(localParentTaskId: string): Promise<TaskListItem[]> {
     const links = this.linksForParent(localParentTaskId);
-    const stateByHost = this.states;
-    return links.map((link) => {
-      const host = link.host;
-      const key = nameKey(host, link.remoteTaskId);
-      const mirrored = this.mirrors.get(key);
-      return {
-        ...(mirrored ?? {
-          id: link.remoteTaskId,
-          relation: "child" as const,
-          host,
-        }),
-        ...(stateByHost.get(host)?.state === "connected" &&
-        mirrored?.unreachable === undefined
-          ? {}
-          : { unreachable: true as const }),
-      };
-    });
+    return Promise.all(links.map((link) => this.readChildStatusItem(link)));
   }
 
   /** Remote children of the given local parents, for list egress. */
-  listRemoteChildrenOf(
+  async listRemoteChildrenOf(
     parentTaskIds: ReadonlySet<string>,
-  ): Array<TaskListItem & { parentTaskId: string }> {
+  ): Promise<Array<TaskListItem & { parentTaskId: string }>> {
     if (this.connections.size === 0) return [];
-    const parents = new Set(
-      (this.options?.listLinks() ?? [])
-        .map((link) => link.localTaskId)
-        .filter((id) => parentTaskIds.has(id)),
+    const links = (this.options?.listLinks() ?? []).filter((link) =>
+      parentTaskIds.has(link.localTaskId),
     );
-    return [...parents].flatMap((parentTaskId) =>
-      this.listRemoteChildren(parentTaskId).map((item) => ({
-        ...item,
-        parentTaskId,
+    return Promise.all(
+      links.map(async (link) => ({
+        ...(await this.readChildStatusItem(link)),
+        parentTaskId: link.localTaskId,
       })),
     );
   }
@@ -246,185 +201,46 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     return target.connection.readTaskHistory(target.taskId, input);
   }
 
-  async sendRemote(
-    target: RemoteTaskTarget,
-    body: string,
-    sourceLabel: string,
-  ): Promise<TaskSendResult> {
-    const result = await target.connection.sendTaskMessage({
-      sourceTaskId: target.parentTaskId,
-      targetTaskId: target.taskId,
-      body,
-      sourceLabel,
-      clientOpId: randomUUID(),
-    });
-    if (result.kind !== "accepted") {
-      throw new Error(`Remote task send failed: ${result.reason}`);
-    }
-    return {
-      messageId: result.messageId,
-      targetTaskId: target.taskId,
-      targetLabel:
-        this.mirrors.get(nameKey(target.host, target.taskId))?.title ??
-        target.taskId.slice(0, 8),
-      sourceLabel,
-    };
-  }
-
-  remoteTitleForTaskId(taskId: string): string | undefined {
-    for (const mirror of this.mirrors.values()) {
-      if (mirror.id === taskId) return mirror.title ?? undefined;
-    }
-    return undefined;
-  }
-
-  private async refresh(
-    name: string,
-    isCurrent: () => boolean = () => true,
-  ): Promise<void> {
-    const connection = this.connections.get(name);
-    if (!connection || !isCurrent()) return;
-    try {
-      const links = this.linksForHost(name);
-      if (links.length === 0) return;
-      for (const link of links) {
-        if (!isCurrent()) return;
-        await this.refreshChild(connection, name, link.remoteTaskId, isCurrent);
-      }
-    } catch (error) {
-      if (isCurrent()) throw error;
-    }
-  }
-
-  private async refreshChild(
-    connection: HostConnection,
-    host: string,
-    childId: string,
-    isCurrent: () => boolean,
-  ): Promise<void> {
-    const statusPromise = connection
-      .getJson(`/api/v1/tasks/${encodeURIComponent(childId)}/status`)
-      .then((value) => value as RemoteStatusRow)
-      .catch(() => null);
-    const detailPromise = connection
-      .readTaskDetail(childId)
-      .catch((error: unknown) => {
-        if (
-          error instanceof HostRequestError &&
-          error.status === HTTP_STATUS.NOT_FOUND
-        ) {
-          this.markUnreachable(host, childId);
-        }
-        return null;
-      });
-    const eventsPromise = connection.readTaskEvents(childId);
-    let events: Awaited<ReturnType<HostConnection["readTaskEvents"]>>;
-    try {
-      events = await eventsPromise;
-    } catch (error) {
-      if (
-        error instanceof HostRequestError &&
-        error.status === HTTP_STATUS.NOT_FOUND
-      ) {
-        this.markUnreachable(host, childId);
-        return;
-      }
-      throw error;
-    }
-    if (!isCurrent()) return;
-    for (const event of events) {
-      if (!isCurrent()) return;
-      this.options?.onRemoteEvent(host, childId, remoteCatchupEvent(event));
-    }
-    const [detail, status] = await Promise.all([detailPromise, statusPromise]);
-    if (!isCurrent() || !status) return;
-    const previous = this.mirrors.get(nameKey(host, childId));
-    this.mirror(nameKey(host, childId), {
-      id: childId,
-      relation: "child",
-      host,
-      ...(previous ?? {}),
-      ...(detail
-        ? {
-            title: detail.title ?? childId,
-            workflowStatus: detail.workflowStatus,
-          }
-        : {}),
-      executionState: executionStateFromStatus(status),
-      lastEventAt: latestEventAt(events),
-      lastAgentActivityAt: latestAgentActivityAt(events),
-    });
-  }
-
-  private applyEvent(name: string, event: HostStreamEvent): void {
-    const childId =
-      typeof event.data.taskId === "string" ? event.data.taskId : null;
-    if (!childId) return;
-    const key = nameKey(name, childId);
-    const current = this.mirrors.get(key);
-    if (!current) return;
-    const next: TaskListItem = {
-      ...current,
-      lastEventAt: new Date().toISOString(),
-    };
-    if (
-      event.data.type === "task_title_updated" &&
-      typeof event.data.title === "string"
-    ) {
-      next.title = event.data.title;
-    }
-    if (
-      event.data.type === "task_update" &&
-      isWorkflowStatus(event.data.status)
-    ) {
-      next.workflowStatus = event.data.status;
-    }
-    if (isAgentActivityEvent(event.data.type)) {
-      next.lastAgentActivityAt = new Date().toISOString();
-    }
-    const executionState = executionStateFromPatch(event.data.patch);
-    if (executionState) {
-      next.executionState = executionState;
-      if (executionState === "agent") {
-        next.workflowStatus = "running";
-      } else if (
-        executionState === "idle" &&
-        next.workflowStatus === "running"
-      ) {
-        next.workflowStatus = "idle";
-      }
-    }
-    delete next.unreachable;
-    this.mirror(key, next);
-    this.options?.onRemoteEvent(name, childId, event);
-  }
-
-  private mirror(key: string, item: TaskListItem): void {
-    this.mirrors.set(key, item);
-  }
-
-  private markUnreachable(host: string, childId: string): void {
-    const key = nameKey(host, childId);
-    const previous = this.mirrors.get(key);
-    this.mirror(key, {
-      ...(previous ?? {
-        id: childId,
+  private async readChildStatusItem(link: RemoteTask): Promise<TaskListItem> {
+    const connection = this.connections.get(link.host);
+    const watchConnected = this.states.get(link.host)?.state === "connected";
+    if (!connection) {
+      return {
+        id: link.remoteTaskId,
         relation: "child",
-        host,
-      }),
-      unreachable: true,
-    });
+        host: link.host,
+        unreachable: true,
+      };
+    }
+    try {
+      const status = await connection.readTaskStatus(
+        link.remoteTaskId,
+        this.statusTimeoutMs,
+      );
+      return {
+        id: link.remoteTaskId,
+        relation: "child",
+        host: link.host,
+        title: status.title,
+        workflowStatus: status.workflowStatus,
+        executionState: status.executionState,
+        lastEventAt: status.lastEventAt,
+        lastAgentActivityAt: status.lastAgentActivityAt,
+        ...(watchConnected ? {} : { unreachable: true as const }),
+      };
+    } catch {
+      return {
+        id: link.remoteTaskId,
+        relation: "child",
+        host: link.host,
+        unreachable: true,
+      };
+    }
   }
 
   private linksForParent(localTaskId: string): RemoteTask[] {
     return (this.options?.listLinks() ?? []).filter(
       (link) => link.localTaskId === localTaskId,
-    );
-  }
-
-  private linksForHost(host: string): RemoteTask[] {
-    return (this.options?.listLinks() ?? []).filter(
-      (link) => link.host === host,
     );
   }
 
@@ -449,81 +265,6 @@ export class HostRegistry implements RemoteTaskCreateTransport {
       ...(nextReason ? { reason: nextReason } : {}),
     });
   }
-}
-
-function nameKey(host: string, taskId: string): string {
-  return `${host}\0${taskId}`;
-}
-
-export function remoteCatchupEvent(
-  event: import("./connection.ts").OwnerTaskHistoryEvent,
-): HostStreamEvent {
-  return {
-    seq: event.seq,
-    data: {
-      ...event.parsedData,
-      taskId: event.task_id,
-      type: event.type,
-    },
-  };
-}
-
-interface RemoteStatusRow {
-  busy?: unknown;
-  busyKind?: unknown;
-}
-
-function executionStateFromStatus(
-  status: RemoteStatusRow,
-): TaskListItem["executionState"] {
-  if (status.busy !== true) return "idle";
-  return status.busyKind === "bash" ? "bash" : "agent";
-}
-
-function executionStateFromPatch(
-  patch: unknown,
-): TaskListItem["executionState"] | undefined {
-  if (!patch || typeof patch !== "object" || Array.isArray(patch))
-    return undefined;
-  const runtime = (patch as { runtime?: unknown }).runtime;
-  if (!runtime || typeof runtime !== "object" || Array.isArray(runtime))
-    return undefined;
-  const busy = (runtime as { busy?: unknown }).busy;
-  if (busy === null) return "idle";
-  if (!busy || typeof busy !== "object" || Array.isArray(busy))
-    return undefined;
-  const kind = (busy as { kind?: unknown }).kind;
-  return kind === "bash" ? "bash" : kind === "agent" ? "agent" : undefined;
-}
-
-function isAgentActivityEvent(type: unknown): boolean {
-  return [
-    "assistant_message",
-    "thinking",
-    "message_chunk",
-    "thought_chunk",
-    "agent_image",
-    "tool_call",
-    "tool_call_update",
-    "permission_request",
-    "plan",
-  ].includes(type as string);
-}
-
-function latestEventAt(
-  events: readonly CanonicalTaskHistoryEvent[],
-): string | null {
-  return events.at(-1)?.created_at ?? null;
-}
-
-function latestAgentActivityAt(
-  events: readonly CanonicalTaskHistoryEvent[],
-): string | null {
-  for (let index = events.length - 1; index >= 0; index--) {
-    if (isAgentActivityEvent(events[index].type))
-      return events[index].created_at;
-  }
-  return null;
 }
 
 export interface RemoteTaskTarget {

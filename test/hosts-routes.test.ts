@@ -152,11 +152,10 @@ describe("task list egress with remote children", () => {
       authStore,
       hostRegistry: {
         list: () => [],
-        listRemoteChildrenOf(parentTaskIds) {
+        async listRemoteChildrenOf(parentTaskIds) {
           asked = parentTaskIds;
           return [
             {
-              kind: "remote",
               id: "remote-child",
               relation: "child",
               host: "owner",

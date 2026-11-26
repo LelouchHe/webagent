@@ -35,6 +35,7 @@ export class SyncOutbox<TRequest = unknown, TResponse = unknown> {
   private readonly options: SyncOutboxOptions<TRequest, TResponse>;
   private active: {
     id: string;
+    position: number;
     generation: number;
     retry: unknown;
   } | null = null;
@@ -69,6 +70,16 @@ export class SyncOutbox<TRequest = unknown, TResponse = unknown> {
 
   handedOff(entryId: string): void {
     if (this.active?.id !== entryId) return;
+    this.releaseActive();
+  }
+
+  handedOffPosition(position: number): void {
+    if (!this.active || this.active.position > position) return;
+    this.releaseActive();
+  }
+
+  private releaseActive(): void {
+    if (!this.active) return;
     if (this.active.retry !== null) {
       this.options.timer.clearTimeout(this.active.retry);
     }
@@ -84,7 +95,12 @@ export class SyncOutbox<TRequest = unknown, TResponse = unknown> {
       const entry = await this.port.next();
       if (!entry || !this.isStarted() || this.hasActive()) return;
       const generation = ++this.generation;
-      this.active = { id: entry.id, generation, retry: null };
+      this.active = {
+        id: entry.id,
+        position: entry.position,
+        generation,
+        retry: null,
+      };
       void this.send(entry, generation, 1);
     } finally {
       this.pumping = false;

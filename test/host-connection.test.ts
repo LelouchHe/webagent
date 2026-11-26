@@ -5,16 +5,15 @@ import {
   TokenCommandError,
 } from "../src/host/remote/credentials.ts";
 import { retryDelay } from "../src/host/remote/state.ts";
-import { hashToken } from "../src/auth.ts";
 import {
   HostConnection,
-  HostRequestError,
   decodeOwnerTaskEvents,
 } from "../src/host/remote/connection.ts";
+import { HostRegistry } from "../src/host/remote/registry.ts";
 import {
-  HostRegistry,
-  remoteCatchupEvent,
-} from "../src/host/remote/registry.ts";
+  SyncFeedConsumer,
+  type SyncFeedEntry,
+} from "../src/shared/sync/index.ts";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -51,7 +50,6 @@ describe("host connection helpers", () => {
     const connection = new HostConnection(
       { url: "http://owner.example", token: "wat_host" },
       {
-        retryDelay: () => 0,
         fetch: async (input, init) => {
           requests.push({
             url:
@@ -120,7 +118,6 @@ describe("host connection helpers", () => {
     const rejectConnection = new HostConnection(
       { url: "http://owner.example", token: "wat_host" },
       {
-        retryDelay: () => 0,
         fetch: async () =>
           new Response(JSON.stringify({ error: "Agent missing" }), {
             status: 400,
@@ -140,7 +137,6 @@ describe("host connection helpers", () => {
     const unknownConnection = new HostConnection(
       { url: "http://owner.example", token: "wat_host" },
       {
-        retryDelay: () => 0,
         fetch: async () => {
           calls += 1;
           throw new TypeError("connection closed");
@@ -155,41 +151,6 @@ describe("host connection helpers", () => {
 
     assert.equal(unknown.kind, "unknown");
     assert.equal(calls, 1);
-  });
-
-  it("carries the caller title on remote dispatch", async () => {
-    let requestBody: Record<string, unknown> | null = null;
-    const connection = new HostConnection(
-      { url: "http://owner.example", token: "wat_host" },
-      {
-        retryDelay: () => 0,
-        fetch: async (_input, init) => {
-          if (typeof init?.body !== "string") throw new Error("missing body");
-          requestBody = JSON.parse(init.body) as Record<string, unknown>;
-          return Response.json(
-            { messageId: "owner-message", status: "queued" },
-            { status: 202 },
-          );
-        },
-      },
-    );
-    assert.equal(
-      (
-        await connection.sendTaskMessage({
-          sourceTaskId: "parent",
-          targetTaskId: "child",
-          body: "work",
-          sourceLabel: "Parent title",
-          clientOpId: "op",
-        })
-      ).kind,
-      "accepted",
-    );
-    assert.deepEqual(requestBody, {
-      targetTaskId: "child",
-      body: "work",
-      sourceLabel: "Parent title",
-    });
   });
 
   it("keeps literal credentials unchanged", async () => {
@@ -243,809 +204,245 @@ describe("host connection helpers", () => {
     }
   });
 
-  it("times out a stalled SSE handshake, marks unreachable, and retries", async () => {
-    let sseAttempts = 0;
-    let observedRetryState = false;
-    const secondSse = deferred<void>();
-    const fetchImpl: typeof globalThis.fetch = async (input, init) => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.href
-            : input.url;
-      if (url.endsWith("/api/v1/auth/verify")) {
-        assert.equal(
-          new Headers(init?.headers).get("authorization"),
-          "Bearer wat_hub",
-        );
-        assert.ok(init?.signal);
-        const token = "wat_hub";
-        return Response.json({
-          ok: true,
-          name: "hub",
-          scope: "api",
-          hash: hashToken(token),
-        });
-      }
-      if (url.endsWith("/api/v1/sse-ticket")) {
-        assert.equal(
-          new Headers(init?.headers).get("authorization"),
-          "Bearer wat_hub",
-        );
-        assert.ok(init?.signal);
-        return Response.json({ ticket: "ticket" });
-      }
-      sseAttempts += 1;
-      if (sseAttempts >= 2) secondSse.resolve();
-      return new Promise<Response>((_resolve, reject) => {
-        init?.signal?.addEventListener(
-          "abort",
-          () => {
-            reject(new DOMException("Aborted", "AbortError"));
-          },
-          { once: true },
-        );
-      });
-    };
+  it("times out a stalled watch handshake, marks unreachable, and retries", async () => {
+    let attempts = 0;
+    const second = deferred<void>();
+    const states: Array<{ state: string; reason?: string }> = [];
     const connection = new HostConnection(
-      { url: "http://owner.example", token: "wat_hub" },
+      { url: "http://owner.example", token: "wat_host" },
       {
-        fetch: fetchImpl,
-        handshakeTimeoutMs: 20,
-        retryDelay: () => 1,
-        onState: (state, reason) => {
-          if (state === "unreachable" && reason === "network") {
-            observedRetryState = true;
+        fetch: async (_input, init) => {
+          attempts += 1;
+          if (attempts === 1) {
+            return new Response(
+              new ReadableStream<Uint8Array>({
+                start() {
+                  // Stalls before emitting event: connected.
+                },
+              }),
+              { status: 200, headers: { "Content-Type": "text/event-stream" } },
+            );
           }
+          second.resolve();
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode("event: connected\ndata: {}\n\n"),
+                );
+                init?.signal?.addEventListener("abort", () => {
+                  try {
+                    controller.close();
+                  } catch {
+                    /* closed */
+                  }
+                });
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "text/event-stream" } },
+          );
         },
       },
     );
-    connection.start();
-    await Promise.race([
-      secondSse.promise,
-      new Promise<never>((_resolve, reject) =>
-        setTimeout(() => {
-          reject(new Error("second SSE fetch timed out"));
-        }, 1_000),
-      ),
-    ]);
-    connection.stop();
-    assert.equal(observedRetryState, true);
-    assert.ok(
-      sseAttempts >= 2,
-      `expected retry, got ${sseAttempts} attempt(s)`,
-    );
-  });
-
-  it("never overlaps real token commands after abort", async () => {
-    const root = mkdtempSync(join(tmpdir(), "webagent-token-command-"));
-    const lock = join(root, "lock");
-    const starts = join(root, "starts");
-    const overlap = join(root, "overlap");
-    const command = [
-      `trap '' TERM`,
-      `if ! mkdir ${JSON.stringify(lock)}; then echo overlap > ${JSON.stringify(overlap)}; fi`,
-      `echo start >> ${JSON.stringify(starts)}`,
-      "sleep 0.25",
-      `rmdir ${JSON.stringify(lock)} 2>/dev/null || true`,
-      "printf wat_hub",
-    ].join("; ");
-    const fetchImpl: typeof globalThis.fetch = async () =>
-      new Response("not found", { status: 404 });
-    const connection = new HostConnection(
-      { url: "http://owner.example", token: `!${command}` },
-      {
-        fetch: fetchImpl,
-        retryDelay: () => 1,
-      },
-    );
+    const consumer = new SyncFeedConsumer({
+      port: { applied: () => 0, apply: () => true },
+      transport: connection.feedTransport(),
+      retryDelay: () => 5,
+      handshakeTimeoutMs: 25,
+      onConnecting: () => states.push({ state: "connecting" }),
+      onConnected: () => states.push({ state: "connected" }),
+      onFailure: ({ error }) =>
+        states.push({
+          state: "unreachable",
+          reason: HostConnection.failureReason(error),
+        }),
+    });
+    consumer.start();
     try {
-      connection.start();
-      await until(
-        () =>
-          existsSync(starts) &&
-          readFileSync(starts, "utf8").trim().split("\n").length >= 1,
-      );
-      connection.stop();
-      connection.start();
-      await until(
-        () =>
-          existsSync(starts) &&
-          readFileSync(starts, "utf8").trim().split("\n").length >= 2,
-        1_500,
-      );
-      connection.stop();
-      assert.equal(existsSync(overlap), false, "token commands overlapped");
+      await second.promise;
+      await until(() => states.some((s) => s.state === "connected"));
+      assert.ok(states.some((s) => s.state === "unreachable"));
     } finally {
-      connection.stop();
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      rmSync(root, { recursive: true, force: true });
+      consumer.stop();
     }
   });
 
-  it("does not publish connected after a pending read is invalidated", async () => {
-    let stream!: ReadableStreamDefaultController<Uint8Array>;
-    let streamReady = false;
-    let hookCalls = 0;
-    const states: string[] = [];
-    const fetchImpl: typeof globalThis.fetch = async (input) => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.href
-            : input.url;
-      if (url.endsWith("/api/v1/auth/verify")) {
-        return Response.json({
-          ok: true,
-          name: "hub",
-          scope: "api",
-          hash: hashToken("wat_hub"),
-        });
-      }
-      if (url.endsWith("/api/v1/sse-ticket")) {
-        return Response.json({ ticket: "ticket" });
-      }
-      return new Response(
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            stream = controller;
-            streamReady = true;
-          },
-        }),
-      );
-    };
+  it("parses coalesced and split SSE entry frames after connected", async () => {
+    const received: SyncFeedEntry<unknown>[] = [];
     const connection = new HostConnection(
-      { url: "http://owner.example", token: "wat_hub" },
+      { url: "http://owner.example", token: "wat_host" },
       {
-        fetch: fetchImpl,
-        handshakeTimeoutMs: 1_000,
-        retryDelay: () => 1_000,
-        onState: (state) => {
-          states.push(state);
-        },
-        onConnected: () => {
-          hookCalls += 1;
+        fetch: async (_input, init) => {
+          const encoder = new TextEncoder();
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  encoder.encode(
+                    'event: connected\ndata: {}\n\nevent: entry\nid: 1\ndata: {"pos":1,"prev":0,"data":{"a":1}}\n\nevent: entry\nid: 2\ndata: {"pos":2,"prev":1,',
+                  ),
+                );
+                controller.enqueue(
+                  encoder.encode(
+                    '"data":{"a":2}}\n\nevent: heartbeat\ndata: {}\n\n',
+                  ),
+                );
+                init?.signal?.addEventListener("abort", () => {
+                  try {
+                    controller.close();
+                  } catch {
+                    /* closed */
+                  }
+                });
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "text/event-stream" } },
+          );
         },
       },
     );
-    connection.start();
-    await until(() => streamReady);
-    stream.enqueue(
-      new TextEncoder().encode(
-        'data: {"type":"connected","clientId":"stale"}\n\n',
-      ),
-    );
-    connection.stop();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(states.includes("connected"), false);
-    assert.equal(hookCalls, 0);
-  });
-
-  it("reconnects when connected catch-up fails", async () => {
-    let sseAttempts = 0;
-    let refreshes = 0;
-    const second = deferred<void>();
-    const fetchImpl: typeof globalThis.fetch = async (input) => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.href
-            : input.url;
-      if (url.endsWith("/api/v1/auth/verify")) {
-        return Response.json({
-          ok: true,
-          name: "hub",
-          scope: "api",
-          hash: hashToken("wat_hub"),
-        });
-      }
-      if (url.endsWith("/api/v1/sse-ticket")) {
-        return Response.json({ ticket: `ticket-${sseAttempts}` });
-      }
-      sseAttempts += 1;
-      if (sseAttempts === 2) second.resolve();
-      return new Response(
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(
-              new TextEncoder().encode('data: {"type":"connected"}\n\n'),
-            );
-          },
-        }),
-      );
-    };
-    const connection = new HostConnection(
-      { url: "http://owner.example", token: "wat_hub" },
-      {
-        fetch: fetchImpl,
-        retryDelay: () => 0,
-        onConnected: async () => {
-          refreshes += 1;
-          if (refreshes === 1) throw new Error("events GET failed");
+    let applied = 0;
+    const consumer = new SyncFeedConsumer({
+      port: {
+        applied: () => applied,
+        apply: (entry) => {
+          received.push(entry);
+          applied = entry.pos;
+          return true;
         },
       },
-    );
-    connection.start();
-    await Promise.race([
-      second.promise,
-      new Promise<never>((_resolve, reject) => {
-        setTimeout(() => {
-          reject(new Error("catch-up reconnect timed out"));
-        }, 1_000);
-      }),
-    ]);
-    await until(() => refreshes === 2);
-    connection.stop();
-    assert.equal(refreshes, 2);
-    assert.ok(sseAttempts >= 2);
-  });
-
-  it("keeps buffered events owned by their connection attempt", async () => {
-    const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
-    const refreshes = [deferred<void>(), deferred<void>()];
-    const events: string[] = [];
-    let attempt = 0;
-    const fetchImpl: typeof globalThis.fetch = async (input) => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.href
-            : input.url;
-      if (url.endsWith("/api/v1/auth/verify")) {
-        return Response.json({
-          ok: true,
-          name: "hub",
-          scope: "api",
-          hash: hashToken("wat_hub"),
-        });
-      }
-      if (url.endsWith("/api/v1/sse-ticket")) {
-        return Response.json({ ticket: `ticket-${attempt}` });
-      }
-      return new Response(
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            streams.push(controller);
-          },
-        }),
-      );
-    };
-    const connection = new HostConnection(
-      { url: "http://owner.example", token: "wat_hub" },
-      {
-        fetch: fetchImpl,
-        retryDelay: () => 0,
-        onConnected: () => refreshes[attempt++].promise,
-        onEvent: (event) => {
-          events.push(event.data.id as string);
-        },
-      },
-    );
-    connection.start();
-    await until(() => streams.length === 1);
-    streams[0].enqueue(
-      new TextEncoder().encode('data: {"type":"connected"}\n\n'),
-    );
-    await until(() => attempt === 1);
-    connection.stop();
-    connection.start();
-    await until(() => streams.length === 2);
-    streams[1].enqueue(
-      new TextEncoder().encode(
-        'data: {"type":"connected"}\n\ndata: {"id":"new"}\n\n',
-      ),
-    );
-    await until(() => attempt === 2);
-    refreshes[0].resolve();
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    assert.deepEqual(events, []);
-    refreshes[1].resolve();
-    await until(() => events.length === 1);
-    connection.stop();
-    assert.deepEqual(events, ["new"]);
-  });
-
-  it("parses coalesced and split SSE frames after the handshake", async () => {
-    let stream!: ReadableStreamDefaultController<Uint8Array>;
-    let streamReady = false;
-    const events: Array<{ seq?: number; data: Record<string, unknown> }> = [];
-    const refresh = deferred<void>();
-    let createConnectionId: string | null = null;
-    const fetchImpl: typeof globalThis.fetch = async (input, init) => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.href
-            : input.url;
-      if (url.endsWith("/api/v1/auth/verify")) {
-        return Response.json({
-          ok: true,
-          name: "hub",
-          scope: "api",
-          hash: hashToken("wat_hub"),
-        });
-      }
-      if (url.endsWith("/api/v1/sse-ticket")) {
-        if (typeof init?.body !== "string") throw new Error("missing body");
-        assert.deepEqual(JSON.parse(init.body), {
-          parentIds: ["hub-parent"],
-        });
-        return Response.json({ ticket: "ticket" });
-      }
-      if (url.endsWith("/api/v1/tasks")) {
-        createConnectionId = new Headers(init?.headers).get(
-          "x-host-connection-id",
-        );
-        return Response.json({ error: "test rejection" }, { status: 400 });
-      }
-      return new Response(
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            stream = controller;
-            streamReady = true;
-          },
-        }),
-        { headers: { "X-Host-Connection-Id": "host-connection-1" } },
-      );
-    };
-    const connection = new HostConnection(
-      { url: "http://owner.example", token: "wat_hub" },
-      {
-        fetch: fetchImpl,
-        retryDelay: () => 1_000,
-        handshakeTimeoutMs: 1_000,
-        subscriptionParentIds: () => ["hub-parent"],
-        onConnected: () => refresh.promise,
-        onEvent: (event) => {
-          events.push(event);
-        },
-      },
-    );
-    connection.start();
-    await until(() => streamReady);
-    await connection.createTask({
-      agentId: "mock",
-      parentId: "hub-parent",
-      source: "agent",
+      transport: connection.feedTransport(),
+      retryDelay: () => 50,
     });
-    assert.equal(createConnectionId, "host-connection-1");
-    const encode = new TextEncoder();
-    stream.enqueue(
-      encode.encode(
-        'data: {"type":"connected"}\n\nid: 1\ndata: {"type":"task_update","taskId":"child"}\n\nevent: heartbeat\ndata: {}\n\n',
-      ),
-    );
-    stream.enqueue(
-      encode.encode('id: 2\ndata: {"type":"task_update","taskId":"chi'),
-    );
-    stream.enqueue(encode.encode('ld","status":"done"}\n\n'));
-    refresh.resolve();
-    await until(() => events.length === 2);
-    connection.stop();
-    assert.deepEqual(
-      events.map((event) => [event.seq, event.data.taskId, event.data.status]),
-      [
-        [1, "child", undefined],
-        [2, "child", "done"],
-      ],
-    );
+    consumer.start();
+    try {
+      await until(() => received.length === 2);
+      assert.deepEqual(received, [
+        { pos: 1, prev: 0, data: { a: 1 } },
+        { pos: 2, prev: 1, data: { a: 2 } },
+      ]);
+    } finally {
+      consumer.stop();
+    }
   });
 
-  it("validates catch-up rows and keeps the outer event type authoritative", () => {
-    const [row] = decodeOwnerTaskEvents(
+  it("validates owner task history events", () => {
+    const events = decodeOwnerTaskEvents(
       {
         events: [
           {
-            task_id: "child",
-            seq: 3,
+            task_id: "child-1",
+            seq: 1,
             type: "task_update",
-            created_at: "2026-01-01T00:00:00.000Z",
+            created_at: "2026-09-13T21:00:00.000Z",
             from_ref: "agent",
-            data: JSON.stringify({
-              type: "tool_call",
-              task_id: "other",
-              status: "done",
-            }),
+            data: JSON.stringify({ status: "done", body: "ok" }),
           },
         ],
       },
-      "child",
+      "child-1",
     );
-    assert.deepEqual(remoteCatchupEvent(row), {
-      seq: 3,
-      data: {
-        type: "task_update",
-        task_id: "other",
-        taskId: "child",
-        status: "done",
-      },
-    });
-    assert.throws(
-      () =>
-        decodeOwnerTaskEvents(
-          { events: [{ ...row, task_id: "different" }] },
-          "child",
-        ),
-      /invalid_response/,
-    );
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.parsedData.status, "done");
   });
 
-  it("catches up a disconnected report before stalled display reads fail", async () => {
-    const reports: Array<Record<string, unknown>> = [];
-    const display = deferred<unknown>();
+  it("reads remote child status in parallel within one short deadline and keeps status separate from watch offline", async () => {
+    const started: string[] = [];
     const registry = new HostRegistry(
-      {},
+      { owner: { url: "http://owner.example", token: "wat_host" } },
       {
+        statusTimeoutMs: 60,
         listLinks: () => [
-          {
-            localTaskId: "parent",
-            remoteTaskId: "child",
-            host: "owner",
-          },
+          { localTaskId: "parent", remoteTaskId: "child-1", host: "owner" },
+          { localTaskId: "parent", remoteTaskId: "child-2", host: "owner" },
         ],
-        onRemoteEvent: (_host, _child, event) => {
-          reports.push(event.data);
+        fetch: async (input, init) => {
+          const url =
+            typeof input === "string"
+              ? input
+              : input instanceof URL
+                ? input.href
+                : input.url;
+          started.push(url);
+          if (url.includes("child-1") || url.includes("child-2")) {
+            return new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () => {
+                reject(new Error("aborted"));
+              });
+            });
+          }
+          throw new Error(`unexpected ${url}`);
         },
       },
     );
-    const connection = {
-      getJson: async (path: string) => {
-        if (path.endsWith("/events")) {
-          return {
-            events: [
-              {
-                task_id: "child",
-                seq: 2,
-                type: "task_update",
-                created_at: "2026-01-01T00:00:00.000Z",
-                from_ref: "agent",
-                data: JSON.stringify({
-                  status: "done",
-                  body: "finished",
-                  targetTaskId: "parent",
-                }),
-                parsedData: {
-                  status: "done",
-                  body: "finished",
-                  targetTaskId: "parent",
-                },
-              },
-            ],
-          };
-        }
-        return display.promise;
-      },
-      readTaskDetail: async () => ({
-        id: "child",
-        title: "child",
-        workflowStatus: "idle" as const,
-      }),
-      readTaskEvents: async () => [
-        {
-          task_id: "child",
-          seq: 2,
-          type: "task_update",
-          created_at: "2026-01-01T00:00:00.000Z",
-          from_ref: "agent",
-          data: JSON.stringify({
-            status: "done",
-            body: "finished",
-            targetTaskId: "parent",
-          }),
-          parsedData: {
-            status: "done",
-            body: "finished",
-            targetTaskId: "parent",
-          },
-        },
-      ],
-    };
-    const internals = registry as unknown as {
-      connections: Map<string, typeof connection>;
-      refresh: (name: string, isCurrent?: () => boolean) => Promise<void>;
-    };
-    internals.connections.set("owner", connection);
-    const refresh = internals.refresh("owner");
-    await until(() => reports.length === 1);
-    display.reject(new Error("display read failed"));
-    await refresh;
-    assert.deepEqual(reports, [
+
+    const before = performance.now();
+    const blocked = await registry.listRemoteChildren("parent");
+    const elapsed = performance.now() - before;
+    assert.equal(started.length, 2);
+    assert.ok(
+      elapsed < 110,
+      `expected parallel timeout (~60ms), got ${elapsed}ms`,
+    );
+    assert.deepEqual(blocked, [
+      { id: "child-1", relation: "child", host: "owner", unreachable: true },
+      { id: "child-2", relation: "child", host: "owner", unreachable: true },
+    ]);
+
+    const offlineRegistry = new HostRegistry(
+      { owner: { url: "http://owner.example", token: "wat_host" } },
       {
-        status: "done",
-        body: "finished",
-        targetTaskId: "parent",
-        taskId: "child",
-        type: "task_update",
+        listLinks: () => [
+          { localTaskId: "parent", remoteTaskId: "child-1", host: "owner" },
+        ],
+        fetch: async () =>
+          Response.json({
+            busy: false,
+            busyKind: null,
+            pendingPermissions: [],
+            title: "Remote Child",
+            workflowStatus: "done",
+            executionState: "idle",
+            lastEventAt: "2026-09-13T21:00:00.000Z",
+            lastAgentActivityAt: null,
+          }),
+      },
+    );
+    assert.deepEqual(await offlineRegistry.listRemoteChildren("parent"), [
+      {
+        id: "child-1",
+        relation: "child",
+        host: "owner",
+        title: "Remote Child",
+        workflowStatus: "done",
+        executionState: "idle",
+        lastEventAt: "2026-09-13T21:00:00.000Z",
+        lastAgentActivityAt: null,
+        unreachable: true,
       },
     ]);
   });
 
-  it("marks a removed child unreachable without reconnecting", async () => {
+  it("bounds remote status read by the deadline even when credential resolution blocks", async () => {
     const registry = new HostRegistry(
-      {},
+      { owner: { url: "http://owner.example", token: "!sleep 10" } },
       {
+        statusTimeoutMs: 60,
         listLinks: () => [
-          { localTaskId: "parent", remoteTaskId: "child", host: "owner" },
+          { localTaskId: "parent", remoteTaskId: "child-1", host: "owner" },
         ],
-        onRemoteEvent: () => {
-          throw new Error("removed child must not catch up");
-        },
       },
     );
-    const connection = {
-      getJson: async () => ({ busy: false, busyKind: null }),
-      readTaskDetail: async () => ({
-        id: "child",
-        title: "child",
-        workflowStatus: "idle" as const,
-      }),
-      readTaskEvents: async () => {
-        throw new HostRequestError("/events", 404);
-      },
-    };
-    const internals = registry as unknown as {
-      connections: Map<string, typeof connection>;
-      refresh: (name: string) => Promise<void>;
-    };
-    internals.connections.set("owner", connection);
-    await internals.refresh("owner");
-    assert.equal(registry.listRemoteChildren("parent")[0]?.unreachable, true);
-  });
-
-  for (const [name, sentId, currentId, expectedReconnects] of [
-    ["missing connection id", null, "current", 1],
-    ["missing connection id while still connecting", null, null, 1],
-    ["stale connection id", "stale", "current", 1],
-    ["current connection id", "current", "current", 0],
-  ] as const) {
-    it(`handles a remote create with a ${name}`, async () => {
-      let reconnects = 0;
-      const registry = new HostRegistry(
-        {},
-        { listLinks: () => [], onRemoteEvent: () => {} },
-      );
-      const connection = {
-        createTask: async () => ({
-          kind: "success" as const,
-          connectionId: sentId,
-          result: {
-            task: {
-              id: "child",
-              title: "child",
-              agentId: "mock",
-              cwd: "/",
-              model: null,
-              thinking: null,
-              parentId: null,
-              workflowStatus: "idle" as const,
-              source: "agent",
-            },
-            session: {
-              cwdDisplay: "/",
-              parentAgentId: null,
-              configOptions: [],
-              agentCommands: { epoch: "test", revision: 0, commands: [] },
-            },
-          },
-        }),
-        reconnect: () => {
-          reconnects += 1;
-        },
-        currentConnectionId: currentId,
-        readTaskEvents: async () => [],
-        readTaskDetail: async () => ({
-          id: "child",
-          title: "child",
-          workflowStatus: "idle" as const,
-        }),
-        getJson: async () => ({ busy: false }),
-      };
-      (
-        registry as unknown as { connections: Map<string, typeof connection> }
-      ).connections.set("owner", connection);
-      await registry.create("owner", {
-        agentId: "mock",
-        parentId: "parent",
-        source: "agent",
-      });
-      assert.equal(reconnects, expectedReconnects);
-    });
-  }
-
-  it("stops a stale refresh before issuing child reads", async () => {
-    let listReads = 0;
-    let childReads = 0;
-    let eventReads = 0;
-    const registry = new HostRegistry(
-      {},
-      {
-        listLinks: () => [
-          {
-            localTaskId: "parent",
-            remoteTaskId: "child",
-            host: "owner",
-          },
-          {
-            localTaskId: "parent",
-            remoteTaskId: "second-child",
-            host: "owner",
-          },
-        ],
-        onRemoteEvent: () => {},
-      },
+    const before = performance.now();
+    const items = await registry.listRemoteChildren("parent");
+    const elapsed = performance.now() - before;
+    assert.ok(
+      elapsed < 500,
+      `expected deadline to cut off blocked token command, got ${elapsed}ms`,
     );
-    let current = true;
-    const connection = {
-      getJson: async (path: string) => {
-        if (path.startsWith("/api/v1/tasks?") || path === "/api/v1/tasks") {
-          listReads += 1;
-          return [];
-        }
-        childReads += 1;
-        return { events: [] };
-      },
-      readTaskDetail: async () => ({
-        id: "child",
-        title: "child",
-        workflowStatus: "idle" as const,
-      }),
-      readTaskEvents: async () => {
-        eventReads += 1;
-        current = false;
-        return [];
-      },
-    };
-    const internals = registry as unknown as {
-      connections: Map<string, typeof connection>;
-      refresh: (name: string, isCurrent: () => boolean) => Promise<void>;
-    };
-    internals.connections.set("owner", connection);
-    await internals.refresh("owner", () => current);
-    assert.equal(listReads, 0);
-    assert.equal(childReads, 1);
-    assert.equal(eventReads, 1);
-  });
-
-  it("updates mirror fields only from their owning events", async () => {
-    const registry = new HostRegistry(
-      {},
-      {
-        listLinks: () => [
-          {
-            localTaskId: "parent",
-            remoteTaskId: "child",
-            host: "owner",
-          },
-        ],
-        onRemoteEvent: () => {},
-      },
-    );
-    const internals = registry as unknown as {
-      mirrors: Map<
-        string,
-        {
-          id: string;
-          relation: "child";
-          host: string;
-          title: string;
-          workflowStatus: "idle";
-          executionState: "idle";
-          lastEventAt?: string | null;
-          lastAgentActivityAt?: string | null;
-        }
-      >;
-      applyEvent: (
-        name: string,
-        event: { data: Record<string, unknown> },
-      ) => void;
-    };
-    internals.mirrors.set("owner\0child", {
-      id: "child",
-      relation: "child",
-      host: "owner",
-      title: "Remote child",
-      workflowStatus: "idle",
-      executionState: "idle",
-    });
-    internals.applyEvent("owner", {
-      data: {
-        type: "tool_call",
-        taskId: "child",
-        title: "Not the task title",
-      },
-    });
-    internals.applyEvent("owner", {
-      data: {
-        type: "state_patch",
-        taskId: "child",
-        patch: { runtime: { busy: { kind: "bash" } } },
-      },
-    });
-    internals.applyEvent("owner", {
-      data: {
-        type: "task_update",
-        taskId: "child",
-        status: "done",
-      },
-    });
-    assert.deepEqual(internals.mirrors.get("owner\0child"), {
-      id: "child",
-      relation: "child",
-      host: "owner",
-      title: "Remote child",
-      workflowStatus: "done",
-      executionState: "bash",
-      lastEventAt: internals.mirrors.get("owner\0child")?.lastEventAt,
-      lastAgentActivityAt:
-        internals.mirrors.get("owner\0child")?.lastAgentActivityAt,
-    });
-  });
-
-  it("ignores owner events for a child it does not link", () => {
-    const received: string[] = [];
-    const registry = new HostRegistry(
-      {},
-      {
-        listLinks: () => [],
-        onRemoteEvent: (_host, childId) => received.push(childId),
-      },
-    );
-    const internals = registry as unknown as {
-      applyEvent(name: string, event: { data: Record<string, unknown> }): void;
-    };
-    internals.applyEvent("owner", {
-      data: {
-        type: "task_update",
-        taskId: "unlinked-child",
-        status: "done",
-      },
-    });
-    assert.deepEqual(received, []);
-  });
-
-  it("takes cold workflow status from the owner detail", async () => {
-    const registry = new HostRegistry(
-      {},
-      {
-        listLinks: () => [
-          {
-            localTaskId: "parent",
-            remoteTaskId: "child",
-            host: "owner",
-          },
-        ],
-        onRemoteEvent: () => {},
-      },
-    );
-    const connection = {
-      getJson: async (path: string) => {
-        if (path.endsWith("/status")) {
-          return { busy: false, busyKind: null };
-        }
-        return { events: [] };
-      },
-      readTaskDetail: async () => ({
-        id: "child",
-        title: "Remote child",
-        workflowStatus: "blocked" as const,
-      }),
-      readTaskEvents: async () => [],
-    };
-    const internals = registry as unknown as {
-      connections: Map<string, typeof connection>;
-      refresh: (name: string) => Promise<void>;
-    };
-    internals.connections.set("owner", connection);
-    await internals.refresh("owner");
-    assert.equal(
-      registry.listRemoteChildren("parent")[0]?.workflowStatus,
-      "blocked",
-    );
+    assert.deepEqual(items, [
+      { id: "child-1", relation: "child", host: "owner", unreachable: true },
+    ]);
   });
 
   it("computes capped exponential reconnect delays", () => {

@@ -683,8 +683,6 @@ export class TaskManager implements ObligationHost {
   /** One microtask recovery per task while an unfinished-work retry is active. */
   private readonly pendingWorkRecoveries = new Set<string>();
   private readonly collaborationSourceLabels = new Map<string, string>();
-  private remoteCollaborationTitle:
-    ((taskId: string) => string | undefined) | undefined;
   /** Latest qualifying agent-runtime activity per task, epoch ms. */
   private readonly lastAgentActivityAt = new Map<string, number>();
   /**
@@ -708,12 +706,6 @@ export class TaskManager implements ObligationHost {
   /** Live-only delivery status refresh for a sender's message mark. */
   private deliveryStatusBroadcast:
     | ((event: Extract<AgentEvent, { type: "collaboration_delivery" }>) => void)
-    | null = null;
-  private collaborationPromptBroadcast:
-    | ((
-        event: Extract<AgentEvent, { type: "collaboration_prompt" }>,
-        seq: number,
-      ) => void)
     | null = null;
   private remoteChildWakeSource: ((taskId: string) => boolean) | null = null;
   /**
@@ -3954,27 +3946,12 @@ export class TaskManager implements ObligationHost {
     this.deliveryStatusBroadcast = broadcast;
   }
 
-  setCollaborationPromptBroadcast(
-    broadcast: (
-      event: Extract<AgentEvent, { type: "collaboration_prompt" }>,
-      seq: number,
-    ) => void,
-  ): void {
-    this.collaborationPromptBroadcast = broadcast;
-  }
-
   setRemoteChildWakeSource(check: (taskId: string) => boolean): void {
     this.remoteChildWakeSource = check;
   }
 
   rememberCollaborationSourceLabel(messageId: string, label: string): void {
     this.collaborationSourceLabels.set(messageId, label);
-  }
-
-  setRemoteCollaborationTitle(
-    resolve: (taskId: string) => string | undefined,
-  ): void {
-    this.remoteCollaborationTitle = resolve;
   }
 
   /**
@@ -4234,7 +4211,6 @@ export class TaskManager implements ObligationHost {
     return (
       this.collaborationSourceLabels.get(message.id) ??
       this.store.getTaskIncludingDeleted(message.source_task_id)?.title ??
-      this.remoteCollaborationTitle?.(message.source_task_id) ??
       message.source_task_id.slice(0, 8)
     );
   }
@@ -4314,15 +4290,11 @@ export class TaskManager implements ObligationHost {
       const bounded = truncated
         ? `${text.slice(0, MAX_COLLABORATION_PROMPT_AUDIT - 2)}\n…`
         : text;
-      const saved = this.store.saveEvent(
+      this.store.saveEvent(
         taskId,
         "collaboration_prompt",
         { messageIds, text: bounded, truncated, rawSize },
         { from_ref: "system" },
-      );
-      this.collaborationPromptBroadcast?.(
-        { type: "collaboration_prompt", taskId, messageIds },
-        saved.seq,
       );
     } catch (error) {
       slog.warn("collaboration prompt audit failed", {

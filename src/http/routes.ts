@@ -44,10 +44,6 @@ import {
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { taskDisplayLabel, validateTaskTitle } from "../shared/task-title.ts";
 import type { TaskListItem, TaskOps } from "../api/tasks.ts";
-import {
-  HostExternalParentError,
-  type HostCollaborationCommand,
-} from "../api/collaboration.ts";
 import { isTaskCreateError } from "../api/tasks.ts";
 import { z } from "zod";
 
@@ -249,14 +245,28 @@ interface HostStatusRegistry {
   }>;
   listRemoteChildrenOf(
     parentTaskIds: ReadonlySet<string>,
-  ): Array<TaskListItem & { parentTaskId: string }>;
+  ): Promise<Array<TaskListItem & { parentTaskId: string }>>;
+}
+
+interface LinkSyncOwnerPort {
+  read(host: string, after: number, limit?: number): unknown[];
+  watch(
+    host: string,
+    after: number,
+    observer: {
+      entry(entry: { pos: number; prev: number; data: unknown }): void;
+      heartbeat?(): void;
+      closed?(error: unknown): void;
+    },
+  ): () => void;
+  push(host: string, raw: unknown): { status: number; body: unknown };
 }
 
 export interface RequestHandlerDeps {
   store: Store;
   tasks?: TaskManager;
   taskOps?: TaskOps;
-  hostCollaboration?: HostCollaborationCommand;
+  linkSyncOwner?: LinkSyncOwnerPort;
   sseManager: SseManager;
   clientRegistry?: ClientRegistry;
   publicDir: string;
@@ -967,9 +977,9 @@ export function createRequestHandler(
           title: null,
         }));
         const remoteTasks = (
-          deps.hostRegistry?.listRemoteChildrenOf(
+          (await deps.hostRegistry?.listRemoteChildrenOf(
             new Set(publicTasks.map((task) => task.id)),
-          ) ?? []
+          )) ?? []
         ).map((item) => ({
           id: item.id,
           host: item.host,
@@ -1057,44 +1067,149 @@ export function createRequestHandler(
           json(res, HTTP_STATUS.UNAUTHORIZED, { error: "Unauthorized" });
           return;
         }
+        if (principal.scope === "host") {
+          json(res, HTTP_STATUS.FORBIDDEN, { error: "Forbidden" });
+          return;
+        }
         if (!deps.ticketStore) {
           json(res, HTTP_STATUS.NOT_IMPLEMENTED, {
             error: "SSE not available",
           });
           return;
         }
-        let parentIds: string[] | undefined;
-        if (principal.scope === "host") {
-          const raw = await readBody(req);
-          let body: unknown;
-          try {
-            body = JSON.parse(raw) as unknown;
-          } catch {
-            json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
-            return;
-          }
-          if (
-            !body ||
-            typeof body !== "object" ||
-            !Array.isArray((body as { parentIds?: unknown }).parentIds) ||
-            !(body as { parentIds: unknown[] }).parentIds.every(
-              (id) => typeof id === "string",
-            )
-          ) {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: "parentIds must be an array of strings",
-            });
-            return;
-          }
-          parentIds = (body as { parentIds: string[] }).parentIds;
-        }
         const ticket = deps.ticketStore.mint({
           tokenName: principal.name,
           scope: principal.scope,
           hash: principal.hash,
-          ...(parentIds === undefined ? {} : { parentIds }),
         });
         json(res, HTTP_STATUS.OK, { ticket, expiresIn: 60 });
+        return;
+      }
+
+      // --- Host link transport routes ---
+      if (path === "/api/v1/link/outbox" && req.method === "GET") {
+        const principal = principalByRequest.get(req);
+        if (principal?.scope !== "host") {
+          json(res, HTTP_STATUS.FORBIDDEN, { error: "Forbidden" });
+          return;
+        }
+        if (!deps.linkSyncOwner) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Link sync is not configured",
+          });
+          return;
+        }
+        const afterParam = requestParams.get("after");
+        const limitParam = requestParams.get("limit");
+        const after = afterParam === null ? 0 : Number(afterParam);
+        const limit = limitParam === null ? 100 : Number(limitParam);
+        if (
+          !Number.isInteger(after) ||
+          after < 0 ||
+          !Number.isInteger(limit) ||
+          limit < 1
+        ) {
+          json(res, HTTP_STATUS.BAD_REQUEST, {
+            error: "after must be >= 0 and limit must be >= 1",
+          });
+          return;
+        }
+        json(res, HTTP_STATUS.OK, {
+          entries: deps.linkSyncOwner.read(principal.name, after, limit),
+        });
+        return;
+      }
+
+      if (path === "/api/v1/link/watch" && req.method === "GET") {
+        const principal = principalByRequest.get(req);
+        if (principal?.scope !== "host") {
+          json(res, HTTP_STATUS.FORBIDDEN, { error: "Forbidden" });
+          return;
+        }
+        if (!deps.linkSyncOwner) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Link sync is not configured",
+          });
+          return;
+        }
+        const afterParam = requestParams.get("after");
+        const after = afterParam === null ? 0 : Number(afterParam);
+        if (!Number.isInteger(after) || after < 0) {
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "after must be >= 0" });
+          return;
+        }
+        res.writeHead(HTTP_STATUS.OK, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        });
+        res.write("event: connected\ndata: {}\n\n");
+        let unsubscribe = () => {};
+        unsubscribe = deps.linkSyncOwner.watch(principal.name, after, {
+          entry: (frame) => {
+            if (res.writableEnded) throw new Error("link_watch_closed");
+            res.write(
+              `event: entry\nid: ${frame.pos}\ndata: ${JSON.stringify(frame)}\n\n`,
+            );
+          },
+          heartbeat: () => {
+            if (res.writableEnded) {
+              unsubscribe();
+              return;
+            }
+            if (
+              deps.authStore &&
+              !deps.authStore.hasTokenHash(principal.hash)
+            ) {
+              unsubscribe();
+              try {
+                res.end();
+              } catch {
+                /* already torn down */
+              }
+              return;
+            }
+            try {
+              res.write("event: heartbeat\ndata: {}\n\n");
+            } catch {
+              unsubscribe();
+            }
+          },
+          closed: () => {
+            try {
+              res.end();
+            } catch {
+              /* already torn down */
+            }
+          },
+        });
+        res.on("close", () => {
+          unsubscribe();
+        });
+        return;
+      }
+
+      if (path === "/api/v1/link/entries" && req.method === "POST") {
+        const principal = principalByRequest.get(req);
+        if (principal?.scope !== "host") {
+          json(res, HTTP_STATUS.FORBIDDEN, { error: "Forbidden" });
+          return;
+        }
+        if (!deps.linkSyncOwner) {
+          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+            error: "Link sync is not configured",
+          });
+          return;
+        }
+        let body: unknown;
+        try {
+          body = JSON.parse(await readBody(req)) as unknown;
+        } catch {
+          json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
+          return;
+        }
+        const result = deps.linkSyncOwner.push(principal.name, body);
+        json(res, result.status, result.body, req);
         return;
       }
 
@@ -1445,10 +1560,16 @@ export function createRequestHandler(
         }
         const busyKind = tasks?.getBusyKind(taskId) ?? null;
         const pendingPerms = tasks?.getPendingPermissions(taskId) ?? [];
+        const lastEventAt = store.getLatestEventTimes([taskId]).get(taskId);
         json(res, HTTP_STATUS.OK, {
           busy: busyKind != null,
           busyKind,
           pendingPermissions: pendingPerms,
+          title: task.title,
+          workflowStatus: task.workflow_status,
+          executionState: tasks?.getExecutionState(taskId) ?? "idle",
+          lastEventAt: isoFromMillisOrNull(lastEventAt),
+          lastAgentActivityAt: tasks?.getLastAgentActivityAt(taskId) ?? null,
         });
         return;
       }
@@ -1536,49 +1657,7 @@ export function createRequestHandler(
           return;
         }
         if (requestPrincipal?.scope === "host") {
-          if (!deps.hostCollaboration) {
-            json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-              error: "Host collaboration is not configured",
-            });
-            return;
-          }
-          const { opId, replayed } = tryReplayClientOp(
-            req,
-            res,
-            store,
-            sourceTaskId,
-          );
-          if (replayed) return;
-          let accepted;
-          try {
-            accepted = deps.hostCollaboration.receive({
-              sourceTaskId,
-              targetTaskId: body.targetTaskId,
-              body: body.body,
-              ...(body.sourceLabel === undefined
-                ? {}
-                : { sourceLabel: body.sourceLabel }),
-            });
-          } catch (error) {
-            if (!(error instanceof HostExternalParentError)) throw error;
-            json(res, HTTP_STATUS.FORBIDDEN, {
-              error: "Host is not the target's external parent",
-            });
-            return;
-          }
-          const result = {
-            ...accepted,
-            status: "queued",
-            clientOpId: opId ?? undefined,
-          };
-          saveClientOpResult(
-            store,
-            opId,
-            sourceTaskId,
-            HTTP_STATUS.ACCEPTED,
-            result,
-          );
-          json(res, HTTP_STATUS.ACCEPTED, result, req);
+          json(res, HTTP_STATUS.FORBIDDEN, { error: "Forbidden" });
           return;
         }
         const sourceTask = store.getTask(sourceTaskId);
@@ -3218,12 +3297,6 @@ export function createRequestHandler(
               clientOpId: clientOpId ?? undefined,
             },
           );
-          if (requestPrincipal?.scope === "host" && body.parentId) {
-            const connectionId = req.headers["x-host-connection-id"];
-            if (typeof connectionId === "string") {
-              sseManager.subscribeHost(connectionId, body.parentId);
-            }
-          }
           const session = created.session;
           if (!session) throw new Error("missing_create_session");
           json(res, HTTP_STATUS.CREATED, {
@@ -3481,8 +3554,6 @@ export function createRequestHandler(
         // When authStore is configured, every SSE connection MUST present a
         // valid single-use ticket from POST /api/v1/sse-ticket.
         let tokenName: string | undefined;
-        let hostScope = false;
-        let hostParentIds: string[] = [];
         const receiveBusinessEvents = true;
         if (deps.authStore) {
           const ticket =
@@ -3494,9 +3565,11 @@ export function createRequestHandler(
             });
             return;
           }
+          if (principal.scope === "host") {
+            json(res, HTTP_STATUS.FORBIDDEN, { error: "Forbidden" });
+            return;
+          }
           tokenName = principal.tokenName;
-          hostScope = principal.scope === "host";
-          hostParentIds = principal.parentIds ?? [];
         }
 
         const clientId = sseManager.generateClientId();
@@ -3505,7 +3578,6 @@ export function createRequestHandler(
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
-          "X-Host-Connection-Id": clientId,
         });
 
         const client: import("../sse-manager.ts").SseClient = {
@@ -3513,12 +3585,6 @@ export function createRequestHandler(
           res,
           tokenName,
           receiveBusinessEvents,
-          ...(hostScope
-            ? {
-                hostScoped: true,
-                hostParentIds: new Set(hostParentIds),
-              }
-            : {}),
         };
         sseManager.add(client);
 
@@ -3527,12 +3593,8 @@ export function createRequestHandler(
         sseManager.sendEvent(client, {
           type: "connected",
           clientId,
-          ...(!hostScope
-            ? {
-                debugLevel: deps.debugLevel ?? "off",
-                pendingCount,
-              }
-            : {}),
+          debugLevel: deps.debugLevel ?? "off",
+          pendingCount,
         } as unknown as AgentEvent);
         sseManager.writeHeartbeat(client);
         return;
