@@ -42,8 +42,8 @@ time. An entry without a "closing condition" is a wish, not an issue.
   add an explicit host/link removal operation.
 - **Owner-to-hub messages have no offline handoff timeout.** Timeout T runs
   only on the hub pusher. While the hub is offline, an R1 → P `task_send` stays
-  queued on the owner with no failure notice to R1, unlike P → R1 (sync-model
-  exception E1). The owner cannot time out honestly: the pull side has no
+  queued on the owner with no failure notice to R1, unlike P → R1 (exception E1 in
+  [multi-host](./architecture/multi-host.md#differences-from-local)). The owner cannot time out honestly: the pull side has no
   handoff signal (the hub does not acknowledge its `applied` position), and a
   missing receipt only means P has not drained the message yet, so timing out
   on receipts would report failure for messages P later receives. *Closing:*

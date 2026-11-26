@@ -612,6 +612,38 @@ Restarts need no catch-up pass: the outbox, cursors, and deliveries are durable.
    pump resumes after pushed_pos           external parent row, enqueued as entry R
 ```
 
+## Differences from local
+
+A cross-host operation behaves like the same operation on one host; the
+network only adds failure reasons (see "Remote equals local" in `CLAUDE.md`).
+Every observable difference is listed here, and collaboration scenarios run
+against both a local and a linked child to keep the list honest. A design that
+needs a new difference adds a row here first.
+
+Two rules follow from it:
+
+- **Commands are synchronous requests.** Create, cancel, and delete call the
+  owner through `shared/sync/request`. When the remote part cannot complete
+  (busy, offline, unknown result), the command fails and reports that to the
+  caller, like a local refusal. A bounded retry with the same op id inside that
+  one call is fine (see [Idempotent operations](#idempotent-operations));
+  turning a command into a queued or eventually applied effect is not.
+- **The link outbox carries facts, not commands.** It is only for facts that
+  must reach a peer which may be offline or only polls: messages, reports,
+  receipts, notices, and relation changes (see [Link transport](#link-transport)).
+
+| # | Difference | Status |
+| --- | --- | --- |
+| E1 | A hub message not handed off within timeout T while no watch is online fails ("handoff not confirmed"); a persistently failing but online link does not time out. A remote child whose status read fails or whose watch is down shows as unreachable, distinct from finished. | Approved |
+| E2 | Results arrive with transport delay: receipts, reports, and notices travel through the peer's queue. | Approved |
+| E3 | A waiting P with any remote child counts as having a possible wake source. | Approved |
+| E5 | Remote reads return egress-rewritten data; text search reads the full history. | Approved |
+| E6 | Remote create does not start ACP; without `cwd` the owner's default applies, an explicit `cwd` is resolved by the owner. | Approved |
+| E7 | An external source or target shows the title recorded on the entry or link, or an id prefix; it does not follow later renames. | Temporary, closes with the cross-host naming convention |
+| E8 | Deleting P on the hub does not delete R1 on the owner. | Temporary, closes with synchronous remote delete |
+| E9 | R1's `task_list` has no entry for its external parent P, and reading P is refused; R1 may still `task_send` to P. | Approved |
+| E10 | Remote create requires an explicit agent and does not accept model or thinking overrides. | Approved |
+
 ## Current status
 
 | Flow | Implemented |

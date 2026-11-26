@@ -71,6 +71,18 @@ Solve the case a real path reaches; do not build for the one it cannot.
 - Reviews follow the same rule: classify each finding by whether a real path
   reaches it. An unreachable one is a known-limit candidate, not a defect.
 
+## Remote equals local
+
+A cross-host operation behaves exactly like the same operation on one host.
+The network adds one more way to fail, nothing else.
+
+- Start from what the local operation does. A remote design that differs needs
+  an approved row in "Differences from local" in
+  [`docs/architecture/multi-host.md`](./docs/architecture/multi-host.md), which
+  also states how commands and link facts apply this rule.
+- Do not add machinery for one remote scenario. If it seems necessary, the
+  local rule is usually being violated somewhere else; fix that instead.
+
 ## Required invariants
 
 - Bearer authentication is required. Public-route whitelist changes belong in
