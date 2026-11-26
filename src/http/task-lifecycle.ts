@@ -86,9 +86,10 @@ interface ResolvedCancelEntry {
   opId: string | null;
 }
 
-async function resolveCancelEntry(
+function resolveCancelEntry(
   ctx: CancelTaskRouteContext,
-): Promise<ResolvedCancelEntry | null> {
+  hostRawBody: string | undefined,
+): ResolvedCancelEntry | null {
   const {
     req,
     res,
@@ -98,14 +99,13 @@ async function resolveCancelEntry(
     tasks,
     taskOps,
     hostRegistry,
-    readBody,
     json,
     tryReplayClientOp,
     saveClientOpResult,
   } = ctx;
 
   if (principal?.scope === "host") {
-    const body = parseHostCancelBody(await readBody(req));
+    const body = parseHostCancelBody(hostRawBody ?? "");
     if (!body) {
       json(res, HTTP_STATUS.BAD_REQUEST, {
         error: "Invalid cancel request body",
@@ -162,15 +162,18 @@ async function resolveCancelEntry(
 export async function handleCancelTaskRoute(
   ctx: CancelTaskRouteContext,
 ): Promise<void> {
-  const entry = await resolveCancelEntry(ctx);
+  const hostRawBody =
+    ctx.principal?.scope === "host" ? await ctx.readBody(ctx.req) : undefined;
+  const entry = resolveCancelEntry(ctx, hostRawBody);
   if (!entry) return;
   const { res, taskId, store, taskOps, json, saveClientOpResult } = ctx;
   if (!taskOps) {
     throw new Error("Task operations are not configured");
   }
+  const pending = taskOps.cancel(entry.command);
   let result;
   try {
-    result = await taskOps.cancel(entry.command);
+    result = await pending;
   } catch (error) {
     if (error instanceof AgentNotReadyError) {
       json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {

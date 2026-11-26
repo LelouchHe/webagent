@@ -890,6 +890,41 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       assert.equal(hub.cancelNotices.length, 1);
       assert.equal(hub.cancelNotices[0]?.sourceLabel?.length, 256);
 
+      // Fix 2b: surrogate pair straddling index 255/256 drops the lone high surrogate.
+      const emojiSplitTitle = `${"A".repeat(255)}😀`;
+      hub.store.updateTaskTitle("p1", emojiSplitTitle);
+      const okEmoji = await hubTaskOps.cancel({
+        kind: "agent",
+        principal: {
+          taskId: "p1",
+          agentId: "pi",
+          generation: lease.generation,
+          initializing: false,
+        },
+        targetTaskId: "r1",
+        reason: "surrogate pair boundary",
+      });
+      assert.equal(okEmoji.status, "idle");
+      const ownerEmojiLabel = owner.cancelNotices[1]?.sourceLabel ?? "";
+      assert.equal(ownerEmojiLabel, "A".repeat(255));
+      assert.equal(hub.cancelNotices[1]?.sourceLabel, "A".repeat(255));
+
+      // Exact 256-code-unit title ending in a surrogate pair is preserved intact.
+      const emojiExactTitle = `${"A".repeat(254)}😀`;
+      hub.store.updateTaskTitle("p1", emojiExactTitle);
+      await hubTaskOps.cancel({
+        kind: "agent",
+        principal: {
+          taskId: "p1",
+          agentId: "pi",
+          generation: lease.generation,
+          initializing: false,
+        },
+        targetTaskId: "r1",
+        reason: "exact 256 surrogate pair",
+      });
+      assert.equal(owner.cancelNotices[2]?.sourceLabel, emojiExactTitle);
+
       // Fix 3: 202 with "idle" and 200 with "cancelling" are treated as unknown (no retry, no source row).
       const hubCount = () => hub.cancelNotices.length;
       for (const bad of [
@@ -924,6 +959,133 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       hub.store.close();
       owner.store.close();
       rmSync(hubDir, { recursive: true, force: true });
+      rmSync(ownerDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not yield between owner link check and TaskOps.cancel, and returns 404 when deleted at body end", async () => {
+    const ownerDir = mkdtempSync(join(tmpdir(), "webagent-yield-owner-"));
+    const owner = await createTestHost(ownerDir);
+    let server: ReturnType<typeof createServer> | undefined;
+    try {
+      for (const id of ["r1", "r2"]) {
+        owner.store.createDeferredRemoteTask({
+          id,
+          cwd: ownerDir,
+          source: "agent",
+          agentId: "pi",
+          externalParentId: "p1",
+          remoteHost: "hub-a",
+          title: `Worker ${id}`,
+          creationAnchor: { kind: "task_created", taskId: id },
+        });
+      }
+
+      const ownerLocalOps = createLocalTaskOps({
+        store: owner.store,
+        tasks: owner.tasks,
+      });
+      const dispatchObserved: Array<{ taskId: string; live: boolean }> = [];
+      const spiedTaskOps = {
+        ...ownerLocalOps,
+        cancel(command: Parameters<typeof ownerLocalOps.cancel>[0]) {
+          const taskId =
+            command.kind === "agent" ? command.targetTaskId : command.taskId;
+          dispatchObserved.push({
+            taskId,
+            live: owner.store.getTask(taskId) !== undefined,
+          });
+          return ownerLocalOps.cancel(command);
+        },
+      };
+      let mode: "delete-at-end" | "delete-next-microtask" = "delete-at-end";
+      let currentReq: import("node:http").IncomingMessage | undefined;
+      const handler = createRequestHandler({
+        store: owner.store,
+        tasks: owner.tasks,
+        taskOps: spiedTaskOps,
+        sseManager: Object.assign(new SseManager(), { broadcast() {} }),
+        publicDir: ownerDir,
+        dataDir: ownerDir,
+        limits: { bash_output: 1024, image_upload: 1024 },
+        authStore: owner.authStore,
+        onRequestBodyReadStart: () => {
+          const req = currentReq;
+          if (!req) return;
+          if (mode === "delete-at-end") {
+            // Registered before readBodyRaw's "end" listener: deletes r1 at
+            // request-body end before the post-body continuation runs.
+            req.on("end", () => {
+              owner.store.deleteTask("r1");
+            });
+            return;
+          }
+          // Registered right after readBodyRaw attaches its "end" listener:
+          // queues deletion in the next microtask after readBodyRaw resolves
+          // (the exact tick where an extra await after link-check yields).
+          queueMicrotask(() => {
+            req.on("end", () => {
+              queueMicrotask(() => {
+                if (owner.store.getTask("r2")) owner.store.deleteTask("r2");
+              });
+            });
+          });
+        },
+      });
+
+      server = createServer((req, res) => {
+        currentReq = req;
+        void handler(req, res);
+      });
+      await new Promise<void>((resolve) =>
+        server!.listen(0, "127.0.0.1", resolve),
+      );
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("server failed to bind");
+      }
+      const origin = `http://127.0.0.1:${address.port}`;
+
+      // 1. Deleted at request-body end -> 404 and zero cancel dispatch.
+      mode = "delete-at-end";
+      const res1 = await fetch(`${origin}/api/v1/tasks/r1/cancel`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${owner.hostToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ kind: "user" }),
+      });
+      assert.equal(res1.status, 404);
+      assert.equal(dispatchObserved.length, 0);
+
+      // 2. Microtask deletion queued right after readBodyRaw resolves ->
+      //    live-row/link check and TaskOps.cancel run in the same synchronous
+      //    continuation with no yield, so TaskOps.cancel never runs on a deleted task.
+      mode = "delete-next-microtask";
+      const res2 = await fetch(`${origin}/api/v1/tasks/r2/cancel`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${owner.hostToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ kind: "user" }),
+      });
+      assert.equal(res2.status, 200);
+      assert.deepEqual(dispatchObserved, [{ taskId: "r2", live: true }]);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        if (!server) {
+          resolve();
+          return;
+        }
+        server.close((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+        server.closeAllConnections();
+      });
+      owner.store.close();
       rmSync(ownerDir, { recursive: true, force: true });
     }
   });

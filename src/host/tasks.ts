@@ -45,6 +45,13 @@ export type CancelRoute =
   | { kind: "remote"; target: RemoteTaskTarget }
   | { kind: "not_found"; taskId: string };
 
+function truncateUtf16(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  const cut = value.slice(0, maxLength);
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
+}
+
 export function resolveCancelTarget(
   command: TaskCancelCommand,
   store: Pick<Store, "getTask">,
@@ -156,11 +163,12 @@ export function createRoutedTaskOps(deps: {
       const sourceTask = store.getTask(sourceTaskId);
       if (!sourceTask) throw new Error("execution_replaced");
       const trimmedTitle = sourceTask.title?.trim();
-      const sourceLabel = (
+      const sourceLabel = truncateUtf16(
         trimmedTitle && trimmedTitle.length > 0
           ? trimmedTitle
-          : sourceTaskId.slice(0, 8)
-      ).slice(0, MAX_HOST_CANCEL_SOURCE_LABEL_LENGTH);
+          : sourceTaskId.slice(0, 8),
+        MAX_HOST_CANCEL_SOURCE_LABEL_LENGTH,
+      );
       const status = await remote.cancelRemote(
         route.target,
         {
