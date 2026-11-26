@@ -1382,6 +1382,234 @@ describe("dormant link sync handlers", () => {
       store.createSystemDelivery = origCreateSystemDelivery;
     }
   });
+
+  it("handles T backoff skip (8a-1), dropped-202 late receipt (8a-2), disconnect after handshake (8b), and does not harm handed-off messages or receipts/notices (8)", async () => {
+    store.createTask("parent", dir, "auto", "mock", "p");
+    store.recordRemoteChild("parent", "remote", "owner");
+
+    // 8a-1: 503 backoff -> T fails & skips head -> reconnect does not re-send timed-out message.
+    const clock1 = new FakeClock(4_000_000);
+    let online1 = false;
+    const sent1: string[] = [];
+    const pusher1 = new LinkSyncHubPusher({
+      host: "owner",
+      store,
+      handoffTimeoutMs: 10_000,
+      timer: clock1.timer,
+      epochClock: clock1,
+      retryDelay: () => 25_000,
+      transport: {
+        send: async (_opId, request) => {
+          sent1.push(request.id);
+          if (!online1) return { status: 503, body: { error: "down" } };
+          return { status: 202, body: { accepted: true } };
+        },
+      },
+    });
+    const mBackoff = store.enqueueLinkMessage({
+      remoteRole: "child",
+      remoteHost: "owner",
+      sourceTaskId: "parent",
+      targetTaskId: "remote",
+      sourceLabel: "Parent",
+      targetLabel: "Remote",
+      body: "backoff timeout",
+      createdAt: clock1.now(),
+    });
+    pusher1.start();
+    try {
+      await waitUntil(() => sent1.length === 1);
+      clock1.advance(10_000);
+      assert.equal(
+        store.getCollaborationDelivery(mBackoff.delivery_id!)?.status,
+        "failed",
+      );
+      online1 = true;
+      pusher1.setWatchOnline(true);
+      clock1.advance(30_000);
+      await new Promise((r) => setTimeout(r, 10));
+      // Only the initial pre-T 503 attempt ever happened; never re-sent after reconnect.
+      assert.deepEqual(sent1, [mBackoff.entry_id]);
+    } finally {
+      pusher1.stop();
+    }
+
+    // 8b + 8a-2: handshake -> disconnect + redials fail -> T fires; late delivered receipt consumed with zero second notice.
+    const clock2 = new FakeClock(5_000_000);
+    const pusher2 = new LinkSyncHubPusher({
+      host: "owner",
+      store,
+      handoffTimeoutMs: 10_000,
+      timer: clock2.timer,
+      epochClock: clock2,
+      retryDelay: () => 50_000,
+      transport: {
+        send: async () => {
+          throw new Error("dropped_202_unknown");
+        },
+      },
+    });
+    pusher2.start();
+    try {
+      pusher2.setWatchOnline(true);
+      const mDrop = store.enqueueLinkMessage({
+        remoteRole: "child",
+        remoteHost: "owner",
+        sourceTaskId: "parent",
+        targetTaskId: "remote",
+        sourceLabel: "Parent",
+        targetLabel: "Remote",
+        body: "dropped 202",
+        createdAt: clock2.now(),
+      });
+      pusher2.wake();
+      // Disconnect watch and simulate repeated redial failures.
+      pusher2.setWatchOnline(false);
+      clock2.advance(5_000);
+      pusher2.setWatchOnline(false);
+      clock2.advance(5_000);
+      assert.equal(
+        store.getCollaborationDelivery(mDrop.delivery_id!)?.status,
+        "failed",
+      );
+      const noticesBefore = store
+        .getEvents("parent")
+        .filter((e) => e.type === "task_outcome_notice").length;
+      // Late delivered receipt arrives after watch reconnects: consumed without second notice.
+      store.applyLinkFeedOperation({
+        remoteRole: "child",
+        remoteHost: "owner",
+        expectedApplied: 0,
+        nextApplied: 1,
+        envelope: {
+          id: randomUUID(),
+          category: "receipt",
+          data: { originalEntryId: mDrop.entry_id, status: "delivered" },
+        },
+      });
+      assert.equal(
+        store.getCollaborationDelivery(mDrop.delivery_id!)?.status,
+        "failed",
+      );
+      assert.equal(
+        store
+          .getEvents("parent")
+          .filter((e) => e.type === "task_outcome_notice").length,
+        noticesBefore,
+      );
+    } finally {
+      pusher2.stop();
+    }
+
+    // 8 (unharmed): handed-off via 202 or receipt stays queued across >T offline; receipts never time out.
+    const clock3 = new FakeClock(6_000_000);
+    let allowPush3 = true;
+    const pushed3: string[] = [];
+    const pusher3 = new LinkSyncHubPusher({
+      host: "owner",
+      store,
+      handoffTimeoutMs: 10_000,
+      timer: clock3.timer,
+      epochClock: clock3,
+      retryDelay: () => 5_000,
+      transport: {
+        send: async (_opId, request) => {
+          if (!allowPush3) return { status: 503, body: { error: "down" } };
+          pushed3.push(request.id);
+          return { status: 202, body: { accepted: true } };
+        },
+      },
+    });
+    const m202 = store.enqueueLinkMessage({
+      remoteRole: "child",
+      remoteHost: "owner",
+      sourceTaskId: "parent",
+      targetTaskId: "remote",
+      sourceLabel: "Parent",
+      targetLabel: "Remote",
+      body: "handed off via 202",
+      createdAt: clock3.now(),
+    });
+    pusher3.start();
+    try {
+      await waitUntil(
+        () => store.getOutboxPushCursor("child", "owner") >= m202.pos,
+      );
+      await new Promise((r) => setTimeout(r, 10));
+      allowPush3 = false;
+      const rOffline = store.enqueueOutbox({
+        remoteRole: "child",
+        remoteHost: "owner",
+        category: "receipt",
+        data: { originalEntryId: randomUUID(), status: "delivered" },
+        createdAt: clock3.now(),
+      });
+      pusher3.wake();
+      await new Promise((r) => setTimeout(r, 10));
+      // Stay offline 5x longer than T: m202 (already handed off) stays queued awaiting receipt, rOffline stays pushable.
+      clock3.advance(50_000);
+      await new Promise((r) => setTimeout(r, 10));
+      assert.equal(
+        store.getCollaborationDelivery(m202.delivery_id!)?.status,
+        "queued",
+      );
+      allowPush3 = true;
+      pusher3.setWatchOnline(true);
+      clock3.advance(10_000);
+      await waitUntil(() => pushed3.includes(rOffline.entry_id));
+    } finally {
+      pusher3.stop();
+    }
+  });
+
+  it("matches local vs remote 5-field task_outcome_notice audit payload and body format (parity)", () => {
+    store.createTask("parent", dir, "auto", "mock", "p");
+    store.createTask("local-child", dir, "auto", "mock", "c", "parent", {
+      title: "Shared Title",
+    });
+    store.recordRemoteChild("parent", "remote-child", "owner");
+
+    // Remote notice via feed apply
+    store.applyLinkFeedOperation({
+      remoteRole: "child",
+      remoteHost: "owner",
+      expectedApplied: 0,
+      nextApplied: 1,
+      envelope: {
+        id: randomUUID(),
+        category: "notice",
+        data: {
+          sourceTaskId: "parent",
+          targetTaskId: "remote-child",
+          reason: "no_update",
+          message:
+            "The target ended another turn without any task_update; the runtime stopped reminding.",
+          targetLabel: "Shared Title",
+        },
+      },
+    });
+    const remoteEvent = store
+      .getEvents("parent")
+      .find((e) => e.type === "task_outcome_notice")!;
+    const remotePayload = JSON.parse(remoteEvent.data) as Record<
+      string,
+      unknown
+    >;
+    assert.deepEqual(Object.keys(remotePayload).sort(), [
+      "message",
+      "messageId",
+      "reason",
+      "sourceTaskId",
+      "targetTaskId",
+    ]);
+    const remoteMsg = store.getCollaborationMessage(
+      String(remotePayload.messageId),
+    );
+    assert.equal(
+      remoteMsg?.body,
+      "target: Shared Title (remote-child)\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.",
+    );
+  });
 });
 
 class FakeClock {

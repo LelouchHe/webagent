@@ -174,11 +174,11 @@ connection state, and the external Task id never reselect a link.
 | --- | --- | --- |
 | outbox | `outbox` | Ordered, immutable entries this instance sends on one link. `pos` is the SQLite rowid; `prev` is the previous `pos` of the same link, `0` for the first entry; both are fixed in the insert transaction. |
 | `applied_pos` | `outbox_cursors` | How far this instance has applied the peer's outbox (pull). Advanced in the same transaction as the business write. |
-| `pushed_pos` | `outbox_cursors` | How far the peer has durably accepted this instance's outbox (push). Unused on a link this instance does not push. |
+| `pushed_pos` | `outbox_cursors` | Processed push prefix in this instance's outbox (`202`, receipt, authenticated rejection, or local skip after offline handoff timeout). Unused on a link this instance does not push. |
 | business state | `deliveries` | `queued` / `delivered` / `failed` plus reason, for local, outbound, and inbound collaboration alike. |
 
 A wire entry is `{id, category, data}` plus its `pos` / `prev` on a feed.
-`category` is `message`, `report`, or `receipt`; the envelope is a
+`category` is `message`, `report`, `receipt`, or `notice`; the envelope is a
 schema-derived discriminated union (`src/shared/link-envelope.ts`).
 
 ### Push: hub to owner
@@ -277,6 +277,7 @@ Push and pull call the same apply with the authenticated link and envelope:
 | --- | --- |
 | message, report | Write `message` + inbound `delivery` (`queued`) carrying the source link, entry id, category, and the sender's label snapshot; then local drain delivers it like any collaboration message. |
 | receipt | CAS the sender delivery referenced by the original entry; never becomes agent work and never produces another receipt. |
+| notice | Owner parent outbox → hub child feed only (rejected on owner push as `link_protocol_error`). If `sourceTaskId` is live and linked to `targetTaskId` on this link, writes the 5-field `task_outcome_notice` audit event and a system delivery (without inbound source, so no receipt) in the same transaction as `applied_pos`; otherwise skips while advancing `applied_pos`. |
 
 | Outcome | Durable effect | Transfer progress |
 | --- | --- | --- |
@@ -309,13 +310,20 @@ commits; replays return no effects. ACP never starts inside the transaction.
   share reaper, empty-Task GC, and archive.
 - On the **sending** instance, a receipt CASes the delivery that the original
   outbox row points to, along the same edges. `failed` is terminal; repeated,
-  late, or non-advancing receipts are consumed without change. Receipt
-  application publishes the delivery status but does not fire the sender-side
-  failure notice (notices are a later contract).
+  late, or non-advancing receipts are consumed without change. The winning
+  first-failed CAS (from receipt, authenticated push rejection, or offline
+  handoff timeout T) atomically writes the sender's `task_outcome_notice` audit
+  event and system delivery in the same transaction; the receiver never emits a
+  delivery-failure notice for inbound deliveries and only silently closes a
+  matching external obligation account.
 - **Outbox-owned deliveries** (the sender side of a message or report) belong
   to the transport: local claim, drain, archive cut, clear, resume, delete,
-  reaper, and GC skip them. Only receipts and authenticated rejection change
-  their state.
+  reaper, and GC skip them. Only receipts, authenticated rejection, and the
+  hub's offline handoff timeout T (`limits.remote_delivery_timeout`, default 10
+  minutes; applies only to unhanded-off `message` entries while no watch is
+  online, never to receipts or notices) change their state. Timed-out messages
+  are locally skipped in `pushed_pos` only when they form the contiguous head
+  prefix (never skipping past an unhanded-off receipt).
 
 Round trip of a message:
 
@@ -472,10 +480,11 @@ Restarts need no catch-up pass: the outbox, cursors, and deliveries are durable.
 | Remote create | Yes, idempotent by op id, bounded retry on unknown |
 | Remote `task_list` fields | Yes, live status reads; `unreachable` on failure or watch down |
 | Remote `task_query` / `task_read` | Yes, cold owner history |
-| Remote `task_send` | Yes, link outbox; queued locally, receipts update state |
+| Remote `task_send` | Yes, bidirectional link outbox (P → R1 and R1 → P ordinary messages); queued locally, receipts update state |
 | Remote `done` / `blocked` report | Yes, owner outbox pulled by the hub watch |
+| Single-source failure & obligation notices | Yes, sender-side atomic failure notices, owner `notice` feed entries (`no_update`, `no_activity`, `target_removed`) |
+| Offline handoff timeout T | Yes, hub pusher (`limits.remote_delivery_timeout`, default 10 min) |
 | Restart and reconnect | Yes, from durable cursors; no full catch-up |
-| Failure notices for remote outcomes, R1 → P ordinary messages, offline timeout | No (contract-04) |
 | Remote cancel/rename/archive/delete | No |
 | Browser task routing | No |
 | Server-side search | No |

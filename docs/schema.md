@@ -209,19 +209,19 @@ How the link tables relate, within one instance and across a link:
 ### `outbox_cursors`
 
 The durable progress for each `(remote_role, remote_host)`. `applied_pos` is
-how far this instance has consumed the peer's outbox; `pushed_pos` is how far
-the peer has durably accepted this instance's outbox. Feed apply advances
-`applied_pos` in the same transaction as its business fact. Push advances
-`pushed_pos` monotonically after an exact `202`, a current-head receipt, or an
-authenticated rejection. It has no foreign key, so task or `remote_tasks`
-deletion does not erase transfer progress.
+how far this instance has consumed the peer's outbox; `pushed_pos` is the
+processed push prefix in this instance's outbox (`202`, a receipt for the head,
+an authenticated rejection, or a local skip after offline handoff timeout).
+Feed apply advances `applied_pos` in the same transaction as its business fact.
+It has no foreign key, so task or `remote_tasks` deletion does not erase
+transfer progress.
 
 | Column | Type | Notes |
 |---|---|---|
 | `remote_role` | TEXT NOT NULL | Link direction |
 | `remote_host` | TEXT NOT NULL | Link name |
 | `applied_pos` | INTEGER NOT NULL | Last durably applied outbox position |
-| `pushed_pos` | INTEGER NOT NULL | Last durably accepted position in this instance's outbox |
+| `pushed_pos` | INTEGER NOT NULL | Processed push prefix in this instance's outbox (`202`, receipt, authenticated rejection, or local skip) |
 
 ### `events`
 

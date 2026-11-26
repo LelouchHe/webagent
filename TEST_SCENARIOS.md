@@ -89,11 +89,29 @@ spot gaps, and decide what still needs to be added without reading every spec.
     `pushed_pos` and unblocks the second entry before the held response releases
   - E3: waiting parent with a linked remote child while watch is disconnected
     suppresses the `No visible wake source` note
-- `test/link-sync.test.ts`, `test/link-outbox.test.ts`, and `test/idempotency-conformance.test.ts`
+- `test/regression/scenarios/multi-host-delivery.ts` (two real runtimes + forwarder)
+  - deleted remote child notifies hub P once (`reason: target_removed`, delivery
+    `target_deleted`)
+  - R1 → P ordinary `task_send` delivers to P and marks owner outbound delivery
+    `delivered` via receipt while E9 still refuses `task_query` / `task_read` on P
+  - deleted hub P2 fails R2's report with a sender-side notice on owner without
+    recreating P2 or blocking a subsequent report to live P on the same link
+  - owner `no_update` and hard-delete `target_removed` notices travel over the
+    parent-to-hub feed with real R1 titles and wake P
+- `test/link-sync.test.ts`, `test/link-outbox.test.ts`, `test/collaboration-delivery.test.ts`, `test/legacy-database.test.ts`, and `test/idempotency-conformance.test.ts`
   - `LinkSyncOwner`, `LinkSyncHubConsumer`, `LinkSyncHubPusher` (`202`, `401`/`403`
     credential failure, authenticated `400`/`409`, receipt link fault), post-commit
     `onOutboxCommitted`, creation title snapshot, deleted-source late receipt,
     target-deleted replayable `202`, and archive exclusion for outbound rows
+  - single-source failure notices on first-failed CAS (receipt, reject, T) with
+    rollback-and-retry fault injection between audit and system delivery; A2
+    silent external-account closure on inbound failure; `notice` direction guard
+    (rejected on owner push) and hub apply (live, missing, mismatch, replay);
+    pre-delete external parent capture on hard delete and Root exit + A1/A3
+    deduplication (6a); R1 → P `task_send` latest inbound `sourceLabel` and
+    authorization guards; T deadline calculation, backoff skip, in-flight
+    invalidation, receipt-head preservation, and late-receipt consumption;
+    read-only preflight refusal of the old 3-category `outbox` CHECK
   - reusable `assertIdempotentRoute` conformance helper (`test/fixtures/idempotency.ts`)
     applied to owner `POST /api/v1/tasks` (host deterministic UUIDv5 via `opIdentity`,
     caller scoping, `409` conflict, `404 target_deleted` on soft delete) and

@@ -60,11 +60,18 @@ time. An entry without a "closing condition" is a wish, not an issue.
   server-side search endpoint, so the hub applies the shared projector after a
   full task-events read. *Closing:* add a bounded history-search route and
   preserve the MCP shapes and limits.
-- **Owner-to-external-source inactivity/removal notices are not forwarded.**
-  `done` and `blocked` reports close the implemented loop; owner `no_update`,
-  `no_activity`, and `target_removed` notices still require a cross-instance
-  delivery path. *Closing:* add the corresponding event-to-collaboration
-  translation and end-to-end regression coverage.
+- **A timed-out hub push whose earlier attempt had an unknown result may still
+  have been accepted by the owner.** Offline handoff timeout T reports that
+  handoff was not confirmed before the deadline, without revoking work the
+  owner already committed; a late receipt is consumed without flipping status.
+  *Closing:* accepted residual of at-least-once handoff; do not add a rollback
+  or cancel protocol for it.
+- **Open obligation accounts are in-memory on both local and remote tasks.**
+  An owner restart drops open accounts, so subsequent `no_update` /
+  `no_activity` notices for pre-restart dispatches are not emitted; `done` and
+  `blocked` reports still reach the external parent via the persisted
+  `remote_tasks` fallback. *Closing:* accepted parity with local tasks; no
+  obligation persistence planned.
 - **Remote browser routing and lifecycle commands remain local-only.** Cancel,
   rename, archive, and delete do not yet cross hosts, and the browser does not
   address remote Task entries. *Closing:* implement the later host lifecycle
