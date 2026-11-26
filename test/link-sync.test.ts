@@ -1610,6 +1610,165 @@ describe("dormant link sync handlers", () => {
       "target: Shared Title (remote-child)\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.",
     );
   });
+
+  it("retries failed head skip after committed T without re-running notice or losing retry floor across wakes, and isolates scheduleTimeout faults in finish", async () => {
+    store.createTask("parent", dir, "auto", "mock", "p");
+    store.recordRemoteChild("parent", "remote", "owner");
+
+    // Part 1: skipFailedOutboxMessagePrefix fails once right after T commits failure + notice.
+    const clock = new FakeClock(7_000_000);
+    let online = false;
+    const sent: string[] = [];
+    const pusher = new LinkSyncHubPusher({
+      host: "owner",
+      store,
+      handoffTimeoutMs: 10_000,
+      timer: clock.timer,
+      epochClock: clock,
+      retryDelay: () => 50_000,
+      transport: {
+        send: async (_opId, request) => {
+          sent.push(request.id);
+          if (!online) return { status: 503, body: { error: "down" } };
+          return { status: 202, body: { accepted: true } };
+        },
+      },
+    });
+    const m1 = store.enqueueLinkMessage({
+      remoteRole: "child",
+      remoteHost: "owner",
+      sourceTaskId: "parent",
+      targetTaskId: "remote",
+      sourceLabel: "Parent",
+      targetLabel: "Remote",
+      body: "skip-fail-head",
+      createdAt: clock.now(),
+    });
+    const m2 = store.enqueueLinkMessage({
+      remoteRole: "child",
+      remoteHost: "owner",
+      sourceTaskId: "parent",
+      targetTaskId: "remote",
+      sourceLabel: "Parent",
+      targetLabel: "Remote",
+      body: "after-skip-fail",
+      createdAt: clock.now() + 20_000,
+    });
+    const origSkip = store.skipFailedOutboxMessagePrefix.bind(store);
+    let failSkipOnce = true;
+    let skipAttempts = 0;
+    store.skipFailedOutboxMessagePrefix = (role, host) => {
+      skipAttempts += 1;
+      if (failSkipOnce) {
+        failSkipOnce = false;
+        throw new Error("injected_skip_sqlite_busy");
+      }
+      return origSkip(role, host);
+    };
+    pusher.start();
+    try {
+      await waitUntil(() => sent.length === 1);
+      // T fires: failure + notice commit, skip fails once (no throw from timer).
+      clock.advance(10_000);
+      assert.equal(
+        store.getCollaborationDelivery(m1.delivery_id!)?.status,
+        "failed",
+      );
+      assert.equal(store.getOutboxPushCursor("child", "owner"), 0);
+      assert.equal(skipAttempts, 1);
+      assert.equal(
+        store
+          .getEvents("parent")
+          .filter((e) => e.type === "task_outcome_notice").length,
+        1,
+      );
+
+      // Intervening wake before 1s retry floor must NOT lose the floor or resend m1.
+      clock.advance(500);
+      online = true;
+      pusher.wake();
+      await new Promise((r) => setTimeout(r, 10));
+      assert.equal(skipAttempts, 1);
+      assert.deepEqual(sent, [m1.entry_id]);
+
+      // Advancing past remaining 500ms of the 1s floor retries skip, advances cursor,
+      // does NOT emit a second notice, and releases m2 for push!
+      clock.advance(500);
+      await waitUntil(
+        () => store.getOutboxPushCursor("child", "owner") >= m2.pos,
+      );
+      assert.equal(skipAttempts, 2);
+      assert.deepEqual(sent, [m1.entry_id, m2.entry_id]);
+      assert.equal(
+        store
+          .getEvents("parent")
+          .filter((e) => e.type === "task_outcome_notice").length,
+        1,
+      );
+    } finally {
+      pusher.stop();
+      store.skipFailedOutboxMessagePrefix = origSkip;
+    }
+
+    // Part 2: scheduleTimeout read throws inside finish() after 202 committed ->
+    // finish still returns true, SyncOutbox releases active and pushes the next entry.
+    const clock2 = new FakeClock(8_000_000);
+    const sent2: string[] = [];
+    const pusher2 = new LinkSyncHubPusher({
+      host: "owner",
+      store,
+      handoffTimeoutMs: 10_000,
+      timer: clock2.timer,
+      epochClock: clock2,
+      retryDelay: () => 50_000,
+      transport: {
+        send: async (_opId, request) => {
+          sent2.push(request.id);
+          return { status: 202, body: { accepted: true } };
+        },
+      },
+    });
+    const m3 = store.enqueueLinkMessage({
+      remoteRole: "child",
+      remoteHost: "owner",
+      sourceTaskId: "parent",
+      targetTaskId: "remote",
+      sourceLabel: "Parent",
+      targetLabel: "Remote",
+      body: "finish-schedule-fault-1",
+      createdAt: clock2.now(),
+    });
+    const m4 = store.enqueueLinkMessage({
+      remoteRole: "child",
+      remoteHost: "owner",
+      sourceTaskId: "parent",
+      targetTaskId: "remote",
+      sourceLabel: "Parent",
+      targetLabel: "Remote",
+      body: "finish-schedule-fault-2",
+      createdAt: clock2.now(),
+    });
+    const origPending = store.getPendingOutboxTimeoutState.bind(store);
+    let failScheduleAfterStart = false;
+    store.getPendingOutboxTimeoutState = (role, host) => {
+      if (failScheduleAfterStart) {
+        failScheduleAfterStart = false;
+        throw new Error("injected_schedule_sqlite_busy");
+      }
+      return origPending(role, host);
+    };
+    pusher2.start();
+    failScheduleAfterStart = true;
+    try {
+      await waitUntil(
+        () => store.getOutboxPushCursor("child", "owner") >= m4.pos,
+      );
+      assert.deepEqual(sent2, [m3.entry_id, m4.entry_id]);
+    } finally {
+      pusher2.stop();
+      store.getPendingOutboxTimeoutState = origPending;
+    }
+  });
 });
 
 class FakeClock {

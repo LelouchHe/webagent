@@ -26,7 +26,7 @@
           "mock": [],
           "sql": {
             "writes": [],
-            "reads": 2
+            "reads": 1
           }
         }
       ]
@@ -95,7 +95,7 @@
           "mock": [],
           "sql": {
             "writes": [],
-            "reads": 4
+            "reads": 2
           }
         }
       ]

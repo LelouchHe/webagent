@@ -284,6 +284,8 @@ export class LinkSyncHubPusher {
   private watchOnline = false;
   private offlineSince: number | null = null;
   private timeoutTimer: unknown = null;
+  private retryNotBefore = 0;
+  private pendingHeadSkip = false;
 
   constructor(options: LinkSyncHubPusherOptions) {
     this.options = options;
@@ -330,12 +332,28 @@ export class LinkSyncHubPusher {
       if (this.watchOnline) return;
       this.watchOnline = true;
       this.offlineSince = null;
-      this.clearTimeoutTimer();
+      if (!this.pendingHeadSkip) {
+        this.clearTimeoutTimer();
+      } else {
+        this.scheduleTimeout();
+      }
       return;
     }
     if (!this.watchOnline) return;
     this.watchOnline = false;
     this.scheduleTimeout();
+  }
+
+  private warn(
+    msg: string,
+    error: unknown,
+    extra: Record<string, unknown> = {},
+  ): void {
+    log.scope("hosts").warn(msg, {
+      host: this.options.host,
+      ...extra,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
   private clearTimeoutTimer(): void {
@@ -345,48 +363,105 @@ export class LinkSyncHubPusher {
     }
   }
 
+  private armTimer(delay: number): void {
+    this.clearTimeoutTimer();
+    if (!this.started) return;
+    this.timeoutTimer = this.timer.setTimeout(
+      () => {
+        this.timeoutTimer = null;
+        this.onTimeout();
+      },
+      Math.max(0, delay),
+    );
+  }
+
+  private armRetryFloor(): void {
+    const now = this.epochClock.now();
+    this.retryNotBefore = Math.max(
+      this.retryNotBefore,
+      now + TIMEOUT_RETRY_DELAY_MS,
+    );
+    this.armTimer(this.retryNotBefore - now);
+  }
+
+  private trySkipFailedHead(): boolean {
+    try {
+      const skippedPos = this.options.store.skipFailedOutboxMessagePrefix(
+        "child",
+        this.options.host,
+      );
+      this.pendingHeadSkip = false;
+      if (skippedPos !== null) {
+        this.outbox.handedOffPosition(skippedPos);
+        this.outbox.wake();
+      }
+      return true;
+    } catch (error) {
+      this.pendingHeadSkip = true;
+      this.warn("link failed head skip persistence failed", error);
+      this.armRetryFloor();
+      return false;
+    }
+  }
+
   private scheduleTimeout(): void {
     this.clearTimeoutTimer();
-    if (!this.started || this.watchOnline) return;
-    const pushed = this.options.store.getOutboxPushCursor(
-      "child",
-      this.options.host,
-    );
-    const hasPendingWork =
-      this.options.store.listOutbox("child", this.options.host, pushed, 1)
-        .length > 0;
-    if (!hasPendingWork) {
+    if (!this.started) return;
+    const now = this.epochClock.now();
+    if (this.pendingHeadSkip) {
+      this.armTimer(this.retryNotBefore - now);
+      return;
+    }
+    if (this.watchOnline) return;
+    let pending: ReturnType<Store["getPendingOutboxTimeoutState"]>;
+    try {
+      pending = this.options.store.getPendingOutboxTimeoutState(
+        "child",
+        this.options.host,
+      );
+    } catch (error) {
+      this.warn("link handoff timeout schedule read failed", error);
+      this.armRetryFloor();
+      return;
+    }
+    if (!pending.hasPendingWork) {
       this.offlineSince = null;
       return;
     }
-    this.offlineSince ??= this.epochClock.now();
-    const earliest = this.options.store.getEarliestPendingOutboxMessage(
-      "child",
-      this.options.host,
-    );
-    if (!earliest) return;
+    this.offlineSince ??= now;
+    if (!pending.earliest) return;
     const deadline =
-      Math.max(earliest.queued_at, this.offlineSince) + this.handoffTimeoutMs;
-    const delay = Math.max(0, deadline - this.epochClock.now());
-    this.timeoutTimer = this.timer.setTimeout(() => {
-      this.timeoutTimer = null;
-      this.onTimeout();
-    }, delay);
+      Math.max(pending.earliest.queued_at, this.offlineSince) +
+      this.handoffTimeoutMs;
+    this.armTimer(Math.max(deadline, this.retryNotBefore) - now);
   }
 
   private onTimeout(): void {
-    if (!this.started || this.watchOnline || this.offlineSince === null) return;
-    const earliest = this.options.store.getEarliestPendingOutboxMessage(
-      "child",
-      this.options.host,
-    );
-    if (!earliest) {
+    if (!this.started) return;
+    if (this.pendingHeadSkip) {
+      if (this.trySkipFailedHead()) this.scheduleTimeout();
+      return;
+    }
+    if (this.watchOnline || this.offlineSince === null) return;
+    let pending: ReturnType<Store["getPendingOutboxTimeoutState"]>;
+    try {
+      pending = this.options.store.getPendingOutboxTimeoutState(
+        "child",
+        this.options.host,
+      );
+    } catch (error) {
+      this.warn("link handoff timeout read failed", error);
+      this.armRetryFloor();
+      return;
+    }
+    if (!pending.earliest) {
       this.scheduleTimeout();
       return;
     }
     const now = this.epochClock.now();
     const deadline =
-      Math.max(earliest.queued_at, this.offlineSince) + this.handoffTimeoutMs;
+      Math.max(pending.earliest.queued_at, this.offlineSince) +
+      this.handoffTimeoutMs;
     if (now < deadline) {
       this.scheduleTimeout();
       return;
@@ -396,74 +471,51 @@ export class LinkSyncHubPusher {
       outcome = this.options.store.failOutboxMessageOnTimeout(
         "child",
         this.options.host,
-        earliest.entry_id,
+        pending.earliest.entry_id,
         now,
       );
     } catch (error) {
-      log.scope("hosts").warn("link handoff timeout persistence failed", {
-        host: this.options.host,
-        entryId: earliest.entry_id,
-        error: error instanceof Error ? error.message : String(error),
+      this.warn("link handoff timeout persistence failed", error, {
+        entryId: pending.earliest.entry_id,
       });
-      this.timeoutTimer = this.timer.setTimeout(() => {
-        this.timeoutTimer = null;
-        this.onTimeout();
-      }, TIMEOUT_RETRY_DELAY_MS);
+      this.armRetryFloor();
       return;
     }
     if (outcome.failed) {
-      executeLinkEffects(
-        this.options.store,
-        outcome.effects,
-        this.options.effects,
-      );
-      const skippedPos = this.options.store.skipFailedOutboxMessagePrefix(
-        "child",
-        this.options.host,
-      );
-      if (skippedPos !== null) {
-        this.outbox.handedOffPosition(skippedPos);
-        this.outbox.wake();
+      try {
+        executeLinkEffects(
+          this.options.store,
+          outcome.effects,
+          this.options.effects,
+        );
+      } catch (error) {
+        this.warn("link handoff timeout post-commit publish failed", error, {
+          entryId: pending.earliest.entry_id,
+        });
+      }
+      if (!this.trySkipFailedHead()) {
+        if (outcome.pos !== null) this.outbox.handedOffPosition(outcome.pos);
+        return;
       }
     }
     this.scheduleTimeout();
   }
 
   private next() {
-    let pushed = this.options.store.getOutboxPushCursor(
+    if (this.pendingHeadSkip) return undefined;
+    let row = this.options.store.getOutboxHeadWithStatus(
       "child",
       this.options.host,
     );
-    let rows = this.options.store.listOutbox(
-      "child",
-      this.options.host,
-      pushed,
-      1,
-    );
-    if (rows.length === 0) return undefined;
-    if (
-      rows[0].category === "message" &&
-      rows[0].delivery_id !== null &&
-      this.options.store.getCollaborationDelivery(rows[0].delivery_id)
-        ?.status === "failed"
-    ) {
-      this.options.store.skipFailedOutboxMessagePrefix(
+    if (!row) return undefined;
+    if (row.category === "message" && row.delivery_status === "failed") {
+      if (!this.trySkipFailedHead()) return undefined;
+      row = this.options.store.getOutboxHeadWithStatus(
         "child",
         this.options.host,
       );
-      pushed = this.options.store.getOutboxPushCursor(
-        "child",
-        this.options.host,
-      );
-      rows = this.options.store.listOutbox(
-        "child",
-        this.options.host,
-        pushed,
-        1,
-      );
-      if (rows.length === 0) return undefined;
+      if (!row) return undefined;
     }
-    const row = rows[0];
     return {
       id: row.entry_id,
       position: row.pos,
@@ -480,18 +532,31 @@ export class LinkSyncHubPusher {
     result: SyncRequestResult<unknown>,
   ): boolean {
     if (result.kind === "unknown") return false;
-    const pushed = this.options.store.getOutboxPushCursor(
-      "child",
-      this.options.host,
-    );
+    let pushed: number;
+    try {
+      pushed = this.options.store.getOutboxPushCursor(
+        "child",
+        this.options.host,
+      );
+    } catch (error) {
+      this.warn("link push cursor read failed", error, { entryId: entry.id });
+      return false;
+    }
     if (pushed >= entry.position) return true;
     if (result.kind === "success") {
       if (result.status !== HTTP_STATUS.ACCEPTED) return false;
-      this.options.store.advanceOutboxPushCursor(
-        "child",
-        this.options.host,
-        entry.id,
-      );
+      try {
+        this.options.store.advanceOutboxPushCursor(
+          "child",
+          this.options.host,
+          entry.id,
+        );
+      } catch (error) {
+        this.warn("link push cursor commit failed", error, {
+          entryId: entry.id,
+        });
+        return false;
+      }
       this.scheduleTimeout();
       return true;
     }
@@ -528,23 +593,29 @@ export class LinkSyncHubPusher {
       typeof (result.body as { error?: unknown }).error === "string"
         ? (result.body as { error: string }).error
         : code;
+    return this.commitRejectedHead(entry.id, reason);
+  }
+
+  private commitRejectedHead(entryId: string, reason: string): boolean {
     let effects: LinkApplyEffects;
     try {
       effects = this.options.store.rejectOutboxHead(
         "child",
         this.options.host,
-        entry.id,
+        entryId,
         reason,
       );
     } catch (error) {
-      log.scope("hosts").warn("link push reject persistence failed", {
-        host: this.options.host,
-        entryId: entry.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.warn("link push reject persistence failed", error, { entryId });
       return false;
     }
-    executeLinkEffects(this.options.store, effects, this.options.effects);
+    try {
+      executeLinkEffects(this.options.store, effects, this.options.effects);
+    } catch (error) {
+      this.warn("link push reject post-commit publish failed", error, {
+        entryId,
+      });
+    }
     this.scheduleTimeout();
     return true;
   }

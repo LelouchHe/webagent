@@ -72,6 +72,19 @@ time. An entry without a "closing condition" is a wish, not an issue.
   `blocked` reports still reach the external parent via the persisted
   `remote_tasks` fallback. *Closing:* accepted parity with local tasks; no
   obligation persistence planned.
+- **Soft-deleting a shared remote child with both an open external account and
+  a queued inbound message emits two notices to the hub parent.** Soft delete
+  leaves the queued inbound row alive for the surviving share while purging the
+  in-memory account (emitting an A3 `target_removed` notice); revoking the last
+  share later fails that inbound row (emitting an A1 failed-receipt notice).
+  *Closing:* fail outstanding inbound rows in the soft-delete transaction so
+  the existing status-before-purge ordering deduplicates them.
+- **`SyncOutbox.wake()` during an empty `pump()` is dropped.** While
+  `SyncOutbox.pump()` is awaiting `port.next()` on an empty snapshot, an
+  intervening `wake()` returns early because `pumping` is still `true`; under
+  offline timeout `T`, a dropped wake can let a message time out without any
+  POST attempt. *Closing:* latch a pending wake during `pumping` and recheck
+  once when `pump()` completes empty.
 - **Remote browser routing and lifecycle commands remain local-only.** Cancel,
   rename, archive, and delete do not yet cross hosts, and the browser does not
   address remote Task entries. *Closing:* implement the later host lifecycle

@@ -617,8 +617,26 @@ describe("MCP Task tool host", () => {
     });
     const second = await routed.send(r1Principal(), extParentId, "ping 2");
     assert.equal(second.targetLabel, "Parent V2");
+
+    // If the newest inbound message has a blank sourceLabel, fall back to short id (do not reach back to Parent V2).
+    store.applyLinkPushOperation({
+      remoteRole: "parent",
+      remoteHost: "hub-a",
+      envelope: {
+        id: "33333333-3333-4333-8333-333333333333",
+        category: "message",
+        data: {
+          sourceTaskId: extParentId,
+          targetTaskId: "r1",
+          sourceLabel: "   ",
+          body: "hello 3",
+        },
+      },
+    });
+    const third = await routed.send(r1Principal(), extParentId, "ping 3");
+    assert.equal(third.targetLabel, extParentId.slice(0, 8));
     const outbox = store.listOutbox("parent", "hub-a");
-    assert.equal(outbox.length, 2);
+    assert.equal(outbox.length, 3);
     assert.equal(outbox[1]?.category, "message");
     assert.equal(tasks.hasOpenObligation("r1", extParentId), false);
 
@@ -641,7 +659,7 @@ describe("MCP Task tool host", () => {
       routed.send(r1Principal(), "other-ext-parent", "forbidden"),
       /target_not_allowed|task_not_found/,
     );
-    assert.equal(store.listOutbox("parent", "hub-a").length, 2);
+    assert.equal(store.listOutbox("parent", "hub-a").length, 3);
 
     // Negative: stale generation is rejected with zero outbox rows.
     const stale = r1Principal();
@@ -650,7 +668,7 @@ describe("MCP Task tool host", () => {
       routed.send(stale, extParentId, "stale"),
       /execution_replaced/,
     );
-    assert.equal(store.listOutbox("parent", "hub-a").length, 2);
+    assert.equal(store.listOutbox("parent", "hub-a").length, 3);
   });
 
   it("re-signals an existing queued remote report for replay drain", () => {

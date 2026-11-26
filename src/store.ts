@@ -1491,14 +1491,13 @@ export class Store {
            AND m.source_task_id = ?
            AND d.source_remote_role = ?
            AND d.source_remote_host = ?
-           AND d.source_label IS NOT NULL
-           AND TRIM(d.source_label) <> ''
          ORDER BY d.rowid DESC
          LIMIT 1`,
       )
       .get(recipientTaskId, sourceTaskId, remoteRole, remoteHost) as
-      { source_label: string } | undefined;
-    return row ? row.source_label.trim() : null;
+      { source_label: string | null } | undefined;
+    const trimmed = row?.source_label?.trim();
+    return trimmed && trimmed.length > 0 ? trimmed : null;
   }
 
   getRemoteChildTitle(
@@ -3583,32 +3582,104 @@ export class Store {
     })();
   }
 
-  getEarliestPendingOutboxMessage(
+  getPendingOutboxTimeoutState(
     remoteRole: LinkRemoteRole,
     remoteHost: string,
-  ):
-    | { pos: number; entry_id: string; delivery_id: string; queued_at: number }
-    | undefined {
-    const pushed = this.getOutboxPushCursor(remoteRole, remoteHost);
-    return this.db
-      .prepare(
-        `SELECT o.pos, o.entry_id, o.delivery_id, d.queued_at
-         FROM outbox o
-         JOIN deliveries d ON d.id = o.delivery_id
-         WHERE o.remote_role = ? AND o.remote_host = ?
-           AND o.category = 'message'
-           AND o.pos > ?
-           AND d.status = 'queued'
-         ORDER BY d.queued_at ASC, o.pos ASC
-         LIMIT 1`,
-      )
-      .get(remoteRole, remoteHost, pushed) as
+  ): {
+    hasPendingWork: boolean;
+    earliest:
       | {
           pos: number;
           entry_id: string;
           delivery_id: string;
           queued_at: number;
         }
+      | undefined;
+  } {
+    const row = this.db
+      .prepare(
+        `WITH cur AS (
+           SELECT COALESCE(
+             (SELECT pushed_pos FROM outbox_cursors
+              WHERE remote_role = ? AND remote_host = ?),
+             0
+           ) AS pushed_pos
+         )
+         SELECT
+           EXISTS(
+             SELECT 1 FROM outbox o, cur
+             WHERE o.remote_role = ? AND o.remote_host = ? AND o.pos > cur.pushed_pos
+           ) AS has_pending,
+           m.pos,
+           m.entry_id,
+           m.delivery_id,
+           m.queued_at
+         FROM (SELECT 1) _
+         LEFT JOIN (
+           SELECT o.pos, o.entry_id, o.delivery_id, d.queued_at
+           FROM outbox o
+           JOIN deliveries d ON d.id = o.delivery_id
+           JOIN cur ON o.pos > cur.pushed_pos
+           WHERE o.remote_role = ? AND o.remote_host = ?
+             AND o.category = 'message'
+             AND d.status = 'queued'
+           ORDER BY d.queued_at ASC, o.pos ASC
+           LIMIT 1
+         ) m ON 1 = 1`,
+      )
+      .get(
+        remoteRole,
+        remoteHost,
+        remoteRole,
+        remoteHost,
+        remoteRole,
+        remoteHost,
+      ) as {
+      has_pending: number;
+      pos: number | null;
+      entry_id: string | null;
+      delivery_id: string | null;
+      queued_at: number | null;
+    };
+    return {
+      hasPendingWork: row.has_pending === 1,
+      earliest:
+        row.pos !== null &&
+        row.entry_id !== null &&
+        row.delivery_id !== null &&
+        row.queued_at !== null
+          ? {
+              pos: row.pos,
+              entry_id: row.entry_id,
+              delivery_id: row.delivery_id,
+              queued_at: row.queued_at,
+            }
+          : undefined,
+    };
+  }
+
+  getOutboxHeadWithStatus(
+    remoteRole: LinkRemoteRole,
+    remoteHost: string,
+  ):
+    | (OutboxRow & { delivery_status: CollaborationDeliveryStatus | null })
+    | undefined {
+    return this.db
+      .prepare(
+        `SELECT o.*, d.status AS delivery_status
+         FROM outbox o
+         LEFT JOIN deliveries d ON d.id = o.delivery_id
+         WHERE o.remote_role = ? AND o.remote_host = ?
+           AND o.pos > COALESCE(
+             (SELECT pushed_pos FROM outbox_cursors
+              WHERE remote_role = ? AND remote_host = ?),
+             0
+           )
+         ORDER BY o.pos ASC
+         LIMIT 1`,
+      )
+      .get(remoteRole, remoteHost, remoteRole, remoteHost) as
+      | (OutboxRow & { delivery_status: CollaborationDeliveryStatus | null })
       | undefined;
   }
 
@@ -3663,22 +3734,24 @@ export class Store {
   ): number | null {
     return this.db.transaction(() => {
       const pushed = this.getOutboxPushCursor(remoteRole, remoteHost);
-      const rows = this.db
-        .prepare(
-          `SELECT o.pos, o.entry_id, o.category, d.status AS delivery_status
-           FROM outbox o
-           LEFT JOIN deliveries d ON d.id = o.delivery_id
-           WHERE o.remote_role = ? AND o.remote_host = ? AND o.pos > ?
-           ORDER BY o.pos ASC`,
-        )
-        .all(remoteRole, remoteHost, pushed) as Array<{
+      const stmt = this.db.prepare(
+        `SELECT o.pos, o.entry_id, o.category, d.status AS delivery_status
+         FROM outbox o
+         LEFT JOIN deliveries d ON d.id = o.delivery_id
+         WHERE o.remote_role = ? AND o.remote_host = ? AND o.pos > ?
+         ORDER BY o.pos ASC`,
+      );
+      let lastFailedEntryId: string | null = null;
+      for (const row of stmt.iterate(
+        remoteRole,
+        remoteHost,
+        pushed,
+      ) as Iterable<{
         pos: number;
         entry_id: string;
         category: OutboxCategory;
         delivery_status: CollaborationDeliveryStatus | null;
-      }>;
-      let lastFailedEntryId: string | null = null;
-      for (const row of rows) {
+      }>) {
         if (row.category === "message" && row.delivery_status === "failed") {
           lastFailedEntryId = row.entry_id;
           continue;
