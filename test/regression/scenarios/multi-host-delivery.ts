@@ -525,24 +525,34 @@ export default scenario<State>({
       {
         name: "s6-owner-no-update-and-hard-delete-notices-reach-hub-p",
         action: async (client) => {
-          await client
+          const noUpdatePrompt = await client
             .instance("hub")
             .rest("POST", `/api/v1/tasks/${state.parentId}/prompt`, {
               text: "dispatch no update",
             });
+          if (noUpdatePrompt.status !== 202) {
+            throw new Error(
+              `dispatch no update failed: ${JSON.stringify(noUpdatePrompt)}`,
+            );
+          }
           await waitForRows(
             state.hubDb,
-            `SELECT 1 FROM events WHERE task_id = '${state.parentId}' AND type = 'task_outcome_notice' AND json_extract(data, '$.reason') = 'no_update'`,
+            `SELECT 1 FROM events WHERE task_id = '${state.parentId}' AND type = 'prompt_done' AND seq > (SELECT seq FROM events WHERE task_id = '${state.parentId}' AND type = 'task_outcome_notice' AND json_extract(data, '$.reason') = 'no_update' ORDER BY seq DESC LIMIT 1)`,
           );
           await waitSettled(state);
 
           // Now arm the account again and hard-delete Delivery Child on owner -> target_removed with real title.
           const childId = readTaskId(state.ownerDb, "Delivery Child");
-          await client
+          const armPrompt = await client
             .instance("hub")
             .rest("POST", `/api/v1/tasks/${state.parentId}/prompt`, {
               text: "dispatch arm for delete",
             });
+          if (armPrompt.status !== 202) {
+            throw new Error(
+              `dispatch arm for delete failed: ${JSON.stringify(armPrompt)}`,
+            );
+          }
           await waitForRows(
             state.ownerDb,
             `SELECT 1 FROM events WHERE task_id = '${childId}' AND type = 'prompt_done' AND seq > (SELECT seq FROM events WHERE task_id = '${childId}' AND type = 'assistant_message' AND data LIKE '%Account armed and idle.%' ORDER BY seq DESC LIMIT 1)`,
