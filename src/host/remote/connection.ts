@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { WORKFLOW_STATUSES } from "../../shared/workflow-status.ts";
 import { HTTP_STATUS } from "../../http-status.ts";
@@ -183,6 +184,7 @@ export interface HostConnectionOptions {
   requestTransport?: SyncRequestTransport<HostHttpRequest, unknown>;
   timer?: SyncTimer;
   createRetries?: number;
+  requestRetries?: number;
 }
 
 const DEFAULT_TIMER: SyncTimer = {
@@ -228,6 +230,21 @@ function responseError(body: unknown, status: number): string {
     : `HTTP ${status}`;
 }
 
+function isOpAbortedResponse(status: number, body: unknown): boolean {
+  return (
+    status === HTTP_STATUS.CONFLICT &&
+    body !== null &&
+    typeof body === "object" &&
+    (body as { code?: unknown }).code === "op_aborted"
+  );
+}
+
+type FencedRequestOutcome =
+  | { kind: "skipped" }
+  | { kind: "success"; status: number; body: unknown }
+  | { kind: "rejected"; status: number; body: unknown }
+  | { kind: "unknown"; reason: string };
+
 interface HostFetchOptions {
   signal?: AbortSignal;
   token?: string;
@@ -247,6 +264,7 @@ export class HostConnection {
   >;
   private readonly timer: SyncTimer;
   private readonly createRetries: number;
+  private readonly requestRetries: number;
   private tokenCommand: Promise<string> | null = null;
 
   constructor(config: HostConfig, options: HostConnectionOptions = {}) {
@@ -254,6 +272,7 @@ export class HostConnection {
     this.fetchImpl = options.fetch ?? globalThis.fetch;
     this.timer = options.timer ?? DEFAULT_TIMER;
     this.createRetries = Math.max(0, options.createRetries ?? 2);
+    this.requestRetries = Math.max(0, options.requestRetries ?? 2);
     this.requestTransport = options.requestTransport ?? {
       send: async (opId, request, signal) => {
         const token = request.token ?? (await this.resolveToken(signal));
@@ -351,6 +370,62 @@ export class HostConnection {
     };
   }
 
+  private async sendFencedIdempotentRequest(
+    request: HostHttpRequest,
+    beforeSend?: () => boolean | void,
+  ): Promise<FencedRequestOutcome> {
+    const opId = randomUUID();
+    let sawUnknown = false;
+    let lastUnknownReason = "Remote request result is unknown";
+
+    for (let attempt = 0; attempt <= this.requestRetries; attempt += 1) {
+      if (beforeSend) {
+        if (attempt === 0) {
+          if (beforeSend() === false) return { kind: "skipped" };
+        } else {
+          try {
+            if (beforeSend() === false) {
+              return { kind: "unknown", reason: lastUnknownReason };
+            }
+          } catch {
+            return { kind: "unknown", reason: lastUnknownReason };
+          }
+        }
+      }
+
+      const outcome = await sendSyncRequest({
+        opId,
+        request,
+        timeoutMs: REQUEST_TIMEOUT_MS,
+        transport: this.requestTransport,
+        timer: this.timer,
+        retries: 0,
+      });
+
+      if (outcome.kind === "success") return outcome;
+      if (outcome.kind === "rejected") {
+        if (isOpAbortedResponse(outcome.status, outcome.body)) {
+          return {
+            kind: "unknown",
+            reason: responseError(outcome.body, outcome.status),
+          };
+        }
+        if (sawUnknown) {
+          return {
+            kind: "unknown",
+            reason: `${lastUnknownReason}; retry returned HTTP ${outcome.status}: ${responseError(outcome.body, outcome.status)}`,
+          };
+        }
+        return outcome;
+      }
+
+      sawUnknown = true;
+      lastUnknownReason = errorMessage(outcome.error);
+    }
+
+    return { kind: "unknown", reason: lastUnknownReason };
+  }
+
   async cancelTask(
     host: string,
     taskId: string,
@@ -366,24 +441,23 @@ export class HostConnection {
         reason: "Host credential is unavailable",
       });
     }
-    beforeSend?.();
-    const outcome = await sendSyncRequest({
-      opId: null,
-      request: {
+    const outcome = await this.sendFencedIdempotentRequest(
+      {
         method: "POST",
         path: `/api/v1/tasks/${encodeURIComponent(taskId)}/cancel`,
         body: input,
         token,
         redirect: "error",
       },
-      timeoutMs: REQUEST_TIMEOUT_MS,
-      transport: this.requestTransport,
-      timer: this.timer,
-    });
-    if (outcome.kind === "unknown") {
+      beforeSend,
+    );
+    if (outcome.kind === "unknown" || outcome.kind === "skipped") {
       throw new TaskRemoteCancelError(host, {
         kind: "unknown",
-        reason: errorMessage(outcome.error),
+        reason:
+          outcome.kind === "unknown"
+            ? outcome.reason
+            : "Remote task cancel was skipped",
       });
     }
     if (outcome.kind === "rejected") {
@@ -419,23 +493,20 @@ export class HostConnection {
     } catch {
       return { kind: "unknown", reason: "Host credential is unavailable" };
     }
-    if (beforeSend?.() === false) {
-      return { kind: "skipped" };
-    }
-    const outcome = await sendSyncRequest({
-      opId: null,
-      request: {
+    const outcome = await this.sendFencedIdempotentRequest(
+      {
         method: "DELETE",
         path: `/api/v1/tasks/${encodeURIComponent(taskId)}`,
         token,
         redirect: "error",
       },
-      timeoutMs: REQUEST_TIMEOUT_MS,
-      transport: this.requestTransport,
-      timer: this.timer,
-    });
+      beforeSend,
+    );
+    if (outcome.kind === "skipped") {
+      return { kind: "skipped" };
+    }
     if (outcome.kind === "unknown") {
-      return { kind: "unknown", reason: errorMessage(outcome.error) };
+      return { kind: "unknown", reason: outcome.reason };
     }
     if (outcome.kind === "rejected") {
       const parsed = RemoteDeleteRejectionSchema.safeParse(outcome.body);
