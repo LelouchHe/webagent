@@ -270,7 +270,7 @@ describe("dormant link sync handlers", () => {
     const message = store.getCollaborationMessage(missing.id);
     assert.equal(message?.body, missing.data.body);
     assert.equal(owner.push("hub", missing).status, 202);
-    assert.equal(store.listOutbox("parent", "hub").length, 2);
+    assert.equal(store.listOutbox("parent", "hub").length, 3);
     assert.equal(
       owner.push("hub", {
         ...missing,

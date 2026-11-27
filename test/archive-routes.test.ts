@@ -107,6 +107,7 @@ describe("POST /api/v1/tasks/:id/archive", () => {
         if (result?.parentId) dropped.push([result.parentId, id]);
         return result;
       },
+      unarchiveTask: (id: string) => store.unarchiveTask(id),
     } as unknown as TaskManager;
 
     const handler = createRequestHandler({

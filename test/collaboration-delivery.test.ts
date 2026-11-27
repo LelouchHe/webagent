@@ -1152,7 +1152,7 @@ describe("TaskManager collaboration delivery drain", () => {
     assert.equal(store.listOutbox("parent", "hub-a").length, 1);
   });
 
-  it("emits target_removed notice with real title on hard delete and Root exit, and suppresses A3 when A1 already failed a queued inbound message", async () => {
+  it("emits relation(child_left) with atomic accountOpen on hard delete and unarchive, and suppresses duplicate notice when A1 failed a queued inbound message", async () => {
     const obligations = (
       tasks as unknown as {
         obligations: {
@@ -1161,7 +1161,7 @@ describe("TaskManager collaboration delivery drain", () => {
       }
     ).obligations;
 
-    // Case A: Hard delete with open external account and no queued inbound message -> A3 notice with real title.
+    // Case A: Hard delete with open external account and no queued inbound message -> child_left(accountOpen: true).
     store.createDeferredRemoteTask({
       id: "r-del",
       cwd: tmpDir,
@@ -1176,17 +1176,15 @@ describe("TaskManager collaboration delivery drain", () => {
     await tasks.deleteTask(undefined, "r-del");
     const afterDel = store.listOutbox("parent", "hub-a");
     assert.equal(afterDel.length, 1);
-    assert.equal(afterDel[0].category, "notice");
+    assert.equal(afterDel[0].category, "relation");
     assert.deepEqual(JSON.parse(afterDel[0].data_json), {
-      sourceTaskId: "hub-p",
-      targetTaskId: "r-del",
-      reason: "target_removed",
-      message:
-        "The target left this edge (deleted or archived); the account is gone.",
-      targetLabel: "Deleted Worker",
+      kind: "child_left",
+      parentTaskId: "hub-p",
+      childTaskId: "r-del",
+      accountOpen: true,
     });
 
-    // Case 6a: Open external account + queued inbound message on same edge -> delete fails delivery (receipt for A1) and closes account silently (no A3 notice).
+    // Case 6a: Open external account + queued inbound message on same edge -> delete fails delivery (receipt for A1) and emits child_left(accountOpen: false).
     store.createDeferredRemoteTask({
       id: "r-queued",
       cwd: tmpDir,
@@ -1215,15 +1213,22 @@ describe("TaskManager collaboration delivery drain", () => {
     obligations.arm("hub-p", "r-queued", "external");
     await tasks.deleteTask(undefined, "r-queued");
     const after6a = store.listOutbox("parent", "hub-a", afterDel[0].pos, 10);
-    assert.equal(after6a.length, 1);
+    assert.equal(after6a.length, 2);
     assert.equal(after6a[0].category, "receipt");
     assert.deepEqual(JSON.parse(after6a[0].data_json), {
       originalEntryId: inboundId,
       status: "failed",
       failureReason: "target_deleted",
     });
+    assert.equal(after6a[1].category, "relation");
+    assert.deepEqual(JSON.parse(after6a[1].data_json), {
+      kind: "child_left",
+      parentTaskId: "hub-p",
+      childTaskId: "r-queued",
+      accountOpen: false,
+    });
 
-    // Case 6c: Unarchived R1 attached to Root, deleted recursively by Root exit -> A3 notice with real title.
+    // Case 6c: Unarchiving R1 detaches external parent and emits child_left(accountOpen: true); subsequent Root exit emits nothing extra.
     store.createDeferredRemoteTask({
       id: "r-root",
       cwd: tmpDir,
@@ -1234,19 +1239,26 @@ describe("TaskManager collaboration delivery drain", () => {
       title: "Unarchived Worker",
       creationAnchor: { kind: "task_created", title: "Unarchived Worker" },
     });
-    store.unarchiveTask("r-root");
     obligations.arm("hub-p", "r-root", "external");
-    await tasks.exitRoot(mockBridgeStubs());
-    const afterRoot = store.listOutbox("parent", "hub-a", after6a[0].pos, 10);
-    assert.equal(afterRoot.length, 1);
-    assert.equal(afterRoot[0].category, "notice");
-    assert.deepEqual(JSON.parse(afterRoot[0].data_json), {
-      sourceTaskId: "hub-p",
-      targetTaskId: "r-root",
-      reason: "target_removed",
-      message:
-        "The target left this edge (deleted or archived); the account is gone.",
-      targetLabel: "Unarchived Worker",
+    tasks.unarchiveTask("r-root");
+    const afterUnarchive = store.listOutbox(
+      "parent",
+      "hub-a",
+      after6a[1].pos,
+      10,
+    );
+    assert.equal(afterUnarchive.length, 1);
+    assert.equal(afterUnarchive[0].category, "relation");
+    assert.deepEqual(JSON.parse(afterUnarchive[0].data_json), {
+      kind: "child_left",
+      parentTaskId: "hub-p",
+      childTaskId: "r-root",
+      accountOpen: true,
     });
+    await tasks.exitRoot(mockBridgeStubs());
+    assert.equal(
+      store.listOutbox("parent", "hub-a", afterUnarchive[0].pos, 10).length,
+      0,
+    );
   });
 });
