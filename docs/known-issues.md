@@ -104,8 +104,8 @@ time. An entry without a "closing condition" is a wish, not an issue.
   terminates the process, and otherwise it leaves the pump idle until a
   subsequent wake. *Closing:* the adapter catches
   head-read errors and schedules a pump retry.
-- **Remote browser routing and lifecycle commands remain local-only.** Cancel,
-  rename, archive, and delete do not yet cross hosts, and the browser does not
+- **Remote browser routing and remaining lifecycle commands are local-only.**
+  Rename, archive, and delete do not yet cross hosts, and the browser does not
   address remote Task entries. *Closing:* implement the later host lifecycle
   slices with matching authorization and restart semantics.
 - **An owner-side delete does not reach the hub proactively.** The hub observes

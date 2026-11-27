@@ -17,7 +17,11 @@ import {
   TaskRemoteCreateUnknownError,
 } from "../../api/tasks.ts";
 import { log } from "../../log.ts";
-import { HostConnection, REMOTE_STATUS_TIMEOUT_MS } from "./connection.ts";
+import {
+  HostConnection,
+  REMOTE_STATUS_TIMEOUT_MS,
+  type HostTaskCancelRequest,
+} from "./connection.ts";
 import type {
   HostRuntimeState,
   HostConnectionState,
@@ -155,28 +159,64 @@ export class HostRegistry implements RemoteTaskCreateTransport {
     );
   }
 
+  hasConnections(): boolean {
+    return this.connections.size > 0;
+  }
+
   hasRemoteChild(localParentTaskId: string): boolean {
     if (this.connections.size === 0) return false;
     return this.linksForParent(localParentTaskId).length > 0;
+  }
+
+  private resolveLink(
+    predicate: (candidate: RemoteTask) => boolean,
+  ): RemoteTaskTarget | undefined {
+    if (this.connections.size === 0) return undefined;
+    const link = (this.options?.listLinks() ?? []).find(predicate);
+    if (!link) return undefined;
+    const connection = this.connections.get(link.host);
+    if (!connection) return undefined;
+    return {
+      host: link.host,
+      taskId: link.remoteTaskId,
+      parentTaskId: link.localTaskId,
+      connection,
+    };
   }
 
   resolveRemoteChild(
     localParentTaskId: string,
     remoteTaskId: string,
   ): RemoteTaskTarget | undefined {
-    if (this.connections.size === 0) return undefined;
-    const link = this.linksForParent(localParentTaskId).find(
-      (candidate) => candidate.remoteTaskId === remoteTaskId,
+    return this.resolveLink(
+      (candidate) =>
+        candidate.localTaskId === localParentTaskId &&
+        candidate.remoteTaskId === remoteTaskId,
     );
-    if (!link) return undefined;
-    const connection = this.connections.get(link.host);
-    if (!connection) return undefined;
-    return {
-      host: link.host,
-      taskId: remoteTaskId,
-      parentTaskId: localParentTaskId,
-      connection,
-    };
+  }
+
+  resolveRemoteChildByTaskId(
+    remoteTaskId: string,
+    isLiveParent: (localTaskId: string) => boolean,
+  ): RemoteTaskTarget | undefined {
+    return this.resolveLink(
+      (candidate) =>
+        candidate.remoteTaskId === remoteTaskId &&
+        isLiveParent(candidate.localTaskId),
+    );
+  }
+
+  cancelRemote(
+    target: RemoteTaskTarget,
+    input: HostTaskCancelRequest,
+    beforeSend?: () => void,
+  ): Promise<"idle" | "cancelling" | "cancelled" | "superseded"> {
+    return target.connection.cancelTask(
+      target.host,
+      target.taskId,
+      input,
+      beforeSend,
+    );
   }
 
   async queryRemote(

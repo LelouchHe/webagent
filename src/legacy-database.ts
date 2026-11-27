@@ -95,14 +95,12 @@ export function detectLegacyDatabase(
   const outboxSql = tableSql.get("outbox") ?? "";
   const outdatedOutbox =
     tableSql.has("outbox") &&
-    !(
-      /category\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*category\s+IN\s*\([^)]*'notice'[^)]*\)\s*\)/i.test(
+    (/category\s+TEXT\s+NOT\s+NULL\s+CHECK\s*\(\s*category\s+IN\s*\(/i.test(
+      outboxSql,
+    ) ||
+      !/category\s+NOT\s+IN\s*\(\s*'message'\s*,\s*'report'\s*\)\s+AND\s+delivery_id\s+IS\s+NULL/i.test(
         outboxSql,
-      ) &&
-      /category\s+IN\s*\([^)]*'notice'[^)]*\)\s+AND\s+delivery_id\s+IS\s+NULL/i.test(
-        outboxSql,
-      )
-    );
+      ));
 
   const report = {
     taskCount,

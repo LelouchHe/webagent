@@ -1,6 +1,7 @@
 import { HTTP_STATUS } from "../http-status.ts";
 import { log } from "../log.ts";
 import {
+  isDeliveryLinkCategory,
   parseLinkEnvelope,
   LinkProtocolError,
   type LinkEnvelope,
@@ -533,7 +534,10 @@ export class LinkSyncHubPusher {
         : null;
     const isProtocolRejection =
       code === "link_op_conflict" || code === "link_protocol_error";
-    if (!isProtocolRejection || entry.request.category === "receipt") {
+    if (
+      !isProtocolRejection ||
+      !isDeliveryLinkCategory(entry.request.category)
+    ) {
       log.scope("hosts").warn("link push fault", {
         host: this.options.host,
         status: result.status,

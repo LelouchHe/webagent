@@ -28,6 +28,7 @@ import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { handleShareRoutes } from "../share/routes.ts";
 import { handleFileRoutes } from "../files/routes.ts";
+import { handleCancelTaskRoute } from "./task-lifecycle.ts";
 import {
   authenticate,
   isHostScopeAllowedPath,
@@ -1500,43 +1501,17 @@ export function createRequestHandler(
       // --- POST /api/v1/tasks/:id/cancel ---
       const cancelMatch = url.match(/^\/api\/v1\/tasks\/([^/]+)\/cancel\/?$/);
       if (cancelMatch && req.method === "POST") {
-        const taskId = decodeURIComponent(cancelMatch[1]);
-        const task = store.getTask(taskId);
-        if (!task) {
-          json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
-          return;
-        }
-        const { opId, replayed } = tryReplayClientOp(req, res, store, taskId);
-        if (replayed) return;
-
-        if (!tasks) {
-          const idleBody = { ok: true, status: "idle" };
-          saveClientOpResult(store, opId, taskId, HTTP_STATUS.OK, idleBody);
-          json(res, HTTP_STATUS.OK, idleBody);
-          return;
-        }
-        if (!deps.taskOps) {
-          throw new Error("Task operations are not configured");
-        }
-        let result;
-        try {
-          result = await deps.taskOps.cancel({ kind: "user", taskId });
-        } catch (error) {
-          if (error instanceof AgentNotReadyError) {
-            json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-              error: "Agent not ready yet",
-            });
-            return;
-          }
-          throw error;
-        }
-        const status =
-          result.status === "cancelling" || result.status === "superseded"
-            ? HTTP_STATUS.ACCEPTED
-            : HTTP_STATUS.OK;
-        const okBody = { ok: true, status: result.status };
-        saveClientOpResult(store, opId, taskId, status, okBody);
-        json(res, status, okBody);
+        await handleCancelTaskRoute({
+          ...deps,
+          req,
+          res,
+          taskId: decodeURIComponent(cancelMatch[1]),
+          principal: principalByRequest.get(req),
+          readBody,
+          json,
+          tryReplayClientOp,
+          saveClientOpResult,
+        });
         return;
       }
 

@@ -612,6 +612,54 @@ Restarts need no catch-up pass: the outbox, cursors, and deliveries are durable.
    pump resumes after pushed_pos           external parent row, enqueued as entry R
 ```
 
+## Cancel
+
+Cancellation is a synchronous `request` (`POST /api/v1/tasks/:id/cancel`), not
+an outbox entry. A shared resolver selects the target: a user caller cancels a
+live local task when present, otherwise a linked remote child whose hub parent
+is live; an agent caller (`task_cancel`) may cancel only its own direct child,
+local or remote.
+
+```text
+ caller (P agent or user)   hub                                     owner                      R1
+   │ cancel(R1)              │                                         │                          │
+   ├────────────────────────►│ resolveCancelTarget                     │                          │
+   │                         │ resolve credential                      │                          │
+   │                         │ agent: generation fence                 │                          │
+   │                         ├── POST /tasks/R1/cancel ───────────────►│ read + parse body        │
+   │                         │   user: {}                              │ then, with no await:     │
+   │                         │   agent: {reason, sourceLabel}          │  R1 live? parent row     │
+   │                         │                                         │  link = token name?      │
+   │                         │                                         │  no → 404                │
+   │                         │                                         │  yes → local cancel ────►│ turn stops
+   │                         │                                         │ agent: R1 target row     │
+   │                         │◄─────────── 200 idle | cancelled ───────┤                          │
+   │                         │             202 cancelling | superseded │                          │
+   │                         │ HTTP code must match the body status    │                          │
+   │                         │ agent: generation fence, P source row   │                          │
+   │◄── status ──────────────┤                                         │                          │
+   │                         │                                         │                          │
+   │  404 → not found · other 4xx → rejected                                                        │
+   │  timeout · 5xx · mismatched pair → unknown: no retry, no P source row                          │
+```
+
+On the owner, `POST /api/v1/tasks/:id/cancel` is in host scope and runs an
+owner-local branch that never forwards to another host and never reads or writes
+`client_ops`. The owner parses and validates the strict request body first (a
+user cancel with no source, or an agent cancel carrying `reason` and a bounded
+`sourceLabel` snapshot), then verifies that the target exists and its
+external-parent link matches the authenticated host token name, returning `404`
+otherwise.
+
+Recording matches local rules: user cancels write no rows on either host. For an
+agent cancel, the hub checks the caller's execution generation before and after
+the remote call; the owner writes the `target` `task_cancel` row deriving
+`sourceTaskId` from the matched edge and taking the target title locally, and
+the hub writes the `source` row after the response returns. A `404` is returned
+as-is; timeouts, `5xx`, and malformed responses surface as an unknown result
+with no automatic retry and no fabricated hub `source` row (an owner-side cancel
+that already committed still keeps its `target` row).
+
 ## Differences from local
 
 A cross-host operation behaves like the same operation on one host; the
@@ -657,7 +705,8 @@ Two rules follow from it:
 | Single-source failure & obligation notices | Yes, sender-side atomic failure notices, owner `notice` feed entries (`no_update`, `no_activity`, `target_removed`) |
 | Offline handoff timeout T | Yes, hub pusher (`limits.remote_delivery_timeout`, default 10 min) |
 | Restart and reconnect | Yes, from durable cursors; no full catch-up |
-| Remote cancel/rename/archive/delete | No |
+| Remote cancel | Yes, synchronous request (agent `task_cancel` and user REST) |
+| Remote rename/archive/delete | No |
 | Browser task routing | No |
 | Server-side search | No |
 

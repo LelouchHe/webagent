@@ -1,3 +1,4 @@
+import { HTTP_STATUS } from "../http-status.ts";
 import type { AgentCommandSnapshot, ConfigOption } from "../types.ts";
 import type {
   TaskUpdateStatus,
@@ -82,6 +83,14 @@ export interface TaskReadResult {
   rows: TaskReadRow[];
 }
 
+export const MAX_HOST_CANCEL_SOURCE_LABEL_LENGTH = 256;
+
+export function cancelHttpStatus(status: TaskCancelOutcome["status"]): number {
+  return status === "cancelling" || status === "superseded"
+    ? HTTP_STATUS.ACCEPTED
+    : HTTP_STATUS.OK;
+}
+
 export interface TaskCancelOutcome {
   accepted: true;
   taskId: string;
@@ -116,7 +125,44 @@ export type TaskCancelCommand =
       principal: TaskCaller;
       targetTaskId: string;
       reason: string;
+    }
+  | {
+      kind: "host";
+      taskId: string;
+      actor:
+        | { kind: "user" }
+        | {
+            kind: "agent";
+            sourceTaskId: string;
+            sourceLabel: string;
+            reason: string;
+          };
     };
+
+export type TaskRemoteCancelErrorDetail =
+  | { kind: "rejected"; status: number; reason: string }
+  | { kind: "unknown"; reason: string };
+
+export class TaskRemoteCancelError extends Error {
+  readonly host: string;
+  readonly detail: TaskRemoteCancelErrorDetail;
+
+  constructor(
+    host: string,
+    detail: TaskRemoteCancelErrorDetail,
+    options?: ErrorOptions,
+  ) {
+    super(
+      detail.kind === "rejected"
+        ? `Remote task cancel rejected by ${host}: ${detail.reason}`
+        : `Remote task cancel result is unknown for ${host}: ${detail.reason}`,
+      options,
+    );
+    this.name = "TaskRemoteCancelError";
+    this.host = host;
+    this.detail = detail;
+  }
+}
 
 export interface TaskCreateInput {
   title?: string;

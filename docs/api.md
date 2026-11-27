@@ -1511,7 +1511,19 @@ When no work remains, the endpoint is idempotent:
 { "ok": true, "status": "idle" }
 ```
 
-**Errors:** `404`, `503`
+For a user caller, a live local task runs locally (with `X-Client-Op-Id`
+replay). If no local task exists, the hub routes the request synchronously to a
+linked remote child whose hub parent is live (without `client_ops`).
+
+For a `host`-scoped caller, this route is owner-local only (never forwarded) and
+never reads or writes `client_ops`. It validates the strict JSON body first
+(empty / `{}` / `{ "kind": "user" }`, or
+`{ "kind": "agent", "reason": "...", "sourceLabel": "..." }`), then verifies
+that the task exists and its external-parent link matches the authenticated host
+token name, returning `404` otherwise. Agent cancels write the owner-side
+`target` `task_cancel` row with `sourceTaskId` derived from the matched link.
+
+**Errors:** `400`, `404`, `502` (remote cancel result unknown), `503`
 
 ---
 

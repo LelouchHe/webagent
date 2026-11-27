@@ -97,6 +97,10 @@ const HOST_SCOPE_PATHS: readonly WhitelistEntry[] = [
   { method: "GET", test: (p) => p === "/api/v1/auth/verify" },
   { method: "POST", test: (p) => p === "/api/v1/tasks" },
   {
+    method: "POST",
+    test: (p) => /^\/api\/v1\/tasks\/[A-Za-z0-9_-]+\/cancel\/?$/.test(p),
+  },
+  {
     method: "GET",
     test: (p) =>
       /^\/api\/v1\/tasks\/[A-Za-z0-9_-]+\/(?:events|status)$/.test(p),

@@ -27,6 +27,13 @@ const noticeDataSchema = z.object({
   targetLabel: z.string(),
 });
 
+const relationDataSchema = z.object({
+  kind: z.literal("child_left"),
+  parentTaskId: z.string(),
+  childTaskId: z.string(),
+  accountOpen: z.boolean(),
+});
+
 export const linkEnvelopeSchema = z.discriminatedUnion("category", [
   z.object({
     id: z.uuid(),
@@ -48,12 +55,24 @@ export const linkEnvelopeSchema = z.discriminatedUnion("category", [
     category: z.literal("notice"),
     data: noticeDataSchema,
   }),
+  z.object({
+    id: z.uuid(),
+    category: z.literal("relation"),
+    data: relationDataSchema,
+  }),
 ]);
 
 export type LinkEnvelope = z.infer<typeof linkEnvelopeSchema>;
 export type LinkMessageData = z.infer<typeof messageDataSchema>;
 export type LinkReceiptData = z.infer<typeof receiptDataSchema>;
 export type LinkNoticeData = z.infer<typeof noticeDataSchema>;
+export type LinkRelationData = z.infer<typeof relationDataSchema>;
+
+export function isDeliveryLinkCategory(
+  category: LinkEnvelope["category"],
+): category is "message" | "report" {
+  return category === "message" || category === "report";
+}
 
 export class LinkProtocolError extends Error {
   constructor(message: string) {

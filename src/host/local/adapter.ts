@@ -12,8 +12,7 @@ import {
 } from "../../task-manager.ts";
 import { expandHomePath } from "../../home-path.ts";
 import { errorMessage, type AgentEvent } from "../../types.ts";
-import { formatFieldBlock } from "../../shared/field-block.ts";
-import { formatTaskReference } from "../../shared/task-reference.ts";
+import { recordTaskCancelEvent } from "../../task-cancel-record.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../../shared/time.ts";
 import { formatSilence } from "../../obligation-controller.ts";
 import { abbreviateHomePath } from "../../home-path.ts";
@@ -558,8 +557,22 @@ export function createLocalTaskOps(deps: {
     },
 
     async cancel(command) {
-      if (command.kind === "user") {
+      if (command.kind !== "agent") {
         const result = await cancelExecution(command.taskId);
+        if (command.kind === "host" && command.actor.kind === "agent") {
+          const targetTask = store.getTaskIncludingDeleted(command.taskId);
+          recordTaskCancelEvent({
+            store,
+            broadcastTaskCancelNotice,
+            role: "target",
+            sourceTaskId: command.actor.sourceTaskId,
+            sourceLabel: command.actor.sourceLabel,
+            targetTaskId: command.taskId,
+            targetLabel: targetTask?.title ?? command.taskId.slice(0, 8),
+            reason: command.actor.reason,
+            status: result.status,
+          });
+        }
         return {
           accepted: true,
           taskId: command.taskId,
@@ -574,66 +587,21 @@ export function createLocalTaskOps(deps: {
       // The cancel awaited a transport round trip; the record of what happened
       // is only written while the caller still owns its execution.
       authorize(command.principal);
-      // One fact, two rows, one per side of the edge: the canceller reads it as
-      // an act, the cancelled task as something done to it. Both are ordinary
-      // `system_message` rows (machine fields in `data`), so each side renders
-      // through the generic path and neither title is ever empty. Titles come
-      // from the live task rows, with the same short-id fallback collaboration
-      // uses; a cancelled task may already be soft-deleted, hence
-      // `getTaskIncludingDeleted`.
       const sourceTask = store.getTaskIncludingDeleted(sourceTaskId);
       const targetTask = store.getTaskIncludingDeleted(target.id);
       const sourceLabel = sourceTask?.title ?? sourceTaskId.slice(0, 8);
       const targetLabel = targetTask?.title ?? target.id.slice(0, 8);
-      // The raw labels travel with both rows: a client anchors the reference it
-      // may mark by task id, and cannot recover it from the rendered title.
-      const sourceRef = formatTaskReference(sourceLabel);
-      const targetRef = formatTaskReference(targetLabel);
-      const body = formatFieldBlock([
-        { label: "reason", value: command.reason },
-        { label: "status", value: result.status },
-      ]);
-      const rows = [
-        {
-          taskId: sourceTaskId,
-          role: "source" as const,
-          title: `${sourceRef} cancelled ${targetRef}`,
-        },
-        {
-          taskId: target.id,
-          role: "target" as const,
-          title: `Cancelled by ${sourceRef}`,
-        },
-      ];
-      for (const row of rows) {
-        store.saveEvent(
-          row.taskId,
-          "system_message",
-          {
-            kind: "task_cancel",
-            role: row.role,
-            sourceTaskId,
-            sourceLabel,
-            targetTaskId: target.id,
-            targetLabel,
-            reason: command.reason,
-            status: result.status,
-            title: row.title,
-            body,
-          },
-          { from_ref: "agent" },
-        );
-        broadcastTaskCancelNotice?.({
-          type: "system_message",
-          taskId: row.taskId,
-          kind: "task_cancel",
-          role: row.role,
+      for (const role of ["source", "target"] as const) {
+        recordTaskCancelEvent({
+          store,
+          broadcastTaskCancelNotice,
+          role,
           sourceTaskId,
           sourceLabel,
           targetTaskId: target.id,
           targetLabel,
-          title: row.title,
-          body,
+          reason: command.reason,
+          status: result.status,
         });
       }
       return { accepted: true, taskId: target.id, status: result.status };
