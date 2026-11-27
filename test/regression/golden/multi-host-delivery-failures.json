@@ -2699,6 +2699,14 @@
                 {
                   "kind": "write",
                   "method": "run",
+                  "sql": "DELETE FROM ops WHERE created_at <= ?",
+                  "args": [1789246800000]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",

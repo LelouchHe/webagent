@@ -1994,6 +1994,14 @@
                 {
                   "kind": "write",
                   "method": "run",
+                  "sql": "DELETE FROM ops WHERE created_at <= ?",
+                  "args": [1789246800000]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "0cc92a50-1b53-5536-9975-4201d29d3eb3",
@@ -2191,6 +2199,14 @@
                   "method": "run",
                   "sql": "DELETE FROM inbox_messages WHERE created_at < ?",
                   "args": [1786741200000]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "DELETE FROM ops WHERE created_at <= ?",
+                  "args": [1789246800000]
                 }
               ],
               [
@@ -2425,6 +2441,14 @@
                   "method": "run",
                   "sql": "DELETE FROM inbox_messages WHERE created_at < ?",
                   "args": [1786741200000]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "DELETE FROM ops WHERE created_at <= ?",
+                  "args": [1789246800000]
                 }
               ],
               [
@@ -3360,6 +3384,14 @@
                   "method": "run",
                   "sql": "DELETE FROM inbox_messages WHERE created_at < ?",
                   "args": [1786741200000]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "DELETE FROM ops WHERE created_at <= ?",
+                  "args": [1789246800000]
                 }
               ],
               [

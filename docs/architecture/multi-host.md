@@ -64,19 +64,37 @@ state and must not be lost travels on the **link**; everything else is a
 
 ## Idempotent operations
 
-Only operations that a caller really retries with the same op id provide
-same-op replay: Task create, link entry delivery (keyed by the stored envelope
-id), and REST collaboration messages. Reads, absolute sets, and transitions
-that are already reached stay naturally repeatable without an op id. The replay
-interfaces take a required `opId: string | null` (`TaskOps.create`,
-`sendSyncRequest`); a string promises that retrying with the same value is
-safe, and `null` explicitly opts out and is never retried. On the wire the op
-id is `X-Client-Op-Id`; no header means `null`. Other routes do not promise
-same-op replay (prompt uses the header only to correlate its own echo), so a
-client must not retry them automatically on an unknown outcome.
+All `/api/**` state-changing HTTP requests (`POST`, `PUT`, `PATCH`, `DELETE`)
+share one honest wire contract for `X-Client-Op-Id` (single physical header,
+1..128 chars; omitted runs without buffering; empty, overlong, or duplicated
+headers return `400 invalid_op_id`):
 
-Idempotency is built into the fact the operation writes, not into a result
-cache. A created Task's id is derived from the op id:
+- **Rejected (`400 op_id_not_supported`)**: `POST /api/v1/tokens`,
+  `POST /api/v1/sse-ticket`, and `POST /api/v1/tasks/:id/attachments`
+  (one-time credentials and streaming multipart upload).
+- **Bypassed (fact-based primary keys)**: `POST /api/v1/tasks`
+  (`TASK_CREATE_NAMESPACE`), `POST /api/v1/tasks/:id/messages`
+  (`COLLABORATION_MESSAGE_NAMESPACE`), and `POST /api/v1/link/entries`
+  (envelope `entry_id`).
+- **Default (`ops` table, 24h TTL)**: every other `/api/**` write route enters
+  the HTTP `ops` adapter (`src/http/ops-adapter.ts` + `src/store/ops.ts`),
+  keyed by `opIdentity(OPS_NAMESPACE, caller, opId)` with SHA-256 request
+  fingerprint `method + "\0" + url + "\0" + rawBodyBytes`. Concurrent
+  duplicates coalesce in memory (`inFlight` takes precedence over DB TTL);
+  mismatched fingerprints return `409 op_conflict`; crash-orphaned `pending`
+  rows return `409 op_aborted`; finalized responses persist synchronously via
+  `ops.complete` before writing to any socket.
+
+Outside the existing fact-based create and collaboration paths, `opId` stays at
+the HTTP wire boundary — `TaskOps`, `TaskManager`, `Store`, and MCP tools take
+no new `opId` parameters. On hub → owner hops, `HostConnection.cancelTask` and
+`HostConnection.deleteTask` each generate a single-hop `randomUUID()`, re-run
+their `beforeSend` fence before every HTTP send (stopping as `unknown` if a
+retry fence fails after an initial unknown attempt), retry up to 2 times on
+unknown outcomes, and classify owner `409 op_aborted` or any post-unknown `4xx`
+as terminal `unknown`.
+
+For fact-based task creation, a created Task's id is derived from the op id:
 
 ```text
  taskId = opIdentity(TASK_CREATE_NAMESPACE, caller scope, opId)   UUIDv5, computed by the owner
@@ -144,8 +162,9 @@ the earlier attempt did not commit.
 
 Replay recovers the acceptance only. If the process stops after the commit but
 before the source activity update, source SSE, or drain, replay does not redo
-them; the queued delivery waits for an ordinary drain. Permission responses,
-cancel, prompt, and message ingress do not promise same-op replay (see
+them; the queued delivery waits for an ordinary drain. All other `/api/**`
+write routes (outside the three rejected endpoints and three fact-based routes)
+are protected at the HTTP entry by the 24h `ops` table (see
 [Known issues](../known-issues.md)).
 
 ## Link transport
@@ -687,8 +706,9 @@ local or remote.
 ```
 
 On the owner, `POST /api/v1/tasks/:id/cancel` is in host scope and runs an
-owner-local branch that never forwards to another host and ignores
-`X-Client-Op-Id`. The owner parses and validates the strict request body first (a
+owner-local branch that never forwards to another host, protected at the HTTP
+entry by the owner's `ops` table when `X-Client-Op-Id` is sent. The owner parses
+and validates the strict request body first (a
 user cancel with no source, or an agent cancel carrying `reason` and a bounded
 `sourceLabel` snapshot), then verifies that the target exists and its
 external-parent link matches the authenticated host token name, returning `404`

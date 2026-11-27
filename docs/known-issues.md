@@ -29,18 +29,47 @@ time. An entry without a "closing condition" is a wish, not an issue.
   hub's retry window would insert it again (requires create response loss,
   immediate hard delete, and retry within the same window). *Closing:* accepted
   edge case; do not add a tombstone table for it.
-- **Permission responses, cancel, prompt, and message ingress do not promise
-  same-op replay.** Repeating a request with the same `X-Client-Op-Id` can
-  re-execute against live state (cancel may stop a newer turn, prompt after
-  idle starts a new turn, ingress creates a second message, and permission
-  returns `404` once answered). None of these routes currently has a caller
-  that automatically retries with the same op id. *Closing:* when a caller
-  begins automatically retrying these routes on unknown outcome (expected in
-  plan v7 step 6 when the browser adopts `shared/sync` requests).
+- **Crash or shutdown between `ops.claim` and `ops.complete` leaves an orphan
+  `pending` row for 24 hours.** Replaying the same `(caller, opId)` after
+  restart returns `409` (`op_aborted`): the outcome is unknown, and the server
+  guarantees it will not run the handler a second time. *Closing:* accepted
+  safety trade-off; callers inspect live state or retry with a fresh `opId`
+  once safe.
+- **HTTP `ops` replays return the original response snapshot.** Signed URLs
+  inside a replayed body may have expired and a preview share token may since
+  have been revoked; callers re-read live state when needed. *Closing:*
+  accepted trade-off of generic response snapshots.
+- **Persisted `5xx` responses replay unchanged for 24 hours.** `ops` has no
+  status-based `abandon` path because routes such as `/api/v1/bridge/reload`
+  can produce partial side effects before returning `5xx`. After fixing the
+  underlying fault, retry with a new `X-Client-Op-Id`. *Closing:* accepted
+  at-most-once invariant.
+- **Revoking and re-issuing a non-`host` token with the same name continues
+  the same `token:<name>` op scope, and fact-based routes do not cross-check
+  keys against `ops`.** Static `401`/`403` checks (including `/api/v1/tokens`
+  `admin` checks) always run before replay, so a demoted token cannot replay
+  an admin op. *Closing:* accepted naming scope; reuse token names only for
+  the same logical caller.
+- **Retention windows differ between `ops` and fact-based routes.** `ops`
+  retains records for a fixed 24 hours (`OPS_TTL_MS`), while fact-based routes
+  (`POST /api/v1/tasks`, `POST /api/v1/tasks/:id/messages`,
+  `POST /api/v1/link/entries`) deduplicate while the underlying fact exists.
+  *Closing:* documented contract boundary.
+- **`POST /api/v1/tokens`, `POST /api/v1/sse-ticket`, and
+  `POST /api/v1/tasks/:id/attachments` reject `X-Client-Op-Id` with `400`
+  (`op_id_not_supported`).** One-time plaintext secrets, short-lived SSE
+  tickets, and streaming multipart uploads do not buffer or replay responses.
+  *Closing:* explicit contract exclusion.
+- **Multi-host upgrades must restart the owner before the hub, and deeper
+  three-hop cascade deletes (A→B→C) retain existing intermediate mapping.**
+  Upgrading a hub before its owner would let hub `DELETE` retries hit an owner
+  without `ops` and turn a duplicate into `404`. *Closing:* pre-1.0 upgrade
+  order convention; multi-hop chaining beyond two hosts is out of scope.
 - **Existing databases retain an orphan `client_ops` table.** Fresh databases
   do not create `client_ops`, and startup does not `DROP` it on older
-  databases; operators may drop it manually while stopped. *Closing:* pre-1.0
-  schema reset or manual cleanup.
+  databases; operators may drop it manually while stopped
+  (`DROP TABLE IF EXISTS client_ops;`). *Closing:* pre-1.0 schema reset or
+  manual cleanup.
 - **A browser retry uses whatever token is current.** The `@` send keeps one op
   id across retries, but each attempt reads the stored token; if another tab
   signs in under a different token name between attempts, the retry derives a

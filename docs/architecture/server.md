@@ -283,16 +283,20 @@ Activating push on a device and troubleshooting are in
 ## Cross-cutting mechanisms
 
 - **Idempotency** — the browser sends `X-Client-Op-Id` with user actions.
-  Task create and REST collaboration messages derive the id of the fact they
-  write from the op id and replay from that fact
+  Task create, REST collaboration messages, and `POST /api/v1/link/entries`
+  bypass `ops` and derive their fact ids directly
   ([Multi-host: Idempotent operations](./multi-host.md#idempotent-operations)).
-  Prompt keeps lenient `X-Client-Op-Id` parsing to correlate its `user_message`
-  event and SSE echo with the browser's optimistic message, and task delete uses
-  it to correlate its HTTP response and broadcast, without replaying cached
-  results. Permission responses, cancel, and message ingress ignore the header
-  and do not promise same-op replay. MCP callers supply no op id; `task_create`
-  generates one and
-  passes it to the shared create path.
+  `POST /api/v1/tokens`, `POST /api/v1/sse-ticket`, and
+  `POST /api/v1/tasks/:id/attachments` reject `X-Client-Op-Id` with `400`
+  (`op_id_not_supported`). All other `/api/**` writes enter the HTTP `ops`
+  adapter (`src/http/ops-adapter.ts` + `src/store/ops.ts`, 24h TTL) after
+  Bearer authentication and static `/api/v1/tokens` admin checks: same
+  `(caller, opId)` and request fingerprint replays the persisted response or
+  coalesces in-flight; mismatched fingerprints return `409 op_conflict`;
+  crash-orphaned `pending` rows return `409 op_aborted`. Prompt and task delete
+  still forward the validated `X-Client-Op-Id` for SSE echo correlation. MCP
+  callers supply no op id; `task_create` generates one and passes it to the
+  shared create path.
 - **Errors** — REST answers with an HTTP status and a JSON `{ error }` body;
   MCP answers with tool-error text written for the calling agent
   (`src/mcp/create-errors.ts` for `task_create`).

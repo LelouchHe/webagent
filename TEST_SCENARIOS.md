@@ -135,18 +135,37 @@ spot gaps, and decide what still needs to be added without reading every spec.
     effects (SSE/lastActive/drain), missing
     header creates distinct facts without echoing `clientOpId`, and empty/>128
     header returns `400`
-- `test/contract-07-idempotency.test.ts`
+- `test/ops-store.test.ts` and `test/ops-adapter.test.ts`
+  - `OpsStore` `claim` / `complete` / `sweep` state machine: first claim `new`,
+    `pending` / `replay` / fingerprint `conflict` priority, exact 24h TTL
+    reset boundary, `204` empty `Buffer` preservation, `sweep` active-key
+    protection, and real `src/server.ts` startup sweep, hourly timer sweep
+    preserving live `inFlight` keys, and `clearInterval` before `store.close()`
+  - HTTP `ops` adapter binary gzip `Buffer` + `Content-Encoding` fidelity,
+    hop-by-hop header stripping, `URIError` `400` and uncaught `500`
+    persistence, and `ops.complete` failure keeping `pending` (`409 op_aborted`)
+    without ever returning success
+- `test/contract-07-idempotency.test.ts` and `test/contract-07-multihop.test.ts`
   - fresh DB omits `client_ops`; legacy DBs retain an orphan `client_ops` table
     and sentinel rows untouched and unread at boot across permission, cancel,
     prompt, and ingress routes
-  - same-op resend behavior after `client_ops` removal: permission (`404`,
-    answered once), cancel (`202 cancelling` → settled → `200 idle`), prompt
-    (`409` while busy, raw `clientOpId` preserved on stored event and SSE,
-    new turn after idle), and ingress (distinct ids for direct `to:task` and
-    unbound `to:user`, replacement with a new id and old-row deletion on
-    matching `dedup_key`)
+  - unified HTTP `ops` replay across opted-in routes (permission, prompt with
+    raw `clientOpId` echo, cancel, ingress, `DELETE /tokens/:name` `204` empty
+    body, `share` `Cache-Control: no-store`, `push/subscribe` async iteration,
+    `beta/prompt`, Root exit `replacedBy`, unmatched `404`, files `405`),
+    fingerprint conflict (`409 op_conflict` on method/URL/raw bytes), caller
+    isolation, non-owning host rejection, demoted admin `403` before replay,
+    headerless fast path, strict physical header validation (`400 invalid_op_id`),
+    concurrent `inFlight` coalescing & >24h TTL survival, restart replay &
+    orphan `pending` (`409 op_aborted`), mid-body disconnect no-claim, claimed
+    `prompt` disconnect survival + explicit cancel, reject list (`400 op_id_not_supported`),
+    and bypass list (zero `ops` rows)
   - survivor-based local (archived parent) and host (external parent link)
     create replay across Root exit using `TASK_CREATE_NAMESPACE`
+  - multi-hop `HostConnection` single-hop retries on remote cancel (REST + MCP)
+    and cascade multi-child delete against real Owner `ops`, per-send
+    `beforeSend` fence stopping retry on post-unknown rotation/archive, and
+    owner `409 op_aborted` / post-unknown `4xx` classified as terminal `unknown`
 - `test/hosts-routes.test.ts` and `test/events.test.ts`
   - an owner task list includes its external parent as an unknown remote entry
     without a host/title, without an added SQL read

@@ -81,6 +81,7 @@ All stable endpoints are under `/api/v1/`. Beta endpoints (subject to change) ar
 | Timestamps       | Storage is unix milliseconds; **every JSON egress** renders ISO-8601 UTC with an explicit `Z`. Durations/counters (`ttl_hours`, `share_snapshot_seq`, `upload_seq`, `seq`) stay numeric. See [Timestamps](#timestamps). |
 | Gzip             | Responses > 1 KB are gzip-compressed when `Accept-Encoding: gzip` is present              |
 | Async operations | Message sends and bash commands return `202 Accepted` immediately; results arrive via SSE |
+| Idempotency (`X-Client-Op-Id`) | Optional single header (1..128 chars) on `/api/**` writes (`POST`/`PUT`/`PATCH`/`DELETE`). Omitted header runs normally without buffering. Duplicate/empty/>128 header returns `400` (`invalid_op_id`). Unsupported endpoints (`POST /api/v1/tokens`, `POST /api/v1/sse-ticket`, `POST /api/v1/tasks/:id/attachments`) return `400` (`op_id_not_supported`) whenever the header is present. Fact-based endpoints (`POST /api/v1/tasks`, `POST /api/v1/tasks/:id/messages`, `POST /api/v1/link/entries`) derive primary keys directly; all other `/api/**` writes use the 24h `ops` table (exact response replay, in-flight coalescing, `409 op_conflict` on fingerprint mismatch, `409 op_aborted` on crash-orphaned `pending` rows). Auth (`401`/`403`, including static `admin` checks on `/api/v1/tokens`) always runs before replay. |
 | Malformed URL encoding | `400` `{ "error": "Invalid URL encoding" }`; any other uncaught handler failure is logged and answered `500`. |
 
 ---
@@ -937,7 +938,7 @@ Use `GET /events` for message history (rendering only) and `GET /snapshot` for r
 
 Send a user prompt to the agent. Returns immediately; the agent's response streams via SSE.
 
-Not replay-safe: `X-Client-Op-Id` only correlates the stored `user_message` and its SSE echo. Repeating a request while the turn runs returns `409`; after it ends, a repeat that is still admissible (execution available, no other busy work, valid input) starts a new turn.
+With `X-Client-Op-Id`, the HTTP `ops` adapter guarantees at-most-once execution within 24 hours (replaying the first finalized response, coalescing in-flight retries, and preserving the raw `X-Client-Op-Id` on `user_message` and its SSE echo). Claimed requests do not self-abort on client TCP disconnect while still honoring explicit `POST /cancel`. Without `X-Client-Op-Id`, repeating while the turn runs returns `409` and repeating after idle starts a new turn.
 
 **Request body:**
 
@@ -1080,7 +1081,7 @@ List all pending permission requests for a task.
 
 #### `POST /api/v1/tasks/:id/permissions/:reqId`
 
-Resolve a pending permission request (approve or deny). `X-Client-Op-Id` is ignored; repeating after the request was handled returns `404`.
+Resolve a pending permission request (approve or deny). With `X-Client-Op-Id`, replays return the first finalized response for 24 hours; without the header (or with a new op id), repeating after the request was handled returns `404`.
 
 **Request body (approve):**
 
@@ -1562,13 +1563,14 @@ When no work remains, the endpoint is idempotent:
 { "ok": true, "status": "idle" }
 ```
 
-For a user caller, a live local task runs locally (ignoring `X-Client-Op-Id`;
-retrying cancels current work or returns `idle` when no work remains). If no
-local task exists, the hub routes the request synchronously to a linked remote
-child whose hub parent is live.
+For a user caller, a live local task runs locally (with HTTP `ops` replay when
+`X-Client-Op-Id` is supplied). If no local task exists, the hub routes the
+request synchronously to a linked remote child whose hub parent is live, using
+a per-target single-hop `X-Client-Op-Id` with bounded retries.
 
 For a `host`-scoped caller, this route is owner-local only (never forwarded) and
-ignores `X-Client-Op-Id`. It validates the strict JSON body first
+participates in the owner's HTTP `ops` idempotency when `X-Client-Op-Id` is
+supplied. It validates the strict JSON body first
 (empty / `{}` / `{ "kind": "user" }`, or
 `{ "kind": "agent", "reason": "...", "sourceLabel": "..." }`), then verifies
 that the task exists and its external-parent link matches the authenticated host
@@ -1637,7 +1639,7 @@ The inbox is a primitive for receiving cross-task messages (from cron jobs, exte
 
 Create an inbox message. `to: "user"` creates an unbound message (listed in inbox, consumable into a new task). `to: "task:<id>"` appends the message directly as an event on the target task.
 
-Not replay-safe: `X-Client-Op-Id` is ignored and every request creates a new message with a new id. For `to: "user"`, a non-empty `dedup_key` replaces the earlier pending row with the same key.
+With `X-Client-Op-Id`, the HTTP `ops` adapter replays the first response (returning the same message id without duplicating rows) for 24 hours. Without `X-Client-Op-Id` (or with a new op id), every request creates a new message with a new id; for `to: "user"`, a non-empty `dedup_key` replaces the earlier pending row with the same key.
 
 **Request body:**
 
