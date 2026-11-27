@@ -3,6 +3,7 @@ import type { TokenRecord } from "../auth-store.ts";
 import { buildCollaborationBroadcast } from "../collaboration-message.ts";
 import { HTTP_STATUS } from "../http-status.ts";
 import { COLLABORATION_MESSAGE_NAMESPACE, opIdentity } from "../op-identity.ts";
+import { parseClientOpIdHeader } from "./ops-adapter.ts";
 import type { CollaborationDeliveryStatus } from "../shared/delivery-status.ts";
 import type { SseManager } from "../sse-manager.ts";
 import type { Store } from "../store.ts";
@@ -57,17 +58,6 @@ function parseCollaborationBody(body: string): CollaborationMessageRequestBody {
     targetTaskId: value.targetTaskId,
     body: value.body,
   };
-}
-
-type ParsedOpId = { ok: true; opId: string | null } | { ok: false };
-
-function parseStrictClientOpId(req: IncomingMessage): ParsedOpId {
-  const raw = req.headers["x-client-op-id"];
-  if (raw === undefined) return { ok: true, opId: null };
-  if (typeof raw !== "string" || raw.length === 0 || raw.length > 128) {
-    return { ok: false };
-  }
-  return { ok: true, opId: raw };
 }
 
 function buildAcceptedResponse(
@@ -177,14 +167,15 @@ export async function handleCollaborationMessageRoute(
     return;
   }
 
-  const parsedOpId = parseStrictClientOpId(req);
-  if (!parsedOpId.ok) {
+  const parsedOpId = parseClientOpIdHeader(req);
+  if (parsedOpId.kind === "invalid") {
     json(res, HTTP_STATUS.BAD_REQUEST, {
       error: "Invalid X-Client-Op-Id header",
+      code: "invalid_op_id",
     });
     return;
   }
-  const opId = parsedOpId.opId;
+  const opId = parsedOpId.kind === "valid" ? parsedOpId.opId : null;
 
   let body: CollaborationMessageRequestBody;
   try {

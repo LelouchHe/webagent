@@ -98,6 +98,11 @@ const PKG_VERSION = (() => {
 
 const store = new Store(config.data_dir);
 store.ensureRootTask(config.default_cwd);
+try {
+  store.ops.sweep(Date.now());
+} catch (err) {
+  log.scope("ops").error("initial sweep failed", { error: err });
+}
 console.log(`[store] using ${config.data_dir}/`);
 
 // Pin <data_dir>/tasks realpath at boot so all later anchor checks
@@ -116,12 +121,7 @@ const attachmentInterceptorCounters: InterceptorCounters =
   createAttachmentInterceptorCounters();
 let lastSchemaDriftAt = 0;
 const SCHEMA_DRIFT_THROTTLE_MS = 24 * 60 * 60 * 1000;
-const ATTACHMENT_INTERCEPTOR_DUMP_MS = 60 * 60 * 1000;
-setInterval(() => {
-  log
-    .scope("attachment-interceptor")
-    .info("counters", { ...attachmentInterceptorCounters });
-}, ATTACHMENT_INTERCEPTOR_DUMP_MS).unref();
+const HOURLY_MAINTENANCE_MS = 60 * 60 * 1000;
 
 // Per-task MCP capability store; minted/revoked by TaskManager. The
 // MCP endpoint authenticates against it. Tokens are in-memory
@@ -403,6 +403,18 @@ const requestHandler = createRequestHandler({
 
 const server = createServer(withRequestErrorBoundary(requestHandler));
 
+const hourlyMaintenanceTimer = setInterval(() => {
+  log
+    .scope("attachment-interceptor")
+    .info("counters", { ...attachmentInterceptorCounters });
+  try {
+    store.ops.sweep(Date.now(), requestHandler.activeOpKeys);
+  } catch (err) {
+    log.scope("ops").error("sweep failed", { error: err });
+  }
+}, HOURLY_MAINTENANCE_MS);
+hourlyMaintenanceTimer.unref();
+
 const eventHandlerConfig = _buildBridgeEventHandlerConfig({
   cancelTimeout: config.limits.cancel_timeout,
   recentPathsLimit: config.limits.recent_paths,
@@ -450,6 +462,7 @@ function createAgentTransport(agentId: string): AgentBridge {
 
 async function shutdown() {
   console.log("\n[server] shutting down...");
+  clearInterval(hourlyMaintenanceTimer);
   clearInterval(linkHeartbeat);
   hostRegistry.stopAll();
   sseManager.stopHeartbeat();
