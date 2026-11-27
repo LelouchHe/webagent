@@ -24,6 +24,7 @@ export interface RegressionForwarderControl {
   connect(channel: RegressionForwarderChannel): void;
   disconnect(channel: RegressionForwarderChannel): void;
   dropNextResponse(channel: RegressionForwarderChannel): void;
+  pendingResponseDrops(channel: RegressionForwarderChannel): number;
   holdNextResponse(channel: RegressionForwarderChannel): Promise<void>;
   release(channel: RegressionForwarderChannel): void;
 }

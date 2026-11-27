@@ -357,39 +357,90 @@ describe("contract-07 multi-hop: HostConnection single-hop retries, beforeSend f
     );
   });
 
-  it("stops retrying and reports unknown when beforeSend fence fails after first unknown attempt (cancel rotation & delete archive)", async () => {
-    // 1. Cancel fence: source execution rotates while attempt 0 is in flight / unknown ->
-    //    attempt 1 MUST NOT be sent, and cancelTask throws TaskRemoteCancelError(unknown).
+  it("stops retrying and reports unknown when beforeSend fence fails after first unknown attempt (real createRoutedTaskOps cancel rotation & delete archive)", async () => {
+    // 1. Real createRoutedTaskOps cancel fence: source execution rotates via
+    //    store.replaceAgentSession while packet 1 is in flight / unknown ->
+    //    real authorize(principal) fence blocks packet 2, throws TaskRemoteCancelError(unknown),
+    //    and writes zero hub source cancel rows.
+    const cancelHub = await createNode("wa-c07-fence-cancel-hub-");
+    cleanups.push(() => cancelHub.close());
+    cancelHub.store.createTask(
+      "p1",
+      cancelHub.dir,
+      "auto",
+      "mock",
+      "s-p1-v1",
+      cancelHub.store.rootTaskId,
+    );
+    cancelHub.store.updateTaskTitle("p1", "Rotating Parent");
+    await cancelHub.tasks.resolveTaskExecution("p1");
+    const leaseBeforeRotate = cancelHub.tasks.authority.leaseFor("p1")!;
+    cancelHub.store.recordRemoteChild("p1", "r1", "owner-1");
+
     let cancelFetches = 0;
-    let sourceGenerationValid = true;
-    const cancelConn = new HostConnection(
-      { url: "http://owner.example", token: "wat_host" },
+    const cancelHubRegistry = new HostRegistry(
+      { "owner-1": { url: "http://owner.example", token: "wat_host" } },
       {
         fetch: async () => {
           cancelFetches += 1;
-          // Simulate source task clear/rotation happening while packet 1 was in flight.
-          sourceGenerationValid = false;
+          // Rotate source task execution while attempt 0 is in flight / timing out.
+          cancelHub.store.replaceAgentSession("p1", "mock", "s-p1-v2");
           throw new TypeError("socket timed out");
         },
+        listLinks: () =>
+          cancelHub.store.listRemoteChildren().map((row) => ({
+            localTaskId: row.local_task_id,
+            remoteTaskId: row.remote_task_id,
+            host: row.remote_host,
+          })),
       },
     );
+    const cancelLocalOps = createLocalTaskOps({
+      store: cancelHub.store,
+      tasks: cancelHub.tasks,
+    });
+    const cancelHubOps = {
+      ...cancelLocalOps,
+      ...createRoutedTaskOps({
+        local: cancelLocalOps,
+        remote: cancelHubRegistry,
+        store: cancelHub.store,
+        tasks: cancelHub.tasks,
+        broadcastCollaboration: () => {},
+      }),
+    };
     await assert.rejects(
       () =>
-        cancelConn.cancelTask(
-          "owner-1",
-          "r1",
-          { kind: "agent", reason: "stop", sourceLabel: "P" },
-          () => {
-            if (!sourceGenerationValid) throw new Error("execution_replaced");
+        cancelHubOps.cancel({
+          kind: "agent",
+          principal: {
+            taskId: "p1",
+            agentId: "mock",
+            generation: leaseBeforeRotate.generation,
+            initializing: false,
           },
-        ),
+          targetTaskId: "r1",
+          reason: "stop after rotation",
+        }),
       (err: unknown) =>
         err instanceof TaskRemoteCancelError && err.detail.kind === "unknown",
     );
     assert.equal(
       cancelFetches,
       1,
-      "must not send packet 2 after post-unknown beforeSend fence throws",
+      "must not send packet 2 after source generation rotates during attempt 0",
+    );
+    const hubCancelRows = cancelHub.store
+      .getEvents("p1")
+      .filter(
+        (e) =>
+          e.type === "system_message" &&
+          (JSON.parse(e.data) as { kind?: string }).kind === "task_cancel",
+      );
+    assert.equal(
+      hubCancelRows.length,
+      0,
+      "must not write hub source cancel row on unknown outcome",
     );
 
     // 2. Delete fence: subtree edge removed (beforeSend returns false) while packet 1 was unknown ->

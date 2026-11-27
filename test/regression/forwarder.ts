@@ -88,6 +88,10 @@ export class RegressionForwarder {
     this.channels[channel].dropResponses += 1;
   }
 
+  pendingResponseDrops(channel: RegressionForwarderChannel): number {
+    return this.channels[channel].dropResponses;
+  }
+
   holdNextResponse(channel: RegressionForwarderChannel): Promise<void> {
     let releaseHeld: (() => void) | undefined;
     const promise = new Promise<void>((resolve) => {

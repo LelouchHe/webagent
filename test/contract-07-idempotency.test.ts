@@ -50,6 +50,7 @@ interface Harness {
   getNow: () => number;
   holdNextPrompt: () => { started: Promise<void>; release: () => void };
   holdNextResume: () => { started: Promise<void>; release: () => void };
+  nextRequestEntered: () => Promise<void>;
   addPendingPermission: (taskId: string, requestId: string) => void;
   close: () => Promise<void>;
 }
@@ -210,7 +211,17 @@ async function createHarness(
     opsClock: () => fakeNow,
   });
 
-  const server = http.createServer(withRequestErrorBoundary(handler));
+  const bodyEndWaiters: Array<() => void> = [];
+  const wrappedHandler = withRequestErrorBoundary(handler);
+  const server = http.createServer((req, res) => {
+    const notifyEnd = bodyEndWaiters.shift();
+    if (notifyEnd) {
+      req.once("end", () => {
+        setImmediate(notifyEnd);
+      });
+    }
+    wrappedHandler(req, res);
+  });
   await new Promise<void>((resolve) => {
     server.listen(0, "127.0.0.1", resolve);
   });
@@ -237,6 +248,11 @@ async function createHarness(
     },
     getNow() {
       return fakeNow;
+    },
+    nextRequestEntered() {
+      return new Promise<void>((resolve) => {
+        bodyEndWaiters.push(resolve);
+      });
     },
     holdNextPrompt() {
       let notifyStarted!: () => void;
@@ -827,62 +843,30 @@ describe("contract-07: client_ops removal and fixed task create namespace", () =
 
     // 9. Root exit (DELETE /api/v1/tasks/:rootId) replays original replacedBy without a second exit.
     const oldRootId = h.store.rootTaskId;
-    const rootExitOp = `op-root-exit-${randomUUID()}`;
-    const re1 = await sendHttp(h.port, {
+    const [re1] = await sendPair({
       method: "DELETE",
       path: `/api/v1/tasks/${oldRootId}`,
       token: h.apiToken,
-      opId: rootExitOp,
     });
     assert.equal(re1.status, 200);
     const newRootId = re1.body.replacedBy as string;
     assert.ok(newRootId && newRootId !== oldRootId);
     assert.equal(h.store.rootTaskId, newRootId);
 
-    const re2 = await sendHttp(h.port, {
-      method: "DELETE",
-      path: `/api/v1/tasks/${oldRootId}`,
-      token: h.apiToken,
-      opId: rootExitOp,
-    });
-    assert.equal(re2.status, 200);
-    assert.deepEqual(re2.rawBody, re1.rawBody);
-    assert.equal(h.store.rootTaskId, newRootId);
-
     // 10. Unmatched write route (404) & /api/v1/files/* write (405) also flow through ops cleanly.
-    const u404Op = `op-404-${randomUUID()}`;
-    const u404a = await sendHttp(h.port, {
+    const [u404a] = await sendPair({
       method: "POST",
       path: "/api/v1/does-not-exist",
       token: h.apiToken,
-      opId: u404Op,
-    });
-    const u404b = await sendHttp(h.port, {
-      method: "POST",
-      path: "/api/v1/does-not-exist",
-      token: h.apiToken,
-      opId: u404Op,
     });
     assert.equal(u404a.status, 404);
-    assert.equal(u404b.status, 404);
-    assert.deepEqual(u404b.rawBody, u404a.rawBody);
 
-    const f405Op = `op-405-${randomUUID()}`;
-    const f405a = await sendHttp(h.port, {
+    const [f405a] = await sendPair({
       method: "POST",
       path: "/api/v1/files/info?path=/tmp",
       token: h.apiToken,
-      opId: f405Op,
-    });
-    const f405b = await sendHttp(h.port, {
-      method: "POST",
-      path: "/api/v1/files/info?path=/tmp",
-      token: h.apiToken,
-      opId: f405Op,
     });
     assert.equal(f405a.status, 405);
-    assert.equal(f405b.status, 405);
-    assert.deepEqual(f405b.rawBody, f405a.rawBody);
   });
 
   it("detects fingerprint conflicts (method, URL/query, raw bytes), isolates callers, and enforces host & admin gates before ops", async () => {
@@ -1129,10 +1113,8 @@ describe("contract-07: client_ops removal and fixed task create namespace", () =
     assert.equal(conflictWhileLive.status, 409);
     assert.equal(conflictWhileLive.body.code, "op_conflict");
 
-    // Advance clock past 24h TTL while req1 is still live inFlight!
-    h.setNow(startNow + OPS_TTL_MS + 60_000);
-
-    // Same fingerprint after >24h while still live inFlight -> coalesces, does NOT overwrite!
+    // Deterministic barrier: attach same-fingerprint waiter BEFORE advancing clock past 24h TTL.
+    const waiterBeforeTtlEntered = h.nextRequestEntered();
     const req2Promise = sendHttp(h.port, {
       method: "POST",
       path: `/api/v1/tasks/${taskId}/prompt`,
@@ -1140,6 +1122,21 @@ describe("contract-07: client_ops removal and fixed task create namespace", () =
       body: { text: "first prompt" },
       opId: opLive,
     });
+    await waiterBeforeTtlEntered;
+
+    // Advance clock past 24h TTL while req1 is still live inFlight!
+    h.setNow(startNow + OPS_TTL_MS + 60_000);
+
+    // Same fingerprint arriving AFTER >24h while still live inFlight -> coalesces, does NOT overwrite!
+    const waiterAfterTtlEntered = h.nextRequestEntered();
+    const req3Promise = sendHttp(h.port, {
+      method: "POST",
+      path: `/api/v1/tasks/${taskId}/prompt`,
+      token: h.apiToken,
+      body: { text: "first prompt" },
+      opId: opLive,
+    });
+    await waiterAfterTtlEntered;
 
     // Different fingerprint even after >24h while still live -> still 409 op_conflict!
     const conflictPastTtl = await sendHttp(h.port, {
@@ -1153,10 +1150,16 @@ describe("contract-07: client_ops removal and fixed task create namespace", () =
     assert.equal(conflictPastTtl.body.code, "op_conflict");
 
     resumeHold.release();
-    const [r1, r2] = await Promise.all([req1Promise, req2Promise]);
+    const [r1, r2, r3] = await Promise.all([
+      req1Promise,
+      req2Promise,
+      req3Promise,
+    ]);
     assert.equal(r1.status, 202);
     assert.equal(r2.status, 202);
+    assert.equal(r3.status, 202);
     assert.deepEqual(r2.rawBody, r1.rawBody);
+    assert.deepEqual(r3.rawBody, r1.rawBody);
     await waitUntil(() => !h.tasks.activePrompts.has(taskId));
     assert.equal(h.promptCalls, 1);
 

@@ -334,6 +334,12 @@ export default scenario<State>({
           state.hubDb,
           `SELECT COUNT(*) AS n FROM events WHERE task_id = '${state.parentId}' AND type = 'prompt_done' HAVING n = ${targetPromptDone}`,
         );
+        const remainingDrops = forwarder.pendingResponseDrops("cancel");
+        if (remainingDrops !== 0) {
+          throw new Error(
+            `expected all 3 cancel attempts to exhaust drop rules, remainingDrops=${remainingDrops}`,
+          );
+        }
         const hubCount = readRows(
           state.hubDb,
           `SELECT COUNT(*) AS n FROM events WHERE task_id = '${state.parentId}' AND type = 'system_message' AND json_extract(data, '$.kind') = 'task_cancel'`,
@@ -342,7 +348,7 @@ export default scenario<State>({
           state.ownerDb,
           `SELECT COUNT(*) AS n FROM events WHERE task_id = '${state.remoteChildId}' AND type = 'system_message' AND json_extract(data, '$.kind') = 'task_cancel'`,
         );
-        return { hubCount, ownerCount };
+        return { hubCount, ownerCount, remainingDrops };
       },
     },
   ],

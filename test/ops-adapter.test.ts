@@ -261,4 +261,160 @@ describe("HTTP ops adapter (binary fidelity, error boundaries, persistence failu
     });
     assert.equal(handlerCalls, 1);
   });
+
+  it("discards a staged 202 when the handler throws afterward, persists 500, and replays 500 once", async () => {
+    const store = makeStore();
+    let sideEffects = 0;
+
+    const port = await startAdapterServer({
+      store,
+      inner: async (_req, res) => {
+        sideEffects += 1;
+        res.writeHead(202, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "accepted" }));
+        throw new Error("post-stage sync boom");
+      },
+    });
+
+    const r1 = await rawHttpRequest(port, {
+      method: "POST",
+      path: "/api/v1/stage-then-throw",
+      headers: { "X-Client-Op-Id": "op-stage-throw" },
+    });
+    assert.equal(r1.status, 500);
+    assert.deepEqual(JSON.parse(r1.body.toString()), {
+      error: "Internal Server Error",
+    });
+    assert.equal(sideEffects, 1);
+
+    const r2 = await rawHttpRequest(port, {
+      method: "POST",
+      path: "/api/v1/stage-then-throw",
+      headers: { "X-Client-Op-Id": "op-stage-throw" },
+    });
+    assert.equal(r2.status, 500);
+    assert.deepEqual(r2.body, r1.body);
+    assert.equal(sideEffects, 1);
+  });
+
+  it("rejects an unended handler response as 500 instead of persisting 200", async () => {
+    const store = makeStore();
+    let calls = 0;
+
+    const port = await startAdapterServer({
+      store,
+      inner: async () => {
+        calls += 1;
+        // Returns normally without calling res.end().
+      },
+    });
+
+    const r1 = await rawHttpRequest(port, {
+      method: "POST",
+      path: "/api/v1/never-ended",
+      headers: { "X-Client-Op-Id": "op-never-ended" },
+    });
+    assert.equal(r1.status, 500);
+    assert.deepEqual(JSON.parse(r1.body.toString()), {
+      error: "Internal Server Error",
+    });
+
+    const r2 = await rawHttpRequest(port, {
+      method: "POST",
+      path: "/api/v1/never-ended",
+      headers: { "X-Client-Op-Id": "op-never-ended" },
+    });
+    assert.equal(r2.status, 500);
+    assert.equal(calls, 1);
+  });
+
+  it("waits for full handler completion after res.end(202) before calling ops.complete or sending bytes", async () => {
+    const store = makeStore();
+    let completeCalls = 0;
+    const origComplete = store.ops.complete.bind(store.ops);
+    store.ops.complete = (...args) => {
+      completeCalls += 1;
+      return origComplete(...args);
+    };
+
+    let staged!: () => void;
+    let releaseAfterEnd!: () => void;
+    const stagedPromise = new Promise<void>((resolve) => {
+      staged = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      releaseAfterEnd = resolve;
+    });
+
+    const port = await startAdapterServer({
+      store,
+      inner: async (_req, res) => {
+        res.writeHead(202, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "accepted" }));
+        staged();
+        await gate;
+      },
+    });
+
+    let settled = false;
+    const reqPromise = rawHttpRequest(port, {
+      method: "POST",
+      path: "/api/v1/wait-after-end",
+      headers: { "X-Client-Op-Id": "op-wait-after-end" },
+    }).then((res) => {
+      settled = true;
+      return res;
+    });
+
+    await stagedPromise;
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(
+      completeCalls,
+      0,
+      "ops.complete must not run while handler promise is still pending",
+    );
+    assert.equal(
+      settled,
+      false,
+      "HTTP response must not be sent before handler resolves and ops.complete runs",
+    );
+
+    releaseAfterEnd();
+    const res = await reqPromise;
+    assert.equal(res.status, 202);
+    assert.equal(completeCalls, 1);
+  });
+
+  it("persists an explicit 503 response and replays 503 without re-running side effects", async () => {
+    const store = makeStore();
+    let calls = 0;
+
+    const port = await startAdapterServer({
+      store,
+      inner: async (_req, res) => {
+        calls += 1;
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Partially reloaded, agent down" }));
+      },
+    });
+
+    const r1 = await rawHttpRequest(port, {
+      method: "POST",
+      path: "/api/v1/explicit-503",
+      headers: { "X-Client-Op-Id": "op-explicit-503" },
+    });
+    assert.equal(r1.status, 503);
+    assert.deepEqual(JSON.parse(r1.body.toString()), {
+      error: "Partially reloaded, agent down",
+    });
+
+    const r2 = await rawHttpRequest(port, {
+      method: "POST",
+      path: "/api/v1/explicit-503",
+      headers: { "X-Client-Op-Id": "op-explicit-503" },
+    });
+    assert.equal(r2.status, 503);
+    assert.deepEqual(r2.body, r1.body);
+    assert.equal(calls, 1);
+  });
 });
