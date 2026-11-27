@@ -11,6 +11,9 @@ const UUID_PATTERN =
 export const COLLABORATION_MESSAGE_NAMESPACE =
   "9a4c5e8f-2b71-4d3a-9c6e-1f08b4a27d53";
 
+/** Fixed UUID namespace for deterministic task creation op identity. */
+export const TASK_CREATE_NAMESPACE = "3d7e4b1a-8f25-4c6e-a109-6b5d82e3f417";
+
 /** RFC 4122 UUIDv5 of `${caller}\0${opId}` in the `namespace` UUID. */
 export function opIdentity(
   namespace: string,
