@@ -119,7 +119,7 @@ message each other:
   |     X-Client-Op-Id: K                           |  one tx: source S live (404); row exists,
   |                                                 |    same source/target/body (else 409)
   |<-- 202 {same ids, current status, clientOpId} --|  nothing written; no activity, SSE, drain
-  | 2xx: accepted                                   |
+  | post() resolved: accepted                       |
 ```
 
 The stored source, target, and verbatim body are compared before any target
@@ -128,11 +128,13 @@ now gone. A present but empty or over-long op id is `400`; no header keeps the
 non-idempotent path. Every attempt, retries included, passes authentication and
 the header and body checks first.
 
-The browser sends through the shared `post()` helper. A `2xx` is acceptance; a
-`4xx` on the first attempt is a definite rejection. Anything else (network
-error, the request deadline, `5xx`) is unknown and is retried up to twice with
-the same op id. Once an attempt was unknown, a later `4xx` leaves the whole
-send unknown, because it cannot prove the earlier attempt did not commit.
+The browser sends through the shared `post()` helper. A resolved `post()` (a
+`2xx` whose body parsed) is acceptance; a `4xx` on the first attempt is a
+definite rejection. Any other failure (network error, the request deadline,
+`5xx`, an unreadable success body) is unknown; with an op id it is retried up
+to twice with the same id, without one it is returned. Once an attempt was
+unknown, a later `4xx` leaves the whole send unknown, because it cannot prove
+the earlier attempt did not commit.
 
 Replay recovers the acceptance only. If the process stops after the commit but
 before the source activity update, source SSE, or drain, replay does not redo
