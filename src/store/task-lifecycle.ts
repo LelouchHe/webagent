@@ -474,8 +474,6 @@ export class TaskLifecycleStore {
           id,
           externalParent,
         );
-      this.store.db.prepare("DELETE FROM events WHERE task_id = ?").run(id);
-      this.store.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
     }
     if (externalParent) {
       this.enqueueChildLeftInTransaction(
@@ -483,6 +481,10 @@ export class TaskLifecycleStore {
         id,
         hadOpenExternalAccount && !edgeFailed,
       );
+    }
+    if (mode === "hard") {
+      this.store.db.prepare("DELETE FROM events WHERE task_id = ?").run(id);
+      this.store.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
     }
     this.store.collectBindingChange(id, beforeBinding);
     affected.unshift({
