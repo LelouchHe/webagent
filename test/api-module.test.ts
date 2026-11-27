@@ -442,6 +442,120 @@ describe("api module", () => {
     assert.equal(exhausted.kind, "unknown");
   });
 
+  it("sendCollaborationMessage cancels discarded non-202/non-4xx response bodies without awaiting cleanup", async () => {
+    let cancelCalls = 0;
+    (globalThis as any).fetch = (
+      url: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      // eslint-disable-next-line @typescript-eslint/no-base-to-string
+      fetchCalls.push({ url: String(url), init });
+      return Promise.resolve({
+        status: 502,
+        ok: false,
+        body: {
+          cancel() {
+            cancelCalls += 1;
+            // Never settles: proves sendCollaborationMessage does not await cleanup.
+            return new Promise<void>(() => {});
+          },
+        },
+        text: () => new Promise<string>(() => {}),
+      });
+    };
+
+    const result = await api.sendCollaborationMessage(
+      "s1",
+      "t1",
+      "hello",
+      "op-502-cancel",
+    );
+    assert.equal(fetchCalls.length, 3);
+    assert.equal(cancelCalls, 3);
+    assert.deepEqual(result, { kind: "unknown", message: "HTTP 502" });
+  });
+
+  it("sendCollaborationMessage settles and aborts stalled 4xx and 202 response bodies at deadline", async () => {
+    const realSetTimeout = globalThis.setTimeout;
+    const raceDeadline = <T>(promise: Promise<T>): Promise<T> =>
+      Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+          realSetTimeout(() => {
+            reject(new Error("stalled past deadline"));
+          }, 500);
+        }),
+      ]);
+
+    globalThis.setTimeout = ((
+      fn: (...args: unknown[]) => void,
+      ms?: number,
+      ...args: unknown[]
+    ) =>
+      realSetTimeout(
+        fn,
+        ms === api.DEFAULT_TIMEOUT_MS ? 5 : ms,
+        ...args,
+      )) as typeof globalThis.setTimeout;
+
+    try {
+      // Stalled 4xx body: 1 attempt, rejected with status fallback, request aborted.
+      const signals4xx: AbortSignal[] = [];
+      (globalThis as any).fetch = (
+        url: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string
+        fetchCalls.push({ url: String(url), init });
+        if (init?.signal) signals4xx.push(init.signal);
+        return Promise.resolve({
+          status: 404,
+          ok: false,
+          text: () => new Promise<string>(() => {}),
+        });
+      };
+
+      const res4xx = await raceDeadline(
+        api.sendCollaborationMessage("s1", "t1", "hello", "op-stall-404"),
+      );
+      assert.equal(fetchCalls.length, 1);
+      assert.deepEqual(res4xx, {
+        kind: "rejected",
+        status: 404,
+        message: "HTTP 404",
+      });
+      assert.equal(signals4xx.length, 1);
+      assert.equal(signals4xx[0].aborted, true);
+
+      // Stalled 202 body: bounded attempts (3), unknown, every attempt aborted.
+      fetchCalls = [];
+      const signals202: AbortSignal[] = [];
+      (globalThis as any).fetch = (
+        url: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string
+        fetchCalls.push({ url: String(url), init });
+        if (init?.signal) signals202.push(init.signal);
+        return Promise.resolve({
+          status: 202,
+          ok: true,
+          text: () => new Promise<string>(() => {}),
+        });
+      };
+
+      const res202 = await raceDeadline(
+        api.sendCollaborationMessage("s1", "t1", "hello", "op-stall-202"),
+      );
+      assert.equal(fetchCalls.length, 3);
+      assert.equal(res202.kind, "unknown");
+      assert.equal(signals202.length, 3);
+      assert.ok(signals202.every((signal) => signal.aborted));
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+  });
+
   it("listTasks returns the agent-scoped task array", async () => {
     const tasks = [{ id: "task-1" }];
     fetchResponse = {

@@ -406,6 +406,9 @@ async function sendCollaborationMessageOnce(
         };
       }
       if (res.status !== HTTP_STATUS.ACCEPTED) {
+        // Cancel the discarded response stream without waiting for cleanup so
+        // stalled 5xx / non-202 bodies do not leak open connections across retries.
+        void res.body?.cancel().catch(() => {});
         return { kind: "unknown", message: `HTTP ${res.status}` };
       }
       const text = await readTextWithinSignal(res, signal);
@@ -451,18 +454,13 @@ export async function sendCollaborationMessage(
   const payload = { targetTaskId, body };
   const maxRetries = clientOpId === null ? 0 : COLLABORATION_MESSAGE_RETRIES;
   let result = await sendCollaborationMessageOnce(url, payload, clientOpId);
-  let lastUnknown: { kind: "unknown"; message: string } | null =
-    result.kind === "unknown" ? result : null;
   for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
     if (result.kind !== "unknown") return result;
-    result = await sendCollaborationMessageOnce(url, payload, clientOpId);
-    if (result.kind === "unknown") {
-      lastUnknown = result;
-    } else if (result.kind === "rejected" && lastUnknown !== null) {
-      // Once an earlier attempt had an unknown outcome, a later 4xx cannot
-      // prove the original request did not commit.
-      return lastUnknown;
-    }
+    const next = await sendCollaborationMessageOnce(url, payload, clientOpId);
+    // Once an earlier attempt had an unknown outcome, a later 4xx cannot
+    // prove the original request did not commit.
+    if (next.kind === "rejected") return result;
+    result = next;
   }
   return result;
 }
