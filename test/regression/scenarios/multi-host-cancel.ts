@@ -283,7 +283,7 @@ export default scenario<State>({
       },
     },
     {
-      name: "dropped cancel response yields unknown result without hub source row while owner target row commits",
+      name: "single dropped cancel response recovers via single-hop retry against owner ops",
       async action(client, state) {
         const hub = client.instance("hub");
         client.forwarder("link").dropNextResponse("cancel");
@@ -294,6 +294,10 @@ export default scenario<State>({
           state.ownerDb,
           `SELECT COUNT(*) AS n FROM events WHERE task_id = '${state.remoteChildId}' AND type = 'system_message' AND json_extract(data, '$.kind') = 'task_cancel' HAVING n = 2`,
         );
+        await waitForRows(
+          state.hubDb,
+          `SELECT COUNT(*) AS n FROM events WHERE task_id = '${state.parentId}' AND type = 'system_message' AND json_extract(data, '$.kind') = 'task_cancel' HAVING n = 2`,
+        );
         const hubCount = readRows(
           state.hubDb,
           `SELECT COUNT(*) AS n FROM events WHERE task_id = '${state.parentId}' AND type = 'system_message' AND json_extract(data, '$.kind') = 'task_cancel'`,
@@ -303,6 +307,48 @@ export default scenario<State>({
           `SELECT COUNT(*) AS n FROM events WHERE task_id = '${state.remoteChildId}' AND type = 'system_message' AND json_extract(data, '$.kind') = 'task_cancel'`,
         );
         return { hubCount, ownerCount };
+      },
+    },
+    {
+      name: "persistently dropped cancel responses yield unknown result without hub source row while owner target row commits once",
+      async action(client, state) {
+        const hub = client.instance("hub");
+        const forwarder = client.forwarder("link");
+        // Drop all 3 attempts (initial + 2 bounded retries) so HostConnection ends unknown.
+        forwarder.dropNextResponse("cancel");
+        forwarder.dropNextResponse("cancel");
+        forwarder.dropNextResponse("cancel");
+        const beforePromptDone = readRows(
+          state.hubDb,
+          `SELECT COUNT(*) AS n FROM events WHERE task_id = '${state.parentId}' AND type = 'prompt_done'`,
+        ) as Array<{ n: number }>;
+        const targetPromptDone = (beforePromptDone[0]?.n ?? 0) + 1;
+        await hub.rest("POST", `/api/v1/tasks/${state.parentId}/prompt`, {
+          text: "agent cancel worker",
+        });
+        await waitForRows(
+          state.ownerDb,
+          `SELECT COUNT(*) AS n FROM events WHERE task_id = '${state.remoteChildId}' AND type = 'system_message' AND json_extract(data, '$.kind') = 'task_cancel' HAVING n = 3`,
+        );
+        await waitForRows(
+          state.hubDb,
+          `SELECT COUNT(*) AS n FROM events WHERE task_id = '${state.parentId}' AND type = 'prompt_done' HAVING n = ${targetPromptDone}`,
+        );
+        const remainingDrops = forwarder.pendingResponseDrops("cancel");
+        if (remainingDrops !== 0) {
+          throw new Error(
+            `expected all 3 cancel attempts to exhaust drop rules, remainingDrops=${remainingDrops}`,
+          );
+        }
+        const hubCount = readRows(
+          state.hubDb,
+          `SELECT COUNT(*) AS n FROM events WHERE task_id = '${state.parentId}' AND type = 'system_message' AND json_extract(data, '$.kind') = 'task_cancel'`,
+        );
+        const ownerCount = readRows(
+          state.ownerDb,
+          `SELECT COUNT(*) AS n FROM events WHERE task_id = '${state.remoteChildId}' AND type = 'system_message' AND json_extract(data, '$.kind') = 'task_cancel'`,
+        );
+        return { hubCount, ownerCount, remainingDrops };
       },
     },
   ],

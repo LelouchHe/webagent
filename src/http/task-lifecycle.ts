@@ -73,43 +73,14 @@ export interface CancelTaskRouteContext {
     data: unknown,
     req?: IncomingMessage,
   ) => void;
-  tryReplayClientOp: (
-    req: IncomingMessage,
-    res: ServerResponse,
-    store: Store,
-    taskId: string,
-  ) => { opId: string | null; replayed: boolean };
-  saveClientOpResult: (
-    store: Store,
-    opId: string | null,
-    taskId: string,
-    status: number,
-    body: unknown,
-  ) => void;
-}
-
-interface ResolvedCancelEntry {
-  command: TaskCancelCommand;
-  opId: string | null;
 }
 
 function resolveCancelEntry(
   ctx: CancelTaskRouteContext,
   hostRawBody: string | undefined,
-): ResolvedCancelEntry | null {
-  const {
-    req,
-    res,
-    taskId,
-    principal,
-    store,
-    tasks,
-    taskOps,
-    hostRegistry,
-    json,
-    tryReplayClientOp,
-    saveClientOpResult,
-  } = ctx;
+): TaskCancelCommand | null {
+  const { res, taskId, principal, store, tasks, taskOps, hostRegistry, json } =
+    ctx;
 
   if (principal?.scope === "host") {
     const body = parseHostCancelBody(hostRawBody ?? "");
@@ -130,40 +101,33 @@ function resolveCancelEntry(
       return null;
     }
     return {
-      opId: null,
-      command: {
-        kind: "host",
-        taskId,
-        actor:
-          body.kind === "agent"
-            ? {
-                kind: "agent",
-                sourceTaskId: externalParent.remote_task_id,
-                sourceLabel: body.sourceLabel,
-                reason: body.reason,
-              }
-            : { kind: "user" },
-      },
+      kind: "host",
+      taskId,
+      actor:
+        body.kind === "agent"
+          ? {
+              kind: "agent",
+              sourceTaskId: externalParent.remote_task_id,
+              sourceLabel: body.sourceLabel,
+              reason: body.reason,
+            }
+          : { kind: "user" },
     };
   }
 
   if (store.getTask(taskId)) {
-    const { opId, replayed } = tryReplayClientOp(req, res, store, taskId);
-    if (replayed) return null;
     if (!tasks) {
-      const idleBody = { ok: true, status: "idle" };
-      saveClientOpResult(store, opId, taskId, HTTP_STATUS.OK, idleBody);
-      json(res, HTTP_STATUS.OK, idleBody);
+      json(res, HTTP_STATUS.OK, { ok: true, status: "idle" });
       return null;
     }
-    return { opId, command: { kind: "user", taskId } };
+    return { kind: "user", taskId };
   }
 
   if (!tasks || !taskOps || !hostRegistry || hostRegistry.list().length === 0) {
     json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
     return null;
   }
-  return { opId: null, command: { kind: "user", taskId } };
+  return { kind: "user", taskId };
 }
 
 export async function handleCancelTaskRoute(
@@ -171,13 +135,13 @@ export async function handleCancelTaskRoute(
 ): Promise<void> {
   const hostRawBody =
     ctx.principal?.scope === "host" ? await ctx.readBody(ctx.req) : undefined;
-  const entry = resolveCancelEntry(ctx, hostRawBody);
-  if (!entry) return;
-  const { res, taskId, store, taskOps, json, saveClientOpResult } = ctx;
+  const command = resolveCancelEntry(ctx, hostRawBody);
+  if (!command) return;
+  const { res, taskOps, json } = ctx;
   if (!taskOps) {
     throw new Error("Task operations are not configured");
   }
-  const pending = taskOps.cancel(entry.command);
+  const pending = taskOps.cancel(command);
   let result;
   try {
     result = await pending;
@@ -217,9 +181,7 @@ export async function handleCancelTaskRoute(
     throw error;
   }
   const status = cancelHttpStatus(result.status);
-  const okBody = { ok: true, status: result.status };
-  saveClientOpResult(store, entry.opId, taskId, status, okBody);
-  json(res, status, okBody);
+  json(res, status, { ok: true, status: result.status });
 }
 
 export interface DeleteTaskRouteContext {

@@ -300,11 +300,16 @@ keeps its normal contrast.
 collaboration row. A user-initiated cancel writes neither row.
 
 For a linked remote child, `task_cancel` issues a synchronous
-`POST /api/v1/tasks/:id/cancel` to the owner (in host scope, without
-`client_ops`) and checks the caller's execution generation both before and after
-the round trip. The owner derives `sourceTaskId` from the matched external
-parent link and writes the `target` row using the hub's title snapshot as
-`sourceLabel`; the hub writes the `source` row once the call succeeds. Timeouts,
+`POST /api/v1/tasks/:id/cancel` to the owner (in host scope, with a per-call
+single-hop `X-Client-Op-Id` and up to 2 bounded retries on unknown outcomes)
+and checks the caller's execution generation before every HTTP send and after
+the round trip. If the generation rotates after an initial unknown attempt, the
+hub stops retrying and reports `unknown`; if the owner returns `409 op_aborted`
+or any `4xx` after a prior unknown attempt, the hub also treats the outcome as
+terminal `unknown` instead of `rejected`. The owner derives `sourceTaskId` from
+the matched external parent link and writes the `target` row using the hub's
+title snapshot as `sourceLabel`; the hub writes the `source` row once the call
+succeeds. Timeouts,
 `5xx`, or malformed responses fail as `result is unknown` without retrying or
 writing a hub `source` row.
 

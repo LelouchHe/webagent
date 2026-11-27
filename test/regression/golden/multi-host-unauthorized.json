@@ -90,7 +90,6 @@
         "messages": [],
         "message_projections": [],
         "deliveries": [],
-        "client_ops": [],
         "recent_paths": []
       }
     },
@@ -119,7 +118,6 @@
         "messages": [],
         "message_projections": [],
         "deliveries": [],
-        "client_ops": [],
         "recent_paths": []
       }
     }

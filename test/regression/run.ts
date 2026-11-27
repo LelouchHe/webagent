@@ -821,7 +821,6 @@ function databaseSnapshot(instance: Instance): JsonObject {
       "messages",
       "message_projections",
       "deliveries",
-      "client_ops",
       "recent_paths",
     ]) {
       snapshot[table] = db

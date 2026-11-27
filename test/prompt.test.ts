@@ -901,7 +901,7 @@ describe("Prompt REST API", () => {
       assert.equal(res.status, 400);
     });
 
-    it("is idempotent when X-Client-Op-Id is replayed", async () => {
+    it("replays the first 202 response without starting a second turn when X-Client-Op-Id is resent", async () => {
       const taskId = await createTask();
       let promptCount = 0;
       const origPrompt = mockBridge.prompt;

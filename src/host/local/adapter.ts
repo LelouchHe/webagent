@@ -35,7 +35,7 @@ import {
   TaskCreateInputError,
   TaskCreateConfigError,
 } from "../../api/tasks.ts";
-import { opIdentity } from "../../op-identity.ts";
+import { opIdentity, TASK_CREATE_NAMESPACE } from "../../op-identity.ts";
 import {
   buildTaskHistoryQuery,
   buildTaskHistoryRead,
@@ -320,7 +320,11 @@ export function createLocalTaskOps(deps: {
         };
         const deterministicId =
           input.opId !== null
-            ? opIdentity(store.rootTaskId, `host:${caller.name}`, input.opId)
+            ? opIdentity(
+                TASK_CREATE_NAMESPACE,
+                `host:${caller.name}`,
+                input.opId,
+              )
             : undefined;
         if (deterministicId) {
           const existing = store.getTaskIncludingDeleted(deterministicId);
@@ -370,7 +374,7 @@ export function createLocalTaskOps(deps: {
           : `token:${caller.tokenName ?? "anonymous"}`;
       const localDeterministicId =
         input.opId !== null
-          ? opIdentity(store.rootTaskId, localCallerScope, input.opId)
+          ? opIdentity(TASK_CREATE_NAMESPACE, localCallerScope, input.opId)
           : undefined;
       const expectedLocalParentId = agentCaller
         ? (input.parentId ?? agentCaller.taskId)

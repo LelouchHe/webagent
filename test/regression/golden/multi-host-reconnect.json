@@ -75,6 +75,14 @@
                 {
                   "kind": "write",
                   "method": "run",
+                  "sql": "DELETE FROM ops WHERE created_at <= ?",
+                  "args": [1789246800000]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
                   "sql": "UPDATE tasks SET parent_id = NULL WHERE id = ?",
                   "args": ["00000000-0000-4000-8000-000000000001"]
                 },
@@ -86,7 +94,7 @@
                 }
               ]
             ],
-            "reads": 46
+            "reads": 45
           }
         },
         {
@@ -127,7 +135,6 @@
         "messages": [],
         "message_projections": [],
         "deliveries": [],
-        "client_ops": [],
         "recent_paths": []
       }
     },
@@ -156,7 +163,6 @@
         "messages": [],
         "message_projections": [],
         "deliveries": [],
-        "client_ops": [],
         "recent_paths": []
       }
     }

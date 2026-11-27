@@ -44,6 +44,7 @@ import {
   type IdempotentCollaborationMessageInput,
   type IdempotentCollaborationMessageResult,
 } from "./store/collaboration-messages.ts";
+import { OpsStore } from "./store/ops.ts";
 
 /** Namespace WebAgent reserves for the per-task empty execution slot. */
 const EMPTY_EXECUTION_PREFIX = "no-execution:";
@@ -502,6 +503,7 @@ export class Store {
   private readonly linkApply: LinkApplyStore;
   private readonly taskLifecycle: TaskLifecycleStore;
   private readonly collaborationMessages: CollaborationMessagesStore;
+  readonly ops: OpsStore;
   private readonly deliveryStatusObservers: Array<
     (change: CollaborationDeliveryStatusChange) => void
   > = [];
@@ -614,6 +616,7 @@ export class Store {
       this.linkOutbox,
     );
     this.collaborationMessages = new CollaborationMessagesStore(internal);
+    this.ops = new OpsStore(this.db);
     try {
       this.db.pragma("journal_mode = WAL");
       this.db.pragma("foreign_keys = ON");
@@ -1102,20 +1105,6 @@ export class Store {
       );
     `);
 
-    // client-server-split M2: idempotency for mutating REST calls. Stores
-    // the cached response per (task_id, client_op_id) so retries (after
-    // network/SSE reconnect) return the same result instead of re-executing
-    // side effects.
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS client_ops (
-        task_id   TEXT NOT NULL,
-        client_op_id TEXT NOT NULL,
-        result_json  TEXT NOT NULL,
-        created_at   INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY (task_id, client_op_id)
-      );
-    `);
-
     // recent_paths: LRU path list for /new menu
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS recent_paths (
@@ -1211,6 +1200,20 @@ export class Store {
         value TEXT NOT NULL,
         updated_at INTEGER NOT NULL DEFAULT 0
       );
+    `);
+
+    // ops — bounded-TTL deduplication store for HTTP write idempotency.
+    // Independent of task lifecycle (no foreign keys); expired only by TTL.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS ops (
+        key TEXT PRIMARY KEY,
+        fingerprint TEXT NOT NULL,
+        status INTEGER,
+        headers TEXT,
+        body BLOB,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_ops_created_at ON ops(created_at);
     `);
   }
 
@@ -3459,46 +3462,6 @@ export class Store {
         )
         .all(recipientTaskId, failureReason) as Array<{ id: string }>
     ).map((row) => row.id);
-  }
-
-  // --- client-server-split M2: client_ops idempotency ---
-
-  /**
-   * Look up a previously-cached response for (taskId, clientOpId).
-   * Returns the parsed result or null if no cached entry exists.
-   */
-  getClientOp(taskId: string, clientOpId: string): unknown {
-    const row = this.db
-      .prepare(
-        "SELECT result_json FROM client_ops WHERE task_id = ? AND client_op_id = ?",
-      )
-      .get(taskId, clientOpId) as { result_json: string } | undefined;
-    if (!row) return null;
-    try {
-      return JSON.parse(row.result_json);
-    } catch {
-      return null;
-    }
-  }
-
-  /**
-   * Cache a successful response for (taskId, clientOpId). Uses
-   * INSERT OR IGNORE so a concurrent winner is preserved.
-   */
-  saveClientOp(taskId: string, clientOpId: string, result: unknown): void {
-    this.db
-      .prepare(
-        "INSERT OR IGNORE INTO client_ops (task_id, client_op_id, result_json, created_at) VALUES (?, ?, ?, ?)",
-      )
-      .run(taskId, clientOpId, JSON.stringify(result), Date.now());
-  }
-
-  /** Prune client_ops rows older than `maxAgeMs` (milliseconds). Returns rows deleted. */
-  pruneClientOps(maxAgeMs: number): number {
-    const info = this.db
-      .prepare("DELETE FROM client_ops WHERE created_at < ?")
-      .run(Date.now() - maxAgeMs);
-    return info.changes;
   }
 
   // ===== attachments (uploads-plan v2.6 §1.2) =====

@@ -332,7 +332,7 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
     }
   });
 
-  it("enforces owner host-scope auth, strict body parsing, no client_ops, and hub/owner cancel records", async () => {
+  it("enforces owner host-scope auth, strict body parsing, and hub/owner cancel records", async () => {
     const ownerDir = mkdtempSync(join(tmpdir(), "webagent-cancel-owner-"));
     const hubDir = mkdtempSync(join(tmpdir(), "webagent-cancel-hub-"));
     const owner = await createTestHost(ownerDir);
@@ -394,7 +394,7 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       );
 
       const stats = { cancelPosts: 0 };
-      let dropNextCancelResponse = false;
+      let dropCancelResponsesRemaining = 0;
       let onBeforeRemoteCancel: (() => void) | undefined;
       const customFetch: typeof globalThis.fetch = async (input, init) => {
         const url =
@@ -407,8 +407,8 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
           stats.cancelPosts += 1;
           onBeforeRemoteCancel?.();
           const res = await globalThis.fetch(input, init);
-          if (dropNextCancelResponse) {
-            dropNextCancelResponse = false;
+          if (dropCancelResponsesRemaining > 0) {
+            dropCancelResponsesRemaining -= 1;
             throw new TypeError("simulated response drop");
           }
           return res;
@@ -464,13 +464,7 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
         }),
       );
 
-      // Seed a cached client_op on owner for r1 to verify host path ignores client_ops
-      owner.store.saveClientOp("r1", "cached-op-1", {
-        status: 200,
-        body: { ok: true, status: "cancelled" },
-      });
-
-      // 1. Wrong host token with cached op id -> 404 (not replayed!)
+      // 1. Wrong host token -> 404
       const wrongRes = await fetch(
         `${ownerServer.origin}/api/v1/tasks/r1/cancel`,
         {
@@ -478,14 +472,14 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
           headers: {
             Authorization: `Bearer ${owner.wrongHostToken}`,
             "Content-Type": "application/json",
-            "X-Client-Op-Id": "cached-op-1",
+            "X-Client-Op-Id": "op-1",
           },
           body: JSON.stringify({ kind: "user" }),
         },
       );
       assert.equal(wrongRes.status, 404);
 
-      // 2. Valid host token with cached op id -> executes live (status "idle"), NOT cached "cancelled"
+      // 2. Valid host token -> executes live (status "idle")
       const liveHostRes = await fetch(
         `${ownerServer.origin}/api/v1/tasks/r1/cancel`,
         {
@@ -629,12 +623,35 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       );
       assert.equal(hubNoticeCount(), hubNoticesBeforeRotate);
 
-      // 9. Response dropped after owner commits -> TaskRemoteCancelUnknownError, no retry, no source row, owner target row present
+      // 9a. Single response drop after owner commits -> single-hop retry hits owner ops,
+      //     succeeds without duplicating owner's target notice, and writes hub source notice once.
       const activeLease = hub.tasks.authority.leaseFor("p1")!;
+      const postsBeforeRecover = stats.cancelPosts;
+      const hubNoticesBeforeRecover = hubNoticeCount();
+      const ownerNoticesBeforeRecover = ownerNoticeCount();
+      dropCancelResponsesRemaining = 1;
+      const recovered = await hubTaskOps.cancel({
+        kind: "agent",
+        principal: {
+          taskId: "p1",
+          agentId: "pi",
+          generation: activeLease.generation,
+          initializing: false,
+        },
+        targetTaskId: "r1",
+        reason: "response dropped once",
+      });
+      assert.equal(recovered.status, "idle");
+      assert.equal(stats.cancelPosts, postsBeforeRecover + 2);
+      assert.equal(hubNoticeCount(), hubNoticesBeforeRecover + 1);
+      assert.equal(ownerNoticeCount(), ownerNoticesBeforeRecover + 1);
+
+      // 9b. All 3 attempts dropped after owner commits -> TaskRemoteCancelError(unknown),
+      //     no hub source row written, owner still executed only once via ops replay.
       const postsBeforeDrop = stats.cancelPosts;
       const hubNoticesBeforeDrop = hubNoticeCount();
       const ownerNoticesBeforeDrop = ownerNoticeCount();
-      dropNextCancelResponse = true;
+      dropCancelResponsesRemaining = 3;
       await assert.rejects(
         () =>
           hubTaskOps.cancel({
@@ -646,12 +663,12 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
               initializing: false,
             },
             targetTaskId: "r1",
-            reason: "response dropped",
+            reason: "response dropped persistently",
           }),
         (err: unknown) =>
           err instanceof TaskRemoteCancelError && err.detail.kind === "unknown",
       );
-      assert.equal(stats.cancelPosts, postsBeforeDrop + 1);
+      assert.equal(stats.cancelPosts, postsBeforeDrop + 3);
       assert.equal(hubNoticeCount(), hubNoticesBeforeDrop);
       assert.equal(ownerNoticeCount(), ownerNoticesBeforeDrop + 1);
 

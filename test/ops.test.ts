@@ -351,7 +351,7 @@ describe("Operations REST API", () => {
       );
     });
 
-    it("is idempotent when the same X-Client-Op-Id is replayed", async () => {
+    it("replays the first response when the same X-Client-Op-Id is resent", async () => {
       const taskId = await createTask();
       tasks.activePrompts.add(taskId);
       tasks.syncBusy(taskId);
@@ -383,15 +383,31 @@ describe("Operations REST API", () => {
       assert.equal(res2.body, res1.body);
       assert.equal(callCount, 1);
 
+      // Even after the task settles to idle, replaying the same opId returns the
+      // original 202 response, while a new opId sees live idle state.
+      tasks.activePrompts.delete(taskId);
+      tasks.syncBusy(taskId);
       const res3 = await makeRequest(
+        port,
+        "POST",
+        `/api/v1/tasks/${taskId}/cancel`,
+        undefined,
+        headers,
+      );
+      assert.equal(res3.status, 202);
+      assert.equal(res3.body, res1.body);
+      assert.equal(callCount, 1);
+
+      const res4 = await makeRequest(
         port,
         "POST",
         `/api/v1/tasks/${taskId}/cancel`,
         undefined,
         { "X-Client-Op-Id": "op-cancel-2" },
       );
-      assert.equal(res3.status, 202);
-      assert.equal(callCount, 2);
+      assert.equal(res4.status, 200);
+      assert.deepEqual(JSON.parse(res4.body), { ok: true, status: "idle" });
+      assert.equal(callCount, 1);
     });
   });
 

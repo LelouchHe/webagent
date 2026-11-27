@@ -32,11 +32,11 @@ or counters rather than instants (`ttl_hours`, `share_snapshot_seq`,
   - [messages](#messages)
   - [message_projections](#message_projections)
   - [deliveries](#deliveries)
-  - [client_ops](#client_ops)
   - [recent_paths](#recent_paths)
   - [shares](#shares)
   - [owner_prefs](#owner_prefs)
   - [workspace](#workspace)
+  - [ops](#ops)
 - [Indexes](#indexes)
 - [Cascade & Lifecycle](#cascade--lifecycle)
 - [Pre-1.0 reset policy](#pre-10-reset-policy)
@@ -267,7 +267,7 @@ Bound messages (`to = <task_id>`) skip this table and go straight to
 | `from_label` | TEXT | Display label |
 | `to_ref` | TEXT NOT NULL | `"user"` (unbound) or task id (rare) |
 | `deliver` | TEXT NOT NULL DEFAULT `'push'` | Delivery hint |
-| `dedup_key` | TEXT | Optional sender-supplied idempotency key |
+| `dedup_key` | TEXT | Optional sender-supplied replacement key: a new `to: user` message with the same `(to_ref, dedup_key)` replaces the earlier pending row; also used as the push tag. Not an idempotency key |
 | `title` | TEXT NOT NULL | |
 | `body` | TEXT NOT NULL | |
 | `cwd` | TEXT | Optional cwd hint for the consuming task |
@@ -361,34 +361,6 @@ present.
 
 Index `idx_deliveries_source_entry` enforces that link-entry uniqueness.
 
-### `client_ops`
-
-Idempotency cache for mutating REST calls (M2 of client-server-split). Lets a
-client safely retry after SSE/network reconnect — same `(task_id,
-client_op_id)` returns the cached response instead of re-executing the side
-effect.
-
-This is a result cache, not idempotency by construction, and it is being
-retired: task create and REST collaboration messages derive their ids from the
-`X-Client-Op-Id` op id instead
-(see [multi-host: Idempotent operations](architecture/multi-host.md#idempotent-operations)),
-and link pushes use the envelope's entry id as the delivery id; none of them
-touch this table. `/api/v1/messages` stores under the synthetic key
-`__ingress__`, there is no age-based pruning in production (rows go only when
-their task is deleted), and the result is saved
-after the side effect, not in its transaction. Plan step 5 moves the remaining
-routes to construction and drops the table (see Known issues).
-
-| Column | Type | Notes |
-|---|---|---|
-| `task_id` | TEXT NOT NULL | Part of compound PK |
-| `client_op_id` | TEXT NOT NULL | Client-generated UUID for the op |
-| `result_json` | TEXT NOT NULL | Serialized response body |
-| `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds |
-
-PK: `(task_id, client_op_id)`. `pruneClientOps` in `store.ts` can delete rows
-by age but has no production caller; task deletion removes that task's rows.
-
 ### `recent_paths`
 
 LRU of working directories used by `+` creation and `/clear` path pickers.
@@ -467,6 +439,24 @@ predates this table and is refused at startup (see
 | `id` | INTEGER PRIMARY KEY | Always `1` (`CHECK (id = 1)`): there is exactly one row |
 | `root_task_id` | TEXT NOT NULL | The Root's task id. No foreign key: a fresh database names its Root before the row is inserted |
 
+### `ops`
+
+Bounded-TTL (24h) deduplication table for the HTTP write idempotency adapter
+(`src/store/ops.ts`, `src/http/ops-adapter.ts`). Independent of task lifecycle
+(no foreign keys, untouched by task deletion or Root exit) so replays still
+return the original response (including Root exit `replacedBy`). Expired rows
+are swept synchronously on startup before listening and on the server's hourly
+maintenance timer (skipping live in-flight keys).
+
+| Column | Type | Notes |
+|---|---|---|
+| `key` | TEXT PRIMARY KEY | `opIdentity(OPS_NAMESPACE, caller, opId)` where `caller` is `host:<name>` or `token:<name>` |
+| `fingerprint` | TEXT NOT NULL | SHA-256 hex digest of `method + "\0" + url + "\0" + rawBodyBytes` |
+| `status` | INTEGER | Final HTTP status code; `NULL` while `pending` |
+| `headers` | TEXT | JSON-encoded application response headers (excluding hop-by-hop headers); `NULL` while `pending` |
+| `body` | BLOB | Raw response payload bytes (`Buffer`); `NULL` while `pending` |
+| `created_at` | INTEGER NOT NULL | Unix milliseconds; rows expire at `now - created_at >= 24h` |
+
 ---
 
 ## Indexes
@@ -488,6 +478,7 @@ predates this table and is refused at startup (see
 | `idx_attachments_task` | `attachments` | `(task_id)` | Per-task listing + GC sweep |
 | `idx_agent_sessions_agent_task` | `agent_sessions` | `(agent_key, task_id) WHERE task_id IS NOT NULL` | Storage guard: at most one binding per (agent, visible WebAgent Task) (partial UNIQUE). The global one-binding-per-task rule is enforced in the application, not here |
 | `idx_tasks_parent` | `tasks` | `(parent_id)` | Root/child Task relationship and future family queries |
+| `idx_ops_created_at` | `ops` | `(created_at)` | TTL sweep over expired HTTP `ops` rows |
 
 ---
 
@@ -516,8 +507,8 @@ retire the right executions. Deletion cascades follow the **task
 tree**, whatever agent owns each descendant. Three rules govern any code that
 deletes a task:
 
-1. **Hard delete** (`deleteTask()` → `"hard"`): drop preview shares + client
-   ops, then `DELETE FROM events` then `DELETE FROM tasks`. The final delete
+1. **Hard delete** (`deleteTask()` → `"hard"`): drop preview shares,
+   then `DELETE FROM events` then `DELETE FROM tasks`. The final delete
    cascades to `agent_sessions` and `attachments`. Order matters for event and
    share rows, whose FKs use `NO ACTION`.
 2. **Soft delete** (`deleteTask()` → `"soft"`): if any **active** share
@@ -556,13 +547,13 @@ is handled the same way: the schema guard tolerates it and startup drops it
 
 ## Timestamp normalization
 
-Nine tables hold ten timestamp columns. Eight of them (`tasks.created_at`,
+Eight tables hold nine timestamp columns. Seven of them (`tasks.created_at`,
 `tasks.last_active_at`, `agent_sessions.created_at`, `events.created_at`,
-`push_subscriptions.created_at`, `client_ops.created_at`,
-`attachments.created_at`, `recent_paths.last_used_at`) were bare UTC strings in
-older databases, in two shapes: `%Y-%m-%d %H:%M:%S` and
-`%Y-%m-%d %H:%M:%S.%f`, neither with a timezone marker. The other two
-(`shares.created_at`, `owner_prefs.updated_at`) were already INTEGER but
+`push_subscriptions.created_at`, `attachments.created_at`,
+`recent_paths.last_used_at`) were bare UTC strings in older databases, in two
+shapes: `%Y-%m-%d %H:%M:%S` and `%Y-%m-%d %H:%M:%S.%f`, neither with a timezone
+marker. The other two (`shares.created_at`, `owner_prefs.updated_at`) were
+already INTEGER but
 defaulted to `CAST(strftime('%s','now') AS INTEGER) * 1000` (seconds aligned).
 
 At startup, `migrateTimestampsToMillis()` rebuilds each table whose target

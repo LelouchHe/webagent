@@ -218,7 +218,7 @@ describe("POST /api/v1/messages — ingress", () => {
     assert.equal(msgEvent.from_ref, "cron:nightly");
   });
 
-  it("idempotent via X-Client-Op-Id: second call returns identical id without duplicating the row", async () => {
+  it("replays via X-Client-Op-Id: second call returns identical id without duplicating the row", async () => {
     const opId = "op-abc";
     const r1 = await post(port, "/api/v1/messages", baseBody(), {
       "X-Client-Op-Id": opId,

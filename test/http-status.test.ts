@@ -10,7 +10,6 @@ const STATUS_ARGUMENT_INDEX = new Map([
   ["json", 1],
   ["finish", 0],
   ["writeHead", 0],
-  ["saveClientOpResult", 3],
 ]);
 
 function runtimeTypeScriptFiles(root: string): string[] {

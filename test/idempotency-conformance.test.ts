@@ -16,6 +16,7 @@ import { CapabilityStore } from "../src/mcp/capability.ts";
 import {
   COLLABORATION_MESSAGE_NAMESPACE,
   opIdentity,
+  TASK_CREATE_NAMESPACE,
 } from "../src/op-identity.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { Store } from "../src/store.ts";
@@ -167,7 +168,7 @@ describe("structural idempotency conformance", () => {
 
   it("enforces deterministic idempotency on owner POST /api/v1/tasks (host create)", async () => {
     const opId = randomUUID();
-    const expectedId = opIdentity(store.rootTaskId, "host:hub-a", opId);
+    const expectedId = opIdentity(TASK_CREATE_NAMESPACE, "host:hub-a", opId);
     const snapshot = () => ({
       tasks: store.listTasks().length,
       events: store.getEvents(expectedId).length,
@@ -239,7 +240,7 @@ describe("structural idempotency conformance", () => {
     assert.equal(other.status, 201);
     assert.equal(
       (other.body as { id: string }).id,
-      opIdentity(store.rootTaskId, "host:hub-b", opId),
+      opIdentity(TASK_CREATE_NAMESPACE, "host:hub-b", opId),
     );
     assert.notEqual((other.body as { id: string }).id, expectedId);
 
@@ -282,7 +283,7 @@ describe("structural idempotency conformance", () => {
 
   it("enforces deterministic idempotency on local POST /api/v1/tasks and creates two tasks when opId is null", async () => {
     const opId = randomUUID();
-    const expectedId = opIdentity(store.rootTaskId, "token:browser", opId);
+    const expectedId = opIdentity(TASK_CREATE_NAMESPACE, "token:browser", opId);
     const snapshot = () => ({
       tasks: store.listTasks().length,
       parentEvents: store.getEvents(store.rootTaskId).length,
