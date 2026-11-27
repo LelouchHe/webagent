@@ -32,6 +32,7 @@ import {
   handleCancelTaskRoute,
   handleDeleteTaskRoute,
 } from "./task-lifecycle.ts";
+import { handleCollaborationMessageRoute } from "./collaboration-messages-route.ts";
 import {
   authenticate,
   isHostScopeAllowedPath,
@@ -41,12 +42,9 @@ import { enrichStoredEventsForDisplay } from "../attachment-labels.ts";
 import { agentCommandToken, resolveAgentCommand } from "../agent-commands.ts";
 import { abbreviateHomePath } from "../home-path.ts";
 import { log } from "../log.ts";
-import {
-  attachCollaborationDeliveryStatus,
-  buildCollaborationBroadcast,
-} from "../collaboration-message.ts";
+import { attachCollaborationDeliveryStatus } from "../collaboration-message.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
-import { taskDisplayLabel, validateTaskTitle } from "../shared/task-title.ts";
+import { validateTaskTitle } from "../shared/task-title.ts";
 import type { TaskListItem, TaskOps } from "../api/tasks.ts";
 import { isTaskCreateError } from "../api/tasks.ts";
 import { z } from "zod";
@@ -334,38 +332,6 @@ function readBodyRaw(req: IncomingMessage): Promise<string> {
     });
     req.on("error", reject);
   });
-}
-
-function parseCollaborationBody(body: string): {
-  targetTaskId: string;
-  body: string;
-  sourceLabel?: string;
-} {
-  const raw = JSON.parse(body) as unknown;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error("invalid_collaboration_body");
-  }
-  const value = raw as {
-    targetTaskId?: unknown;
-    body?: unknown;
-    sourceLabel?: unknown;
-  };
-  if (
-    typeof value.targetTaskId !== "string" ||
-    typeof value.body !== "string" ||
-    !value.body.trim()
-  ) {
-    throw new Error("invalid_collaboration_body");
-  }
-  const sourceLabel =
-    typeof value.sourceLabel === "string"
-      ? taskDisplayLabel(value.sourceLabel)
-      : undefined;
-  return {
-    targetTaskId: value.targetTaskId,
-    body: value.body,
-    ...(sourceLabel ? { sourceLabel } : {}),
-  };
 }
 
 /**
@@ -1613,112 +1579,17 @@ export function createRequestHandler(
         /^\/api\/v1\/tasks\/([^/]+)\/messages\/?(?:\?.*)?$/,
       );
       if (collaborationMessageMatch && req.method === "POST") {
-        const sourceTaskId = decodeURIComponent(collaborationMessageMatch[1]);
-        const requestPrincipal = principalByRequest.get(req);
-        if (!tasks) {
-          json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-            error: "Task manager not available",
-          });
-          return;
-        }
-        let body: {
-          targetTaskId: string;
-          body: string;
-          sourceLabel?: string;
-        };
-        try {
-          body = parseCollaborationBody(await readBody(req));
-        } catch {
-          json(res, HTTP_STATUS.BAD_REQUEST, {
-            error: "targetTaskId and non-empty body are required",
-          });
-          return;
-        }
-        if (requestPrincipal?.scope === "host") {
-          json(res, HTTP_STATUS.FORBIDDEN, { error: "Forbidden" });
-          return;
-        }
-        const sourceTask = store.getTask(sourceTaskId);
-        if (!sourceTask) {
-          json(res, HTTP_STATUS.NOT_FOUND, { error: "Source task not found" });
-          return;
-        }
-        const { opId, replayed } = tryReplayClientOp(
+        await handleCollaborationMessageRoute({
           req,
           res,
+          sourceTaskId: decodeURIComponent(collaborationMessageMatch[1]),
+          principal: principalByRequest.get(req),
           store,
-          sourceTaskId,
-        );
-        if (replayed) return;
-        const targetTask = store.getTask(body.targetTaskId);
-        if (!targetTask) {
-          json(res, HTTP_STATUS.NOT_FOUND, { error: "Target task not found" });
-          return;
-        }
-        if (targetTask.id === sourceTask.id) {
-          json(res, HTTP_STATUS.BAD_REQUEST, {
-            error: "Source and target task must differ",
-          });
-          return;
-        }
-        const messageId = randomUUID();
-        const deliveryId = randomUUID();
-        // A store-level rejection here must answer a JSON error, never an
-        // unhandled rejection: the request handler is fired with `void` and
-        // has no outer catch, so a throw would take the process down.
-        let created: ReturnType<typeof store.createCollaborationMessage>;
-        try {
-          created = store.createCollaborationMessage({
-            id: messageId,
-            deliveryId,
-            sourceTaskId,
-            directTargetTaskId: targetTask.id,
-            sourceActor: "user",
-            body: body.body,
-          });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          if (msg.startsWith("Live task not found")) {
-            json(res, HTTP_STATUS.NOT_FOUND, { error: msg });
-          } else {
-            json(res, HTTP_STATUS.INTERNAL_SERVER_ERROR, { error: msg });
-          }
-          return;
-        }
-        // A user-originated collaboration action counts as activity on the
-        // Task where the user entered it, not only on the recipient.
-        store.updateTaskLastActive(sourceTaskId);
-        const sourceLabel = sourceTask.title ?? sourceTask.id.slice(0, 8);
-        const targetLabel = targetTask.title ?? targetTask.id.slice(0, 8);
-        sseManager.broadcast(
-          buildCollaborationBroadcast({
-            messageId,
-            sourceTaskId,
-            sourceLabel,
-            targetTaskId: targetTask.id,
-            targetLabel,
-            role: "source",
-            taskId: sourceTaskId,
-            body: created.message.body,
-            deliveryStatus: "queued",
-          }),
-        );
-        const result = {
-          messageId,
-          deliveryId,
-          status: "queued",
-          clientOpId: opId ?? undefined,
-        };
-        saveClientOpResult(
-          store,
-          opId,
-          sourceTaskId,
-          HTTP_STATUS.ACCEPTED,
-          result,
-        );
-        json(res, HTTP_STATUS.ACCEPTED, result, req);
-        // Delivery targets the recipient's own execution, resolved there.
-        void tasks.drainCollaborationDeliveries(targetTask.id);
+          tasks,
+          sseManager,
+          readBody,
+          json,
+        });
         return;
       }
 

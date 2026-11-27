@@ -410,4 +410,54 @@ describe("structural idempotency conformance", () => {
         }),
     });
   });
+
+  it("enforces deterministic idempotency on POST /api/v1/tasks/:sourceTaskId/messages", async () => {
+    const sourceId = store.rootTaskId;
+    const targetId = `collab-target-${randomUUID()}`;
+    store.createTask(
+      targetId,
+      dir,
+      "auto",
+      "mock",
+      `sess-${targetId}`,
+      sourceId,
+    );
+    // Keep delivery in a stable queued state so first and replay observe the
+    // same status for strict response equality.
+    const originalDrain = tasks.drainCollaborationDeliveries.bind(tasks);
+    tasks.drainCollaborationDeliveries = async () => false;
+    try {
+      const opId = randomUUID();
+      const snapshot = () => ({
+        queued: store.countQueuedDeliveries(targetId),
+        sourceEvents: store.getEvents(sourceId).length,
+      });
+
+      const { first } = await assertIdempotentRoute({
+        expectedStatus: 202,
+        opId,
+        snapshot,
+        invoke: (id) =>
+          postJson(
+            port,
+            `/api/v1/tasks/${sourceId}/messages`,
+            apiToken,
+            { targetTaskId: targetId, body: "conformance body" },
+            id,
+          ),
+        invokeConflicting: (id) =>
+          postJson(
+            port,
+            `/api/v1/tasks/${sourceId}/messages`,
+            apiToken,
+            { targetTaskId: targetId, body: "mutated body" },
+            id,
+          ),
+      });
+
+      assert.equal((first.body as { clientOpId: string }).clientOpId, opId);
+    } finally {
+      tasks.drainCollaborationDeliveries = originalDrain;
+    }
+  });
 });
