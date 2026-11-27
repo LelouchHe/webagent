@@ -39,6 +39,11 @@ import { LinkOutboxStore } from "./store/link-outbox.ts";
 import { RemoteRelationsStore } from "./store/remote-relations.ts";
 import { TaskLifecycleStore } from "./store/task-lifecycle.ts";
 import type { TaskDeleteStoreOptions } from "./store/task-lifecycle.ts";
+import {
+  CollaborationMessagesStore,
+  type IdempotentCollaborationMessageInput,
+  type IdempotentCollaborationMessageResult,
+} from "./store/collaboration-messages.ts";
 
 /** Namespace WebAgent reserves for the per-task empty execution slot. */
 const EMPTY_EXECUTION_PREFIX = "no-execution:";
@@ -496,6 +501,7 @@ export class Store {
   private readonly linkOutbox: LinkOutboxStore;
   private readonly linkApply: LinkApplyStore;
   private readonly taskLifecycle: TaskLifecycleStore;
+  private readonly collaborationMessages: CollaborationMessagesStore;
   private readonly deliveryStatusObservers: Array<
     (change: CollaborationDeliveryStatusChange) => void
   > = [];
@@ -607,6 +613,7 @@ export class Store {
       this.remoteRelations,
       this.linkOutbox,
     );
+    this.collaborationMessages = new CollaborationMessagesStore(internal);
     try {
       this.db.pragma("journal_mode = WAL");
       this.db.pragma("foreign_keys = ON");
@@ -2834,9 +2841,13 @@ export class Store {
     message: CollaborationMessageRow;
     delivery: CollaborationDeliveryRow;
   } {
-    return this.db.transaction(() =>
-      this.createCollaborationMessageInTransaction(input),
-    )();
+    return this.collaborationMessages.createCollaborationMessage(input);
+  }
+
+  createOrReplayCollaborationMessage(
+    input: IdempotentCollaborationMessageInput,
+  ): IdempotentCollaborationMessageResult {
+    return this.collaborationMessages.createOrReplay(input);
   }
 
   enqueueTargetCollaboration(
@@ -3062,82 +3073,6 @@ export class Store {
       }
     }
     return null;
-  }
-
-  private createCollaborationMessageInTransaction(
-    input: CollaborationMessageInput,
-  ): {
-    message: CollaborationMessageRow;
-    delivery: CollaborationDeliveryRow;
-  } {
-    const createdAt = input.createdAt ?? Date.now();
-    if (input.sourceTaskId === input.directTargetTaskId) {
-      throw new Error("Collaboration source and target must differ");
-    }
-
-    this.requireLiveTask(input.sourceTaskId);
-    this.requireLiveTask(input.directTargetTaskId);
-    this.db
-      .prepare(
-        `INSERT INTO messages
-         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        input.id,
-        input.sourceTaskId,
-        input.directTargetTaskId,
-        input.sourceActor,
-        input.body,
-        createdAt,
-      );
-    const insertProjection = this.db.prepare(
-      `INSERT INTO message_projections (message_id, task_id, role, created_at)
-       VALUES (?, ?, ?, ?)`,
-    );
-    insertProjection.run(input.id, input.sourceTaskId, "source", createdAt);
-    insertProjection.run(
-      input.id,
-      input.directTargetTaskId,
-      "target",
-      createdAt,
-    );
-    const sourceLabel =
-      this.getTask(input.sourceTaskId)?.title ?? input.sourceTaskId.slice(0, 8);
-    const targetLabel =
-      this.getTask(input.directTargetTaskId)?.title ??
-      input.directTargetTaskId.slice(0, 8);
-    this.saveEvent(
-      input.sourceTaskId,
-      "system_message",
-      buildCollaborationSystemMessage({
-        messageId: input.id,
-        sourceTaskId: input.sourceTaskId,
-        sourceLabel,
-        targetTaskId: input.directTargetTaskId,
-        targetLabel,
-        role: "source",
-        body: input.body,
-      }),
-      { from_ref: `msg:${input.id}` },
-    );
-    this.db
-      .prepare(
-        `INSERT INTO deliveries
-         (id, message_id, recipient_task_id, idempotency_key, status, queued_at)
-         VALUES (?, ?, ?, ?, 'queued', ?)`,
-      )
-      .run(
-        input.deliveryId,
-        input.id,
-        input.directTargetTaskId,
-        `${input.id}:${input.directTargetTaskId}`,
-        createdAt,
-      );
-    return {
-      message: this.getCollaborationMessage(input.id)!,
-      delivery: this.getCollaborationDelivery(input.deliveryId)!,
-    };
   }
 
   private createTargetOnlyDelivery(input: {

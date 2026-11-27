@@ -93,8 +93,54 @@ retry into a conflict. A different parent or agent under the same op id is
 `409 create_op_conflict`; a soft-deleted Task is `404 target_deleted`. A Task
 hard-deleted inside the retry window is recreated by a replay (see Known
 issues). Link pushes follow the same rule: the inbound delivery id is the
-outbox entry id. The remaining mutating REST routes still use the `client_ops`
-result cache until plan step 5.
+outbox entry id.
+
+A REST collaboration message (`POST /api/v1/tasks/:sourceTaskId/messages`)
+derives its Message id the same way, but from a fixed namespace instead of the
+Root id, because Root exit rotates the Root id while archived Tasks can still
+message each other:
+
+```text
+ with X-Client-Op-Id:  messageId = opIdentity(COLLABORATION_MESSAGE_NAMESPACE, token:<authenticated token name>, opId)
+ without the header:   messageId is random (no replay)
+```
+
+```text
+ browser (@ send)                                  server
+  |-- POST /api/v1/tasks/S/messages --------------->|  auth (401/403), X-Client-Op-Id (400),
+  |     X-Client-Op-Id: K                           |  body shape (400)
+  |                                                 |  one tx: source S live (404); no row for
+  |                                                 |    messageId; target live (404), not
+  |                                                 |    self (400); insert Message + Delivery
+  |                                                 |  source activity, source SSE
+  |      x  202 {ids, queued, clientOpId: K} lost <-|  then start drain
+  | attempt unknown: retry with the same K          |
+  |-- POST /api/v1/tasks/S/messages --------------->|  auth, X-Client-Op-Id, body shape again
+  |     X-Client-Op-Id: K                           |  one tx: source S live (404); row exists,
+  |                                                 |    same source/target/body (else 409)
+  |<-- 202 {same ids, current status, clientOpId} --|  nothing written; no activity, SSE, drain
+  | post() resolved: accepted                       |
+```
+
+The stored source, target, and verbatim body are compared before any target
+check, so a known op id with different content is `409` even if the target is
+now gone. A present but empty or over-long op id is `400`; no header keeps the
+non-idempotent path. Every attempt, retries included, passes authentication and
+the header and body checks first.
+
+The browser sends through the shared `post()` helper. A resolved `post()` (a
+`2xx` whose body parsed) is acceptance; a `4xx` on the first attempt is a
+definite rejection. Any other failure (network error, the request deadline,
+`5xx`, an unreadable success body) is unknown; with an op id it is retried up
+to twice with the same id, without one it is returned. Once an attempt was
+unknown, a later `4xx` leaves the whole send unknown, because it cannot prove
+the earlier attempt did not commit.
+
+Replay recovers the acceptance only. If the process stops after the commit but
+before the source activity update, source SSE, or drain, replay does not redo
+them; the queued delivery waits for an ordinary drain. The four routes that
+still use the `client_ops` result cache (ingress, prompt, permission response,
+local cancel) move to construction in the same plan step.
 
 ## Link transport
 

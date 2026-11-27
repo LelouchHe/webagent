@@ -369,10 +369,13 @@ client_op_id)` returns the cached response instead of re-executing the side
 effect.
 
 This is a result cache, not idempotency by construction, and it is being
-retired: task create and link pushes derive their ids from the op id instead
-(see [multi-host: Idempotent operations](architecture/multi-host.md#idempotent-operations))
-and never touch this table. `/api/v1/messages` stores under the synthetic key
-`__ingress__`, rows are never pruned in production, and the result is saved
+retired: task create and REST collaboration messages derive their ids from the
+`X-Client-Op-Id` op id instead
+(see [multi-host: Idempotent operations](architecture/multi-host.md#idempotent-operations)),
+and link pushes use the envelope's entry id as the delivery id; none of them
+touch this table. `/api/v1/messages` stores under the synthetic key
+`__ingress__`, there is no age-based pruning in production (rows go only when
+their task is deleted), and the result is saved
 after the side effect, not in its transaction. Plan step 5 moves the remaining
 routes to construction and drops the table (see Known issues).
 
@@ -383,8 +386,8 @@ routes to construction and drops the table (see Known issues).
 | `result_json` | TEXT NOT NULL | Serialized response body |
 | `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds |
 
-PK: `(task_id, client_op_id)`. Old rows GC'd by age (see `cleanupClientOps`
-in `store.ts`).
+PK: `(task_id, client_op_id)`. `pruneClientOps` in `store.ts` can delete rows
+by age but has no production caller; task deletion removes that task's rows.
 
 ### `recent_paths`
 

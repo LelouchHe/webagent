@@ -122,9 +122,19 @@ spot gaps, and decide what still needs to be added without reading every spec.
     read-only preflight refusal of the old 3-category `outbox` CHECK
   - reusable `assertIdempotentRoute` conformance helper (`test/fixtures/idempotency.ts`)
     applied to owner `POST /api/v1/tasks` (host deterministic UUIDv5 via `opIdentity`,
-    caller scoping, `409` conflict, `404 target_deleted` on soft delete) and
-    `POST /api/v1/link/entries`, plus hub `createTask` bounded retries on `unknown`
-    with a single `X-Client-Op-Id`
+    caller scoping, `409` conflict, `404 target_deleted` on soft delete),
+    `POST /api/v1/link/entries`, and `POST /api/v1/tasks/:sourceTaskId/messages`,
+    plus hub `createTask` bounded retries on `unknown` with a single `X-Client-Op-Id`
+- `test/collaboration-message-idempotency.test.ts`
+  - constructive idempotency for `POST /api/v1/tasks/:sourceTaskId/messages`:
+    concurrent identical requests return two `202`s with one persisted fact,
+    replay returns current delivery status (`delivered`/`failed`) and survives
+    target hard delete, Root exit (archived tree), and simulated restart,
+    source/target/verbatim-body mismatch returns `409` before target checks,
+    caller scoping by token name, `401`/`403` before replay, zero replay side
+    effects (SSE/lastActive/drain) and zero `client_ops` reads/writes, missing
+    header creates distinct facts without echoing `clientOpId`, and empty/>128
+    header returns `400`
 - `test/hosts-routes.test.ts` and `test/events.test.ts`
   - an owner task list includes its external parent as an unknown remote entry
     without a host/title, without an added SQL read
@@ -451,6 +461,17 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/api-module.test.ts` (request building)
   - `createTask`/`clearTask` send a named `agentId`, omit it for `null` or an
     omitted option, and refuse an empty string locally before any request
+  - `sendCollaborationMessage` requires `clientOpId: string | null`, validates
+    acceptance responses (`messageId`, `deliveryId`, valid delivery status,
+    echoed `clientOpId`), skips retry on first-attempt `4xx`, retries `unknown`
+    outcomes with the same op ID, and keeps `unknown` if a `4xx` follows an
+    earlier `unknown` attempt
+- `test/task-command-message.test.ts`
+  - real browser `@` send path attaches a fresh `X-Client-Op-Id` per logical
+    send, does not retry first-attempt `4xx` (`message failed`), retries
+    `unknown` outcomes with the same op ID, and reports `message outcome unknown`
+    (never `message failed`) when retries are exhausted or a `4xx` follows an
+    unknown attempt
 
 - `test/slash-tree.test.ts` (`resolvePath` raw remainder)
   - `rawRemainder` keeps the argument byte for byte (trailing space, TAB,

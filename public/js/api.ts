@@ -2,6 +2,8 @@
 // Replaces WebSocket message sends with typed fetch calls.
 
 import type { ConfigOption, TaskDetail, TaskSummary } from "../../src/types.ts";
+import { HTTP_STATUS } from "../../src/http-status.ts";
+import type { CollaborationDeliveryStatus } from "../../src/shared/delivery-status.ts";
 
 export class ApiError extends Error {
   name = "ApiError";
@@ -283,21 +285,54 @@ export async function listArchivedTaskTops(): Promise<TaskSummary[]> {
   return tasks.filter((task) => task.parent_id === null && !task.isRoot);
 }
 
-export function sendCollaborationMessage(
+export interface CollaborationMessageAccepted {
+  messageId: string;
+  deliveryId: string;
+  status: CollaborationDeliveryStatus;
+  clientOpId?: string;
+}
+
+export type CollaborationMessageSendResult =
+  | { kind: "accepted"; response: CollaborationMessageAccepted }
+  | { kind: "rejected"; status: number; message: string }
+  | { kind: "unknown"; message: string };
+
+const COLLABORATION_MESSAGE_RETRIES = 2;
+
+export async function sendCollaborationMessage(
   sourceTaskId: string,
   targetTaskId: string,
   body: string,
-  clientOpId?: string,
-): Promise<{
-  messageId: string;
-  deliveryId: string;
-  status: "queued" | "delivered";
-}> {
-  return post(
-    `/api/v1/tasks/${encodeURIComponent(sourceTaskId)}/messages`,
-    { targetTaskId, body },
-    clientOpId,
-  );
+  clientOpId: string | null,
+): Promise<CollaborationMessageSendResult> {
+  const url = `/api/v1/tasks/${encodeURIComponent(sourceTaskId)}/messages`;
+  const maxAttempts =
+    clientOpId === null ? 1 : 1 + COLLABORATION_MESSAGE_RETRIES;
+  let lastUnknown: { kind: "unknown"; message: string } | null = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      const response = await post<CollaborationMessageAccepted>(
+        url,
+        { targetTaskId, body },
+        clientOpId ?? undefined,
+      );
+      return { kind: "accepted", response };
+    } catch (err) {
+      if (
+        err instanceof ApiError &&
+        err.status >= HTTP_STATUS.BAD_REQUEST &&
+        err.status < HTTP_STATUS.INTERNAL_SERVER_ERROR
+      ) {
+        if (lastUnknown !== null) return lastUnknown;
+        return { kind: "rejected", status: err.status, message: err.message };
+      }
+      lastUnknown = {
+        kind: "unknown",
+        message: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+  return lastUnknown!;
 }
 
 /** A remote child in a list read; it follows its local parent. */

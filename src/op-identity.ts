@@ -7,6 +7,10 @@ import { createHash } from "node:crypto";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Fixed UUID namespace for REST collaboration message op identity. */
+export const COLLABORATION_MESSAGE_NAMESPACE =
+  "9a4c5e8f-2b71-4d3a-9c6e-1f08b4a27d53";
+
 /** RFC 4122 UUIDv5 of `${caller}\0${opId}` in the `namespace` UUID. */
 export function opIdentity(
   namespace: string,

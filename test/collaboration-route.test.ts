@@ -599,7 +599,7 @@ describe("S3 collaboration write routes", () => {
   it("maps a collaboration store failure to a 500 without crashing", async () => {
     const flakyStore = new Proxy(store, {
       get(target, prop, receiver) {
-        if (prop === "createCollaborationMessage") {
+        if (prop === "createOrReplayCollaborationMessage") {
           return () => {
             throw new Error("injected store failure");
           };
