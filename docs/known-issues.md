@@ -23,7 +23,7 @@ time. An entry without a "closing condition" is a wish, not an issue.
   unsupported. *Closing:* introduce protocol versioning at 1.0 if needed.
 - **A hard-deleted remote child can be recreated if a create retry lands after
   deletion.** Remote `POST /api/v1/tasks` derives its task id from
-  `opIdentity(TASK_CREATE_NAMESPACE, callerLinkName, opId)`. A soft-deleted
+  `opIdentity(TASK_CREATE_NAMESPACE, host:<authenticated token name>, opId)`. A soft-deleted
   (shared) task still exists in `tasks` and returns `404 target_deleted` on
   replay, but a hard-deleted task removes the row so a late retry inside the
   hub's retry window would insert it again (requires create response loss,

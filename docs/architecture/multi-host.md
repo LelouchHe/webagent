@@ -64,11 +64,14 @@ state and must not be lost travels on the **link**; everything else is a
 
 ## Idempotent operations
 
-Every state-changing operation takes a required `opId: string | null` in its
-TypeScript interface (`TaskOps.create`, `sendSyncRequest`). A string promises
-that retrying with the same value is safe; `null` explicitly opts out and is
-never retried. On the wire the op id is `X-Client-Op-Id`; no header means
-`null`.
+Only operations that a caller really retries with the same op id are
+idempotent: Task create, link entry delivery, and REST collaboration messages.
+Their interfaces take a required `opId: string | null` (`TaskOps.create`,
+`sendSyncRequest`); a string promises that retrying with the same value is
+safe, and `null` explicitly opts out and is never retried. On the wire the op
+id is `X-Client-Op-Id`; no header means `null`. Other routes do not promise
+same-op replay (prompt uses the header only to correlate its own echo), so a
+client must not retry them automatically on an unknown outcome.
 
 Idempotency is built into the fact the operation writes, not into a result
 cache. A created Task's id is derived from the op id:
@@ -87,9 +90,9 @@ cache. A created Task's id is derived from the op id:
   | record child edge (already there: no-op)      |
 ```
 
-A replay compares only facts fixed at creation (the parent edge or link and the
-agent); it returns the Task as it is now, so a later rename does not turn a
-retry into a conflict. A different parent or agent under the same op id is
+A replay compares the Task's current parent edge or link and its current
+agent binding with the request; it returns the Task as it is now, so a later
+rename does not turn a retry into a conflict, but a later move or rebind does. A different parent or agent under the same op id is
 `409 create_op_conflict`; a soft-deleted Task is `404 target_deleted`. A Task
 hard-deleted inside the retry window is recreated by a replay (see Known
 issues). Link pushes follow the same rule: the inbound delivery id is the

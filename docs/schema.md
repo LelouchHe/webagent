@@ -266,7 +266,7 @@ Bound messages (`to = <task_id>`) skip this table and go straight to
 | `from_label` | TEXT | Display label |
 | `to_ref` | TEXT NOT NULL | `"user"` (unbound) or task id (rare) |
 | `deliver` | TEXT NOT NULL DEFAULT `'push'` | Delivery hint |
-| `dedup_key` | TEXT | Optional sender-supplied idempotency key |
+| `dedup_key` | TEXT | Optional sender-supplied replacement key: a new `to: user` message with the same `(to_ref, dedup_key)` replaces the earlier pending row; also used as the push tag. Not an idempotency key |
 | `title` | TEXT NOT NULL | |
 | `body` | TEXT NOT NULL | |
 | `cwd` | TEXT | Optional cwd hint for the consuming task |
@@ -487,8 +487,8 @@ retire the right executions. Deletion cascades follow the **task
 tree**, whatever agent owns each descendant. Three rules govern any code that
 deletes a task:
 
-1. **Hard delete** (`deleteTask()` → `"hard"`): drop preview shares + client
-   ops, then `DELETE FROM events` then `DELETE FROM tasks`. The final delete
+1. **Hard delete** (`deleteTask()` → `"hard"`): drop preview shares,
+   then `DELETE FROM events` then `DELETE FROM tasks`. The final delete
    cascades to `agent_sessions` and `attachments`. Order matters for event and
    share rows, whose FKs use `NO ACTION`.
 2. **Soft delete** (`deleteTask()` → `"soft"`): if any **active** share

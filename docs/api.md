@@ -937,6 +937,8 @@ Use `GET /events` for message history (rendering only) and `GET /snapshot` for r
 
 Send a user prompt to the agent. Returns immediately; the agent's response streams via SSE.
 
+Not replay-safe: `X-Client-Op-Id` only correlates the stored `user_message` and its SSE echo. Repeating a request while the turn runs returns `409`; after it ends, a repeat starts a new turn.
+
 **Request body:**
 
 | Field         | Type   | Required | Description                                                                          |
@@ -1078,7 +1080,7 @@ List all pending permission requests for a task.
 
 #### `POST /api/v1/tasks/:id/permissions/:reqId`
 
-Resolve a pending permission request (approve or deny).
+Resolve a pending permission request (approve or deny). `X-Client-Op-Id` is ignored; repeating after the request was handled returns `404`.
 
 **Request body (approve):**
 
@@ -1634,6 +1636,8 @@ The inbox is a primitive for receiving cross-task messages (from cron jobs, exte
 #### `POST /api/v1/messages`
 
 Create an inbox message. `to: "user"` creates an unbound message (listed in inbox, consumable into a new task). `to: "task:<id>"` appends the message directly as an event on the target task.
+
+Not replay-safe: `X-Client-Op-Id` is ignored and every request creates a new message with a new id. For `to: "user"`, a non-empty `dedup_key` replaces the earlier pending row with the same key.
 
 **Request body:**
 
