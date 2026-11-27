@@ -120,7 +120,7 @@ async function startHttp(
   };
 }
 
-describe("contract-07 multi-hop: HostConnection single-hop retries, beforeSend fence, and op_aborted", () => {
+describe("Remote lifecycle idempotency: HostConnection single-hop retries, beforeSend fence, and op_aborted", () => {
   const cleanups: Array<() => Promise<void>> = [];
 
   afterEach(async () => {
@@ -130,9 +130,9 @@ describe("contract-07 multi-hop: HostConnection single-hop retries, beforeSend f
   });
 
   it("retries remote cancel (REST and MCP) and cascade multi-child delete against real Owner ops without repeating side effects", async () => {
-    const owner = await createNode("wa-c07-mh-owner-");
+    const owner = await createNode("wa-rl-idem-owner-");
     cleanups.push(() => owner.close());
-    const hub = await createNode("wa-c07-mh-hub-");
+    const hub = await createNode("wa-rl-idem-hub-");
     cleanups.push(() => hub.close());
 
     // Seed parent p1 on hub, and two remote children r1, r2 on owner.
@@ -362,7 +362,7 @@ describe("contract-07 multi-hop: HostConnection single-hop retries, beforeSend f
     //    store.replaceAgentSession while packet 1 is in flight / unknown ->
     //    real authorize(principal) fence blocks packet 2, throws TaskRemoteCancelError(unknown),
     //    and writes zero hub source cancel rows.
-    const cancelHub = await createNode("wa-c07-fence-cancel-hub-");
+    const cancelHub = await createNode("wa-rl-fence-cancel-hub-");
     cleanups.push(() => cancelHub.close());
     cancelHub.store.createTask(
       "p1",
@@ -470,7 +470,7 @@ describe("contract-07 multi-hop: HostConnection single-hop retries, beforeSend f
 
     // 3. End-to-end synchronized delete: edge archived while packet 1 is unknown ->
     //    parent preserved with TaskRemoteDeleteError(unknown), zero 2nd packet!
-    const hub = await createNode("wa-c07-fence-hub-");
+    const hub = await createNode("wa-rl-fence-hub-");
     cleanups.push(() => hub.close());
     hub.store.createTask(
       "p1",

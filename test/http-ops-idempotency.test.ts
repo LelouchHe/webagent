@@ -59,7 +59,7 @@ async function createHarness(
   existingDir?: string,
   options: { reuseExistingAuth?: boolean; initialNow?: number } = {},
 ): Promise<Harness> {
-  const dir = existingDir ?? mkdtempSync(join(tmpdir(), "webagent-c07-"));
+  const dir = existingDir ?? mkdtempSync(join(tmpdir(), "webagent-http-ops-"));
   const publicDir = join(dir, "public");
   mkdirSync(publicDir, { recursive: true });
   writeFileSync(join(publicDir, "index.html"), "");
@@ -443,7 +443,7 @@ async function waitUntil(
   }
 }
 
-describe("contract-07: client_ops removal and fixed task create namespace", () => {
+describe("HTTP ops idempotency, legacy client_ops removal, and fixed task create namespace", () => {
   const cleanupDirs: string[] = [];
   const openHarnesses: Harness[] = [];
 
@@ -462,8 +462,8 @@ describe("contract-07: client_ops removal and fixed task create namespace", () =
     }
   });
 
-  it("fresh DB has no client_ops table; legacy orphan table and rows stay untouched and unread", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "webagent-c07-orphan-"));
+  it("fresh DB has no client_ops table; upgraded DB drops legacy client_ops at boot", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "webagent-legacy-ops-"));
     cleanupDirs.push(dir);
 
     // 1. Fresh DB has no client_ops table.
@@ -552,17 +552,16 @@ describe("contract-07: client_ops removal and fixed task create namespace", () =
         row.created_at,
       );
     }
-    const ddlBefore = (
-      dbCheck
-        .prepare(
-          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'client_ops'",
-        )
-        .get() as { sql: string }
-    ).sql;
+    const seededTable = dbCheck
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'client_ops'",
+      )
+      .get();
+    assert.ok(seededTable, "legacy client_ops table should be seeded");
     dbCheck.close();
 
-    // 3. Re-open through the real startup path and exercise all four routes
-    //    with the exact seeded op ids.
+    // 3. Re-open through the real startup path: client_ops is dropped at boot
+    //    and all four routes run through ops without reading legacy sentinels.
     const h = await track(await createHarness(dir));
     h.store.createTask(
       taskId,
@@ -623,30 +622,24 @@ describe("contract-07: client_ops removal and fixed task create namespace", () =
     assert.notEqual(ingressRes.body.id, "msg-legacy-sentinel");
     assert.equal(ingressRes.body.delivered, "pending");
 
-    // 4. Delete the seeded task to prove task deletion does not touch the
-    //    orphan client_ops table, then assert DDL and rows remain unchanged.
     await waitUntil(() => !h.tasks.activePrompts.has(taskId));
     const deleted = h.store.deleteTask(taskId);
     assert.ok(deleted, "seeded task should be deleted");
     await h.close();
     openHarnesses.pop();
     const dbAfter = new Database(dbPath, { readonly: true });
-    const ddlAfter = (
-      dbAfter
-        .prepare(
-          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'client_ops'",
-        )
-        .get() as { sql: string }
-    ).sql;
-    const rowsAfter = dbAfter
+    const tableAfter = dbAfter
       .prepare(
-        "SELECT task_id, client_op_id, result_json, created_at FROM client_ops ORDER BY created_at",
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'client_ops'",
       )
-      .all();
+      .get();
     dbAfter.close();
 
-    assert.equal(ddlAfter, ddlBefore);
-    assert.deepEqual(rowsAfter, legacyRows);
+    assert.equal(
+      tableAfter,
+      undefined,
+      "legacy client_ops table should be dropped at boot",
+    );
   });
 
   it("replays opted-in routes byte-for-byte with headers and executes side effects once (including 204, Cache-Control, Root exit, push/subscribe, beta/prompt)", async () => {

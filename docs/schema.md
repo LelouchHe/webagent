@@ -654,13 +654,13 @@ directory, remove the old database (or the whole data directory), and restart
 to create the single-Root schema. There is no in-place conversion, and startup
 never edits an old database.
 
-The 03a link schema is also a hard break. `remote_tasks.remote_host` is required
+The peer-link schema is also a hard break. `remote_tasks.remote_host` is required
 for both `parent` and `child` rows. The read-only preflight rejects the old
 nullable-parent CHECK even when the old database contains zero `remote_tasks`
 rows; it leaves the database bytes unchanged. Backup the data directory, remove
 the old database (or the whole data directory), and restart.
 
-The contract-04 `outbox` CHECK relaxation (allowing `notice` with a null
+The 5-category `outbox` CHECK relaxation (allowing `notice` with a null
 `delivery_id`) uses the same read-only preflight: a database whose `outbox`
 table still carries the 3-category CHECK is refused before any write, even when
 `outbox` is empty, leaving the file byte-identical. Migrate the database with

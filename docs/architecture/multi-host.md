@@ -825,6 +825,36 @@ reconnect it. Archiving P on the hub keeps its remote child links and any
 accepted inbound deliveries queued on those links; genuine local
 cross-boundary deliveries still fail.
 
+## Cross-host conventions
+
+Every cross-host capability added on top of this foundation follows four
+cross-cutting rules so individual features do not diverge:
+
+1. **Task id is the sole address for existing Tasks.** Operations on an existing
+   Task take `taskId` alone; callers never supply a target `host` alongside an
+   existing id, and the server routes from its local `tasks` and `remote_tasks`
+   tables. Only capabilities without a Task id yet (such as Task creation) take
+   an optional `host` parameter (omitted or `null` means local). `agent@host`
+   is strictly UI input syntax; wire payloads and storage keep `agentId` and
+   `host` separate.
+2. **Three-way error classification.** Synchronous cross-host `request`
+   operations distinguish three outcomes end to end: `success`, `rejected` (a
+   first-attempt business `4xx` from the peer, preserving its structured error
+   `code`), and `unknown` (network or timeout failures, peer `5xx`, `409
+   op_aborted`, or any `4xx` received after an earlier unknown attempt). HTTP
+   handlers on the hub surface `unknown` remote outcomes as `502 Bad Gateway`
+   with `outcome: "unknown"`, never disguised as a local `404` or `409`.
+3. **Link-scoped `host` authorization.** A `host`-scoped token reaches only the
+   explicit allowlist in `src/auth-middleware.ts`. Every per-Task read or
+   mutation under `host` scope verifies that the target Task's `remote_tasks`
+   `parent` row names the authenticated token (`remote_host === principal.name`),
+   never authorizing by bare `taskId` alone.
+4. **Fan-out and merging stay above `HostConnection`.** Each `HostConnection`
+   speaks to one configured peer. Multi-host aggregation (such as merging local
+   Tasks with remote children on list reads) and multi-child orchestration (such
+   as subtree deletion) belong in the service and routing layers, not inside a
+   host adapter.
+
 ## Differences from local
 
 A cross-host operation behaves like the same operation on one host; the
@@ -852,7 +882,7 @@ Two rules follow from it:
 | E3 | A waiting P with any remote child counts as having a possible wake source. | Approved |
 | E5 | Remote reads return egress-rewritten data; text search reads the full history. | Approved |
 | E6 | Remote create does not start ACP; without `cwd` the owner's default applies, an explicit `cwd` is resolved by the owner. | Approved |
-| E7 | An external source or target shows the title recorded on the entry or link, or an id prefix; it does not follow later renames. | Temporary, closes with the cross-host naming convention |
+| E7 | An external source or target shows the title recorded on the entry or link, or an id prefix; it does not follow later renames. | Approved |
 | E8 | Deleting P is a synchronous children-first command: if a remote child cannot be deleted, the delete fails and preserves P; it is not all-or-nothing, and remote children already confirmed deleted are not restored. | Approved |
 | E9 | R1's `task_list` has no entry for its external parent P, and reading P is refused; R1 may still `task_send` to P. | Approved |
 | E10 | Remote create requires an explicit agent and does not accept model or thinking overrides. | Approved |

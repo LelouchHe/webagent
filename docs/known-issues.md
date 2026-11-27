@@ -65,11 +65,6 @@ time. An entry without a "closing condition" is a wish, not an issue.
   Upgrading a hub before its owner would let hub `DELETE` retries hit an owner
   without `ops` and turn a duplicate into `404`. *Closing:* pre-1.0 upgrade
   order convention; multi-hop chaining beyond two hosts is out of scope.
-- **Existing databases retain an orphan `client_ops` table.** Fresh databases
-  do not create `client_ops`, and startup does not `DROP` it on older
-  databases; operators may drop it manually while stopped
-  (`DROP TABLE IF EXISTS client_ops;`). *Closing:* pre-1.0 schema reset or
-  manual cleanup.
 - **A browser retry uses whatever token is current.** The `@` send keeps one op
   id across retries, but each attempt reads the stored token; if another tab
   signs in under a different token name between attempts, the retry derives a

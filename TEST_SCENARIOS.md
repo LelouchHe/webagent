@@ -145,10 +145,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
     hop-by-hop header stripping, `URIError` `400` and uncaught `500`
     persistence, and `ops.complete` failure keeping `pending` (`409 op_aborted`)
     without ever returning success
-- `test/contract-07-idempotency.test.ts` and `test/contract-07-multihop.test.ts`
-  - fresh DB omits `client_ops`; legacy DBs retain an orphan `client_ops` table
-    and sentinel rows untouched and unread at boot across permission, cancel,
-    prompt, and ingress routes
+- `test/http-ops-idempotency.test.ts` and `test/remote-lifecycle-idempotency.test.ts`
+  - fresh DB omits `client_ops`; upgraded DBs drop any legacy `client_ops`
+    table at boot and run permission, cancel, prompt, and ingress routes cleanly
+    through `ops`
   - unified HTTP `ops` replay across opted-in routes (permission, prompt with
     raw `clientOpId` echo, cancel, ingress, `DELETE /tokens/:name` `204` empty
     body, `share` `Cache-Control: no-store`, `push/subscribe` buffered body

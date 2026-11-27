@@ -1204,7 +1204,9 @@ export class Store {
 
     // ops — bounded-TTL deduplication store for HTTP write idempotency.
     // Independent of task lifecycle (no foreign keys); expired only by TTL.
+    // Drop the retired pre-ops `client_ops` table so upgraded DBs match fresh ones.
     this.db.exec(`
+      DROP TABLE IF EXISTS client_ops;
       CREATE TABLE IF NOT EXISTS ops (
         key TEXT PRIMARY KEY,
         fingerprint TEXT NOT NULL,
