@@ -2,6 +2,7 @@
 // Replaces WebSocket message sends with typed fetch calls.
 
 import type { ConfigOption, TaskDetail, TaskSummary } from "../../src/types.ts";
+import { HTTP_STATUS } from "../../src/http-status.ts";
 import {
   isCollaborationDeliveryStatus,
   type CollaborationDeliveryStatus,
@@ -385,7 +386,10 @@ async function sendCollaborationMessageOnce(
       });
       // Classify definite 4xx refusal as soon as headers arrive: if reading
       // the error body fails or stalls, keep the refusal and fall back to status.
-      if (res.status >= 400 && res.status < 500) {
+      if (
+        res.status >= HTTP_STATUS.BAD_REQUEST &&
+        res.status < HTTP_STATUS.INTERNAL_SERVER_ERROR
+      ) {
         const text = await readTextWithinSignal(res, signal);
         let parsed: unknown = null;
         if (text) {
@@ -401,7 +405,7 @@ async function sendCollaborationMessageOnce(
           message: extractErrorMessage(parsed, res.status),
         };
       }
-      if (res.status !== 202) {
+      if (res.status !== HTTP_STATUS.ACCEPTED) {
         return { kind: "unknown", message: `HTTP ${res.status}` };
       }
       const text = await readTextWithinSignal(res, signal);
