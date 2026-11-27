@@ -211,33 +211,180 @@ describe("api module", () => {
     );
   });
 
-  it("sendCollaborationMessage posts a structured target and body", async () => {
+  it("sendCollaborationMessage posts a structured target and body and validates acceptance", async () => {
+    const acceptedBody = {
+      messageId: "message-1",
+      deliveryId: "delivery-1",
+      status: "queued",
+      clientOpId: "op-1",
+    };
     fetchResponse = {
       status: 202,
       ok: true,
-      json: () =>
-        Promise.resolve({
-          messageId: "message-1",
-          deliveryId: "delivery-1",
-          status: "queued",
-        }),
-      text: () =>
-        Promise.resolve(
-          '{"messageId":"message-1","deliveryId":"delivery-1","status":"queued"}',
-        ),
+      json: () => Promise.resolve(acceptedBody),
+      text: () => Promise.resolve(JSON.stringify(acceptedBody)),
     };
-    await api.sendCollaborationMessage(
+    const result = await api.sendCollaborationMessage(
       "source id",
       "target id",
       "please review",
       "op-1",
     );
+    assert.equal(fetchCalls.length, 1);
     assert.equal(fetchCalls[0].url, "/api/v1/tasks/source%20id/messages");
     assert.equal(fetchCalls[0].init!.method, "POST");
+    assert.equal(
+      (fetchCalls[0].init!.headers as Record<string, string>)["X-Client-Op-Id"],
+      "op-1",
+    );
     assert.deepEqual(JSON.parse(fetchCalls[0].init!.body as string), {
       targetTaskId: "target id",
       body: "please review",
     });
+    assert.deepEqual(result, { kind: "accepted", response: acceptedBody });
+  });
+
+  it("sendCollaborationMessage does not retry first-attempt 4xx rejection", async () => {
+    fetchResponse = {
+      status: 404,
+      ok: false,
+      json: () => Promise.resolve({ error: "Target task not found" }),
+      text: () => Promise.resolve('{"error":"Target task not found"}'),
+    };
+    const result = await api.sendCollaborationMessage(
+      "s1",
+      "t1",
+      "hello",
+      "op-reject",
+    );
+    assert.equal(fetchCalls.length, 1);
+    assert.deepEqual(result, {
+      kind: "rejected",
+      status: 404,
+      message: "Target task not found",
+    });
+  });
+
+  it("sendCollaborationMessage retries unknown outcomes with the same opId and treats invalid 2xx bodies as unknown", async () => {
+    let attempt = 0;
+    (globalThis as any).fetch = (
+      url: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      // eslint-disable-next-line @typescript-eslint/no-base-to-string
+      fetchCalls.push({ url: String(url), init });
+      attempt += 1;
+      if (attempt === 1) {
+        return Promise.reject(new TypeError("Failed to fetch"));
+      }
+      if (attempt === 2) {
+        // Missing echoed clientOpId -> not a valid acceptance response.
+        return Promise.resolve({
+          status: 202,
+          ok: true,
+          text: () =>
+            Promise.resolve(
+              JSON.stringify({
+                messageId: "m1",
+                deliveryId: "d1",
+                status: "queued",
+              }),
+            ),
+        });
+      }
+      return Promise.resolve({
+        status: 202,
+        ok: true,
+        text: () =>
+          Promise.resolve(
+            JSON.stringify({
+              messageId: "m1",
+              deliveryId: "d1",
+              status: "delivered",
+              clientOpId: "op-retry",
+            }),
+          ),
+      });
+    };
+
+    const result = await api.sendCollaborationMessage(
+      "s1",
+      "t1",
+      "hello",
+      "op-retry",
+    );
+    assert.equal(fetchCalls.length, 3);
+    for (const call of fetchCalls) {
+      assert.equal(
+        (call.init!.headers as Record<string, string>)["X-Client-Op-Id"],
+        "op-retry",
+      );
+    }
+    assert.deepEqual(result, {
+      kind: "accepted",
+      response: {
+        messageId: "m1",
+        deliveryId: "d1",
+        status: "delivered",
+        clientOpId: "op-retry",
+      },
+    });
+  });
+
+  it("sendCollaborationMessage returns unknown when a 4xx follows an unknown attempt or retries are exhausted", async () => {
+    let attempt = 0;
+    (globalThis as any).fetch = (
+      url: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      // eslint-disable-next-line @typescript-eslint/no-base-to-string
+      fetchCalls.push({ url: String(url), init });
+      attempt += 1;
+      if (attempt === 1) {
+        return Promise.resolve({
+          status: 503,
+          ok: false,
+          text: () => Promise.resolve('{"error":"unavailable"}'),
+        });
+      }
+      return Promise.resolve({
+        status: 409,
+        ok: false,
+        text: () => Promise.resolve('{"error":"conflict"}'),
+      });
+    };
+
+    const result = await api.sendCollaborationMessage(
+      "s1",
+      "t1",
+      "hello",
+      "op-ambig",
+    );
+    assert.equal(fetchCalls.length, 2);
+    assert.equal(result.kind, "unknown");
+
+    // Exhausting retries on persistent 5xx also returns unknown.
+    fetchCalls = [];
+    (globalThis as any).fetch = (
+      url: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      // eslint-disable-next-line @typescript-eslint/no-base-to-string
+      fetchCalls.push({ url: String(url), init });
+      return Promise.resolve({
+        status: 502,
+        ok: false,
+        text: () => Promise.resolve(""),
+      });
+    };
+    const exhausted = await api.sendCollaborationMessage(
+      "s1",
+      "t1",
+      "hello",
+      "op-exhaust",
+    );
+    assert.equal(fetchCalls.length, 3);
+    assert.equal(exhausted.kind, "unknown");
   });
 
   it("listTasks returns the agent-scoped task array", async () => {

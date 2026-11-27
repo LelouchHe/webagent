@@ -2,6 +2,14 @@
 // Replaces WebSocket message sends with typed fetch calls.
 
 import type { ConfigOption, TaskDetail, TaskSummary } from "../../src/types.ts";
+import {
+  isCollaborationDeliveryStatus,
+  type CollaborationDeliveryStatus,
+} from "../../src/shared/delivery-status.ts";
+import {
+  sendSyncRequest,
+  type SyncTimer,
+} from "../../src/shared/sync/request.ts";
 
 export class ApiError extends Error {
   name = "ApiError";
@@ -283,21 +291,140 @@ export async function listArchivedTaskTops(): Promise<TaskSummary[]> {
   return tasks.filter((task) => task.parent_id === null && !task.isRoot);
 }
 
-export function sendCollaborationMessage(
+export interface CollaborationMessageAccepted {
+  messageId: string;
+  deliveryId: string;
+  status: CollaborationDeliveryStatus;
+  clientOpId?: string;
+}
+
+export type CollaborationMessageSendResult =
+  | { kind: "accepted"; response: CollaborationMessageAccepted }
+  | { kind: "rejected"; status: number; message: string }
+  | { kind: "unknown"; message: string };
+
+const COLLABORATION_MESSAGE_RETRIES = 2;
+
+const syncTimer: SyncTimer = {
+  setTimeout(callback, milliseconds) {
+    const handle = setTimeout(callback, milliseconds);
+    (handle as { unref?: () => void }).unref?.();
+    return handle;
+  },
+  clearTimeout(handle) {
+    clearTimeout(handle as ReturnType<typeof setTimeout>);
+  },
+};
+
+function extractErrorMessage(body: unknown, status: number): string {
+  if (body && typeof body === "object" && !Array.isArray(body)) {
+    const err = (body as Record<string, unknown>).error;
+    if (typeof err === "string" && err.length > 0) return err;
+    if (err !== undefined && err !== null) return JSON.stringify(err);
+  }
+  return `HTTP ${status}`;
+}
+
+function parseCollaborationAccepted(
+  raw: unknown,
+  expectedOpId: string | null,
+): CollaborationMessageAccepted | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const value = raw as Record<string, unknown>;
+  if (
+    typeof value.messageId !== "string" ||
+    value.messageId.length === 0 ||
+    typeof value.deliveryId !== "string" ||
+    value.deliveryId.length === 0 ||
+    !isCollaborationDeliveryStatus(value.status)
+  ) {
+    return null;
+  }
+  if (expectedOpId !== null) {
+    if (value.clientOpId !== expectedOpId) return null;
+  } else if (value.clientOpId !== undefined) {
+    return null;
+  }
+  return {
+    messageId: value.messageId,
+    deliveryId: value.deliveryId,
+    status: value.status,
+    ...(typeof value.clientOpId === "string"
+      ? { clientOpId: value.clientOpId }
+      : {}),
+  };
+}
+
+export async function sendCollaborationMessage(
   sourceTaskId: string,
   targetTaskId: string,
   body: string,
-  clientOpId?: string,
-): Promise<{
-  messageId: string;
-  deliveryId: string;
-  status: "queued" | "delivered";
-}> {
-  return post(
-    `/api/v1/tasks/${encodeURIComponent(sourceTaskId)}/messages`,
-    { targetTaskId, body },
-    clientOpId,
-  );
+  clientOpId: string | null,
+  options?: { retries?: number; timeoutMs?: number },
+): Promise<CollaborationMessageSendResult> {
+  const url = `/api/v1/tasks/${encodeURIComponent(sourceTaskId)}/messages`;
+  const outcome = await sendSyncRequest<
+    { targetTaskId: string; body: string },
+    unknown
+  >({
+    opId: clientOpId,
+    request: { targetTaskId, body },
+    timeoutMs: options?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    retries: options?.retries ?? COLLABORATION_MESSAGE_RETRIES,
+    timer: syncTimer,
+    transport: {
+      async send(opId, payload, signal) {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (opId !== null) headers["X-Client-Op-Id"] = opId;
+        const res = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+          signal,
+        });
+        const text = await res.text();
+        let parsed: unknown = null;
+        if (text) {
+          try {
+            parsed = JSON.parse(text) as unknown;
+          } catch {
+            if (Math.floor(res.status / 100) === 2) {
+              throw new Error("Invalid collaboration acceptance response");
+            }
+          }
+        }
+        if (Math.floor(res.status / 100) === 2) {
+          const accepted = parseCollaborationAccepted(parsed, opId);
+          if (!accepted) {
+            throw new Error("Invalid collaboration acceptance response");
+          }
+          return { status: res.status, body: accepted };
+        }
+        return { status: res.status, body: parsed };
+      },
+    },
+  });
+
+  if (outcome.kind === "success") {
+    return {
+      kind: "accepted",
+      response: outcome.body as CollaborationMessageAccepted,
+    };
+  }
+  if (outcome.kind === "rejected") {
+    return {
+      kind: "rejected",
+      status: outcome.status,
+      message: extractErrorMessage(outcome.body, outcome.status),
+    };
+  }
+  const message =
+    outcome.error instanceof Error
+      ? outcome.error.message
+      : String(outcome.error);
+  return { kind: "unknown", message };
 }
 
 /** A remote child in a list read; it follows its local parent. */

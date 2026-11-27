@@ -961,39 +961,31 @@ async function executeMessageTask(
 
   const targetTask = matches[0];
   const body = remainder.trim();
-  if (body && !scopeIds.has(targetTask.id)) {
+  if (!body) {
+    // An empty message is navigation, not a ping: selecting a target
+    // without anything to say just jumps to it (the server rejects empty
+    // bodies, so this is the only sensible empty-body behavior).
+    await switchToTask(targetTask.id);
+    return;
+  }
+  if (!scopeIds.has(targetTask.id)) {
     addSystem(
       `err: ${taskNodeName(targetTask)} is navigation — enter this Task before sending a message`,
     );
     return;
   }
-  await executeMessageToTask(targetTask.id, remainder);
-}
-
-async function executeMessageToTask(
-  targetTaskId: string,
-  remainder: string,
-): Promise<void> {
-  const sourceTaskId = state.taskId;
-  if (!sourceTaskId) {
-    addSystem("err: No active task");
-    return;
-  }
-  const body = remainder.trim();
-  if (!body) {
-    // An empty message is navigation, not a ping: selecting a target
-    // without anything to say just jumps to it (the server rejects empty
-    // bodies, so this is the only sensible empty-body behavior).
-    await switchToTask(targetTaskId);
-    return;
-  }
-  try {
-    // No local acknowledgement: the send is recorded server-side and broadcast
-    // as a collaboration row, and a local copy would just vanish on reload.
-    await api.sendCollaborationMessage(sourceTaskId, targetTaskId, body);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    addSystem(`err: message failed — ${msg}`);
+  // No local acknowledgement: the send is recorded server-side and broadcast
+  // as a collaboration row, and a local copy would just vanish on reload.
+  const res = await api.sendCollaborationMessage(
+    currentTaskId,
+    targetTask.id,
+    body,
+    api.newOpId(),
+  );
+  if (res.kind !== "accepted") {
+    const prefix =
+      res.kind === "rejected" ? "message failed" : "message outcome unknown";
+    addSystem(`err: ${prefix} — ${res.message}`);
   }
 }
 

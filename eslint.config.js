@@ -488,7 +488,7 @@ export default tseslint.config(
     "src/share/routes.ts": 975,
     "public/js/markdown-stream.ts": 965,
     "public/js/state.ts": 884,
-    "public/js/task-command.ts": 854,
+    "public/js/task-command.ts": 847,
     "test/events.test.ts": 7026,
     "test/task-manager.test.ts": 2741,
     "test/link-sync.test.ts": 2210,
