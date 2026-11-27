@@ -18,13 +18,12 @@ const MS = "2026-09-19 15:51:07.123";
 const NO_MS_MILLIS = Date.parse("2026-09-19T15:51:07Z");
 const MS_MILLIS = Date.parse("2026-09-19T15:51:07.123Z");
 
-/** The eight columns that were TEXT in old releases and need data conversion. */
+/** The seven columns that were TEXT in old releases and need data conversion. */
 const TEXT_TIMESTAMP_COLUMNS: Readonly<Record<string, readonly string[]>> = {
   tasks: ["created_at", "last_active_at"],
   agent_sessions: ["created_at"],
   events: ["created_at"],
   push_subscriptions: ["created_at"],
-  client_ops: ["created_at"],
   attachments: ["created_at"],
   recent_paths: ["last_used_at"],
 };
@@ -43,7 +42,6 @@ const IDENTITY: Readonly<Record<string, readonly string[]>> = {
   agent_sessions: ["agent_key", "agent_session_id"],
   events: ["task_id", "seq"],
   push_subscriptions: ["endpoint"],
-  client_ops: ["task_id", "client_op_id"],
   attachments: ["id"],
   recent_paths: ["cwd"],
 };
@@ -295,9 +293,6 @@ function seedLegacyRows(db: Database.Database): void {
     "INSERT INTO push_subscriptions (endpoint, auth, p256dh, created_at) VALUES (?, ?, ?, ?)",
   ).run("https://push.example/e", "auth", "p256dh", NO_MS);
   db.prepare(
-    "INSERT INTO client_ops (task_id, client_op_id, result_json, created_at) VALUES (?, ?, ?, ?)",
-  ).run("t1", "op", "{}", MS);
-  db.prepare(
     `INSERT INTO attachments
        (id, task_id, kind, name, mime, size, realpath, upload_seq, width, height, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -335,9 +330,6 @@ function seedManyLegacyRows(db: Database.Database): void {
     db.prepare(
       "INSERT INTO push_subscriptions (endpoint, auth, p256dh, created_at) VALUES (?, ?, ?, ?)",
     ).run(`https://push.example/${i}`, "auth", "p256dh", NO_MS);
-    db.prepare(
-      "INSERT INTO client_ops (task_id, client_op_id, result_json, created_at) VALUES (?, ?, ?, ?)",
-    ).run(`t${i}`, `op${i}`, "{}", MS);
     db.prepare(
       "INSERT INTO recent_paths (cwd, last_used_at) VALUES (?, ?)",
     ).run(`/p${i}`, NO_MS);
@@ -457,9 +449,6 @@ describe("timestamp millis migration", () => {
     const db = new Database(dbPath(dir));
     assertIntegerTimestamps(db);
     assertIntegrity(db);
-    assert.deepEqual(db.prepare("SELECT created_at FROM client_ops").all(), [
-      { created_at: MS_MILLIS },
-    ]);
     db.close();
   });
 
@@ -478,7 +467,7 @@ describe("timestamp millis migration", () => {
     }
     assert.equal(preCounts.events, 6);
     assert.equal(preCounts.tasks, 4);
-    assert.equal(preSamples.length, 29);
+    assert.equal(preSamples.length, 26);
     assert.ok(preSamples.every((sample) => typeof sample.value === "string"));
 
     const store = new Store(dir);
@@ -791,10 +780,10 @@ describe("timestamp millis migration", () => {
   it("rebuilds an INTEGER column whose default is still the legacy expression", () => {
     const dir = tempDir();
     createLegacyDatabase(dir, "strftime", (table, sql) =>
-      table === "client_ops"
+      table === "push_subscriptions"
         ? sql.replace(
-            "created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))",
-            "created_at   INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)",
+            "created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))",
+            "created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)",
           )
         : sql,
     );
@@ -802,8 +791,10 @@ describe("timestamp millis migration", () => {
     seedLegacyRows(legacy);
     // An already-millisecond value must be copied through, never run through
     // julianday() (which would corrupt it).
-    legacy.prepare("UPDATE client_ops SET created_at = ?").run(1789833067123);
-    const beforeDdl = schemaSqlByName(legacy).get("client_ops")!;
+    legacy
+      .prepare("UPDATE push_subscriptions SET created_at = ?")
+      .run(1789833067123);
+    const beforeDdl = schemaSqlByName(legacy).get("push_subscriptions")!;
     assert.match(
       beforeDdl,
       /CAST\(strftime\('%s','now'\) AS INTEGER\) \* 1000/,
@@ -815,12 +806,13 @@ describe("timestamp millis migration", () => {
 
     const db = new Database(dbPath(dir));
     assert.match(
-      schemaSqlByName(db).get("client_ops")!,
-      /created_at {3}INTEGER NOT NULL DEFAULT 0/,
+      schemaSqlByName(db).get("push_subscriptions")!,
+      /created_at INTEGER NOT NULL DEFAULT 0/,
     );
-    assert.deepEqual(db.prepare("SELECT created_at FROM client_ops").all(), [
-      { created_at: 1789833067123 },
-    ]);
+    assert.deepEqual(
+      db.prepare("SELECT created_at FROM push_subscriptions").all(),
+      [{ created_at: 1789833067123 }],
+    );
     assertIntegerTimestamps(db);
     assertIntegrity(db);
     db.close();
@@ -966,7 +958,6 @@ describe("timestamp millis migration", () => {
     const store = new Store(dir);
     store.createTask("t1", "/x", "auto", AGENT);
     store.saveEvent("t1", "user_message", {}, { from_ref: "user" });
-    store.saveClientOp("t1", "op", {});
     store.touchRecentPath("/x");
     store.saveSubscription("https://push.example/e", "auth", "p256dh");
     store.insertSharePreview({ token: "tok", taskId: "t1", snapshotSeq: 1 });

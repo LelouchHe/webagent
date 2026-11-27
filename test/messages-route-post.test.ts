@@ -218,7 +218,7 @@ describe("POST /api/v1/messages — ingress", () => {
     assert.equal(msgEvent.from_ref, "cron:nightly");
   });
 
-  it("idempotent via X-Client-Op-Id: second call returns identical id without duplicating the row", async () => {
+  it("ignores X-Client-Op-Id: second call creates a distinct message row", async () => {
     const opId = "op-abc";
     const r1 = await post(port, "/api/v1/messages", baseBody(), {
       "X-Client-Op-Id": opId,
@@ -230,9 +230,10 @@ describe("POST /api/v1/messages — ingress", () => {
       "X-Client-Op-Id": opId,
     });
     assert.equal(r2.status, 200);
-    assert.equal(JSON.parse(r2.body).id, id1, "replay returns same id");
+    const id2 = JSON.parse(r2.body).id;
+    assert.notEqual(id2, id1, "resend produces a distinct message id");
 
-    assert.equal(store.listUnprocessed().length, 1, "no duplicate row created");
+    assert.equal(store.listUnprocessed().length, 2, "two rows created");
   });
 
   it("dedup_key supersede: second unbound with same (to, dedup_key) replaces older row", async () => {

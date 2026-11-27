@@ -83,8 +83,6 @@ describe("REST collaboration message constructive idempotency", () => {
   let broadcastCalls: Array<Record<string, unknown>>;
   let lastActiveCalls: string[];
   let drainCalls: string[];
-  let clientOpReads: number;
-  let clientOpWrites: number;
 
   function buildTaskManager(targetStore: Store): TaskManager {
     const agents = new AgentRegistry({
@@ -116,7 +114,7 @@ describe("REST collaboration message constructive idempotency", () => {
     });
   }
 
-  function countRows(table: "messages" | "deliveries" | "client_ops"): number {
+  function countRows(table: "messages" | "deliveries"): number {
     const db = (store as unknown as { db: import("better-sqlite3").Database })
       .db;
     const row = db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as {
@@ -134,8 +132,6 @@ describe("REST collaboration message constructive idempotency", () => {
     broadcastCalls = [];
     lastActiveCalls = [];
     drainCalls = [];
-    clientOpReads = 0;
-    clientOpWrites = 0;
 
     store = new Store(dir);
     store.ensureRootTask(dir);
@@ -148,16 +144,6 @@ describe("REST collaboration message constructive idempotency", () => {
     store.updateTaskLastActive = (id: string) => {
       lastActiveCalls.push(id);
       origUpdateLastActive(id);
-    };
-    const origGetClientOp = store.getClientOp.bind(store);
-    store.getClientOp = (taskId: string, opId: string) => {
-      clientOpReads += 1;
-      return origGetClientOp(taskId, opId);
-    };
-    const origSaveClientOp = store.saveClientOp.bind(store);
-    store.saveClientOp = (taskId: string, opId: string, result: unknown) => {
-      clientOpWrites += 1;
-      origSaveClientOp(taskId, opId, result);
     };
 
     tasks = buildTaskManager(store);
@@ -540,7 +526,7 @@ describe("REST collaboration message constructive idempotency", () => {
     );
   });
 
-  it("emits zero replay side effects (SSE, lastActive, drain) and never reads or writes client_ops", async () => {
+  it("emits zero replay side effects (SSE, lastActive, drain)", async () => {
     const opId = randomUUID();
     const first = await postMessage(port, "task-a", {
       token: aliceToken,
@@ -551,9 +537,6 @@ describe("REST collaboration message constructive idempotency", () => {
     assert.equal(broadcastCalls.length, 1);
     assert.equal(lastActiveCalls.length, 1);
     assert.equal(drainCalls.length, 1);
-    assert.equal(clientOpReads, 0);
-    assert.equal(clientOpWrites, 0);
-    assert.equal(countRows("client_ops"), 0);
 
     const replay = await postMessage(port, "task-a", {
       token: aliceToken,
@@ -573,9 +556,6 @@ describe("REST collaboration message constructive idempotency", () => {
       1,
       "replay must not call drainCollaborationDeliveries",
     );
-    assert.equal(clientOpReads, 0, "route must not read client_ops");
-    assert.equal(clientOpWrites, 0, "route must not write client_ops");
-    assert.equal(countRows("client_ops"), 0);
   });
 
   it("creates two distinct facts without echoing opId when header is omitted, and rejects empty or >128 opId with 400", async () => {

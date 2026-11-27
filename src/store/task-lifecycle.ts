@@ -451,7 +451,6 @@ export class TaskLifecycleStore {
       externalParent !== undefined &&
       options?.hasOpenExternalAccount?.(id, externalParent.remoteTaskId) ===
         true;
-    this.store.db.prepare("DELETE FROM client_ops WHERE task_id = ?").run(id);
 
     const mode: "hard" | "soft" = activeShares > 0 ? "soft" : "hard";
     let edgeFailed = false;

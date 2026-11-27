@@ -332,7 +332,7 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
     }
   });
 
-  it("enforces owner host-scope auth, strict body parsing, no client_ops, and hub/owner cancel records", async () => {
+  it("enforces owner host-scope auth, strict body parsing, and hub/owner cancel records", async () => {
     const ownerDir = mkdtempSync(join(tmpdir(), "webagent-cancel-owner-"));
     const hubDir = mkdtempSync(join(tmpdir(), "webagent-cancel-hub-"));
     const owner = await createTestHost(ownerDir);
@@ -464,13 +464,7 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
         }),
       );
 
-      // Seed a cached client_op on owner for r1 to verify host path ignores client_ops
-      owner.store.saveClientOp("r1", "cached-op-1", {
-        status: 200,
-        body: { ok: true, status: "cancelled" },
-      });
-
-      // 1. Wrong host token with cached op id -> 404 (not replayed!)
+      // 1. Wrong host token -> 404
       const wrongRes = await fetch(
         `${ownerServer.origin}/api/v1/tasks/r1/cancel`,
         {
@@ -478,14 +472,14 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
           headers: {
             Authorization: `Bearer ${owner.wrongHostToken}`,
             "Content-Type": "application/json",
-            "X-Client-Op-Id": "cached-op-1",
+            "X-Client-Op-Id": "op-1",
           },
           body: JSON.stringify({ kind: "user" }),
         },
       );
       assert.equal(wrongRes.status, 404);
 
-      // 2. Valid host token with cached op id -> executes live (status "idle"), NOT cached "cancelled"
+      // 2. Valid host token -> executes live (status "idle")
       const liveHostRes = await fetch(
         `${ownerServer.origin}/api/v1/tasks/r1/cancel`,
         {

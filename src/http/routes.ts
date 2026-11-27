@@ -335,11 +335,9 @@ function readBodyRaw(req: IncomingMessage): Promise<string> {
 }
 
 /**
- * client-server-split M2: idempotency helpers for mutating REST.
- * Frontend generates a UUID per user-initiated action and sends it as
- * `X-Client-Op-Id`. Replays (after SSE/network reconnect) return the
- * cached response instead of re-executing side effects. Missing header →
- * non-idempotent path (back-compat for curl / older clients).
+ * Leniently parse the `X-Client-Op-Id` request header (1..128 chars).
+ * Used for deterministic op identity on create / collaboration messages and
+ * for browser echo correlation on prompt / lifecycle SSE events.
  */
 function getClientOpId(req: IncomingMessage): string | null {
   const v = req.headers["x-client-op-id"];
@@ -369,41 +367,6 @@ function logPromptRejectBeforeSave(fields: {
     ...(fields.busyKind ? { busyKind: fields.busyKind } : {}),
     ...(fields.error ? { error: fields.error } : {}),
   });
-}
-
-function tryReplayClientOp(
-  req: IncomingMessage,
-  res: ServerResponse,
-  store: Store,
-  taskId: string,
-): { opId: string | null; replayed: boolean } {
-  const opId = getClientOpId(req);
-  if (!opId) return { opId: null, replayed: false };
-  const cached = store.getClientOp(taskId, opId) as {
-    status: number;
-    body: unknown;
-  } | null;
-  if (
-    cached &&
-    typeof cached === "object" &&
-    "status" in cached &&
-    "body" in cached
-  ) {
-    json(res, cached.status, cached.body, req);
-    return { opId, replayed: true };
-  }
-  return { opId, replayed: false };
-}
-
-function saveClientOpResult(
-  store: Store,
-  opId: string | null,
-  taskId: string,
-  status: number,
-  body: unknown,
-): void {
-  if (!opId) return;
-  store.saveClientOp(taskId, opId, { status, body });
 }
 
 /** Send a JSON response, gzip-compressed when the client supports it. */
@@ -1371,8 +1334,6 @@ export function createRequestHandler(
       if (permActionMatch && req.method === "POST") {
         const taskId = decodeURIComponent(permActionMatch[1]);
         const requestId = decodeURIComponent(permActionMatch[2]);
-        const { opId, replayed } = tryReplayClientOp(req, res, store, taskId);
-        if (replayed) return;
         const perm = tasks?.pendingPermissions.get(requestId);
         if (!perm) {
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Permission not found" });
@@ -1461,9 +1422,7 @@ export function createRequestHandler(
           );
         }
 
-        const okBody = { ok: true };
-        saveClientOpResult(store, opId, taskId, HTTP_STATUS.OK, okBody);
-        json(res, HTTP_STATUS.OK, okBody);
+        json(res, HTTP_STATUS.OK, { ok: true });
         return;
       }
 
@@ -1478,8 +1437,6 @@ export function createRequestHandler(
           principal: principalByRequest.get(req),
           readBody,
           json,
-          tryReplayClientOp,
-          saveClientOpResult,
         });
         return;
       }
@@ -1599,14 +1556,14 @@ export function createRequestHandler(
       );
       if (promptMatch && req.method === "POST") {
         const taskId = decodeURIComponent(promptMatch[1]);
-        const requestOpId = getClientOpId(req);
+        const opId = getClientOpId(req);
         const task = store.getTask(taskId);
         if (!task) {
           logPromptRejectBeforeSave({
             taskId,
             status: HTTP_STATUS.NOT_FOUND,
             reason: "task_not_found",
-            opId: requestOpId,
+            opId,
           });
           json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
           return;
@@ -1616,7 +1573,7 @@ export function createRequestHandler(
             taskId,
             status: HTTP_STATUS.SERVICE_UNAVAILABLE,
             reason: "task_manager_unavailable",
-            opId: requestOpId,
+            opId,
           });
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
             error: "Task manager not available",
@@ -1635,7 +1592,7 @@ export function createRequestHandler(
             taskId,
             status: HTTP_STATUS.SERVICE_UNAVAILABLE,
             reason: unavailable ? "agent_unavailable" : "execution_unresolved",
-            opId: requestOpId,
+            opId,
             error: errorMessage(err),
           });
           json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
@@ -1646,9 +1603,6 @@ export function createRequestHandler(
           return;
         }
         const bridge = execution.bridge;
-
-        const { opId, replayed } = tryReplayClientOp(req, res, store, taskId);
-        if (replayed) return;
 
         // A restore that a read started is still in flight at this point.
         // Waiting for it below is what a prompt needs; the restore alone must
@@ -1966,15 +1920,7 @@ export function createRequestHandler(
             tasks.endTurn(taskId, { promptId });
           });
 
-        const acceptedBody = { status: "accepted" };
-        saveClientOpResult(
-          store,
-          opId,
-          taskId,
-          HTTP_STATUS.ACCEPTED,
-          acceptedBody,
-        );
-        json(res, HTTP_STATUS.ACCEPTED, acceptedBody);
+        json(res, HTTP_STATUS.ACCEPTED, { status: "accepted" });
         return;
       }
 
@@ -3534,17 +3480,6 @@ export function createRequestHandler(
 
       // POST /api/v1/messages — create ingress message
       if (url === "/api/v1/messages" && req.method === "POST") {
-        // client-server-split M2: idempotency for the ingress message
-        // creator. /messages has no real task id, so we scope the
-        // cache under the synthetic key "__ingress__".
-        const { opId, replayed } = tryReplayClientOp(
-          req,
-          res,
-          store,
-          "__ingress__",
-        );
-        if (replayed) return;
-
         let raw: string;
         try {
           raw = await readBody(req);
@@ -3609,15 +3544,7 @@ export function createRequestHandler(
             msg_id: id,
             sess_id: targetSid.slice(0, 8),
           });
-          const boundBody = { id, delivered: "task" };
-          saveClientOpResult(
-            store,
-            opId,
-            "__ingress__",
-            HTTP_STATUS.OK,
-            boundBody,
-          );
-          json(res, HTTP_STATUS.OK, boundBody);
+          json(res, HTTP_STATUS.OK, { id, delivered: "task" });
           return;
         }
 
@@ -3664,15 +3591,7 @@ export function createRequestHandler(
           msg_id: id,
           from_ref: input.from_ref,
         });
-        const unboundBody = { id, delivered: "pending" };
-        saveClientOpResult(
-          store,
-          opId,
-          "__ingress__",
-          HTTP_STATUS.OK,
-          unboundBody,
-        );
-        json(res, HTTP_STATUS.OK, unboundBody);
+        json(res, HTTP_STATUS.OK, { id, delivered: "pending" });
         return;
       }
 
