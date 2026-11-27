@@ -147,7 +147,7 @@ before any of this on every launch path, and
 | --- | --- |
 | `src/task-manager.ts` | Live task runtime: creation (one entry point for REST create, quick prompt, inbox consume, and `task_create`), prompt submission slots, chunk buffers, collaboration delivery drain, bash processes, compaction and clear rotation, deletion and Root replacement. Broadcasts through callbacks injected by `server.ts`. |
 | `src/store.ts` | SQLite persistence: tasks, bindings, raw ACP events, messages and deliveries, attachments, shares, push subscriptions, client op results, recent paths. See [Database Schema](../schema.md). |
-| `src/store/` | Store collaborators for multi-host persistence: `remote-relations.ts` (`remote_tasks`), `link-outbox.ts` (`outbox`, `outbox_cursors`, push cursor), `link-apply.ts` (inbound apply, receipts, notices, rejection and timeout failures), and `internal.ts` (the `StoreInternal` handle they share). See [Multi-host](./multi-host.md). |
+| `src/store/` | Store collaborators: `collaboration-messages.ts` (REST collaboration message create-or-replay by derived Message id), and for multi-host persistence `remote-relations.ts` (`remote_tasks`), `link-outbox.ts` (`outbox`, `outbox_cursors`, push cursor), `link-apply.ts` (inbound apply, receipts, notices, rejection and timeout failures), and `internal.ts` (the `StoreInternal` handle they share). See [Multi-host](./multi-host.md). |
 | `src/execution-authority.ts` | Which execution may still write to a task: the binding, the per-task generation (not persisted), and the lease validated at the write boundaries. |
 | `src/task-state.ts` | Per-task runtime state (busy, streaming, pending permissions, plan): a snapshot on connect plus incremental `state_patch` events. |
 | `src/obligation-controller.ts`, `src/task-collaboration.ts`, `src/collaboration-message.ts` | Directed-dispatch accounts, reminders, and notices; the arming policy; runtime message titles. See [Task Obligations](../task-obligations.md). |
@@ -179,6 +179,23 @@ transaction:
         └──────────────────────────┼──────────────────────────┘
                                    │
  Store.transitionDeliveryStatusInTransaction ── receipt enqueue (same tx)
+```
+
+The REST collaboration message route has its own handler and collaborator.
+Store keeps a thin delegate; the route never imports `src/store/`:
+
+```text
+ http/routes.ts ── dispatch ──► http/collaboration-messages-route.ts
+                                 op-id header, body shape, caller scope,
+                                 messageId = opIdentity(fixed ns, token, opId)
+                                        │ store.createOrReplayCollaborationMessage
+                                        ▼
+ Store (delegate) ──────────► CollaborationMessagesStore (store/collaboration-messages.ts)
+                               one tx: source → replay / conflict → target → insert
+                               messages, message_projections, deliveries, source event
+                                        │ created | replayed | conflict | not found
+                                        ▼
+                               route: 202 (+ activity, SSE, drain only when created)
 ```
 
 Behavior that spans these modules:
@@ -259,9 +276,12 @@ Activating push on a device and troubleshooting are in
 ## Cross-cutting mechanisms
 
 - **Idempotency** — the browser sends `X-Client-Op-Id` with user actions.
-  Five REST routes replay a cached result from `client_ops`, keyed by
-  `(task_id, client_op_id)`: permission responses, cancel, collaboration
-  messages, prompt, and message ingress. Task create and delete only echo the op
+  Task create and REST collaboration messages derive the id of the fact they
+  write from the op id and replay from that fact
+  ([Multi-host: Idempotent operations](./multi-host.md#idempotent-operations)).
+  Four REST routes still replay a cached result from `client_ops`, keyed by
+  `(task_id, client_op_id)`: permission responses, cancel, prompt, and message
+  ingress. Task create and delete only echo the op
   id into their broadcasts for correlation. MCP tools carry no op id.
 - **Errors** — REST answers with an HTTP status and a JSON `{ error }` body;
   MCP answers with tool-error text written for the calling agent

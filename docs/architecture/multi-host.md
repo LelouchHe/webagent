@@ -93,8 +93,42 @@ retry into a conflict. A different parent or agent under the same op id is
 `409 create_op_conflict`; a soft-deleted Task is `404 target_deleted`. A Task
 hard-deleted inside the retry window is recreated by a replay (see Known
 issues). Link pushes follow the same rule: the inbound delivery id is the
-outbox entry id. The remaining mutating REST routes still use the `client_ops`
-result cache until plan step 5.
+outbox entry id.
+
+A REST collaboration message (`POST /api/v1/tasks/:sourceTaskId/messages`)
+derives its Message id the same way, but from a fixed namespace instead of the
+Root id, because Root exit rotates the Root id while archived Tasks can still
+message each other:
+
+```text
+ messageId = opIdentity(COLLABORATION_MESSAGE_NAMESPACE, token:<token name>, opId)
+```
+
+```text
+ browser (@ send)                                 server
+  |-- POST /tasks/S/messages  Op-Id: K ----------->|  auth, op id + body shape (400)
+  |                                                |  one tx: source S live (404), no row
+  |                                                |    target live (404), not self (400)
+  |                                                |    insert Message + Delivery (queued)
+  |      x  response lost (unknown)                |  activity, source SSE, drain
+  |-- POST /tasks/S/messages  Op-Id: K (retry) --->|  one tx: source live, row exists, same
+  |                                                |    source/target/body
+  |<--- 202 same messageId/deliveryId, current ----|  nothing written; no activity, SSE, drain
+  |     delivery status: queued, delivered, failed |
+  | outcome: accepted                              |
+```
+
+The stored source, target, and verbatim body are compared before any target
+check, so a known op id with different content is `409` even if the target is
+now gone. A present but empty or over-long op id is `400`; no header keeps the
+non-idempotent path. The browser classifies each attempt by HTTP status as soon
+as headers arrive: only `202` with the expected body is acceptance, a first
+`4xx` is a definite rejection, and once an attempt was unknown, a later `4xx`
+leaves the whole send unknown, because it cannot prove the first attempt did
+not commit. Replay recovers acceptance only; effects missed by a crash after
+commit are recovered by the normal drain. The remaining mutating REST routes
+(ingress, prompt, permission response, local cancel) still use the
+`client_ops` result cache until plan step 5.
 
 ## Link transport
 
