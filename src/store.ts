@@ -1967,8 +1967,8 @@ export class Store {
     return this.taskLifecycle.archiveTask(id);
   }
 
-  unarchiveTask(id: string) {
-    return this.taskLifecycle.unarchiveTask(id);
+  unarchiveTask(id: string, options?: TaskDeleteStoreOptions) {
+    return this.taskLifecycle.unarchiveTask(id, options);
   }
 
   /**

@@ -2980,7 +2980,7 @@ export function createRequestHandler(
         const taskId = decodeURIComponent(unarchiveMatch[1]);
         let result: ReturnType<typeof store.unarchiveTask>;
         try {
-          result = store.unarchiveTask(taskId);
+          result = (tasks ?? store).unarchiveTask(taskId);
         } catch (err) {
           if (/UNIQUE constraint failed/i.test(String(err))) {
             json(res, HTTP_STATUS.CONFLICT, {

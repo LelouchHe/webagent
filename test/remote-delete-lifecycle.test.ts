@@ -749,3 +749,217 @@ describe("remote lifecycle: synchronous remote delete orchestrator and host DELE
     });
   });
 });
+
+describe("remote lifecycle: owner unarchive and hub archive boundary", () => {
+  it("unarchive attaches to owner Root, deletes external parent, fails only edge queued inbound, emits child_left, and is one-way [behavior proof]", async () => {
+    await withTempStoreAsync(async (store, dir) => {
+      const tasks = makeTaskManager(store, dir);
+      try {
+        // Case 1: open account, no queued inbound -> accountOpen=true, silent close, one-way.
+        const c1 = seedExternalChild(store, dir, { title: "Unarchive One" });
+        (tasks as any).obligations.arm(c1.parentId, c1.childId, "external");
+        const res1 = tasks.unarchiveTask(c1.childId);
+        assert.equal(res1.status, "unarchived");
+        assert.equal(res1.parentId, store.rootTaskId);
+        assert.equal(store.getExternalParentLink(c1.childId), undefined);
+        assert.equal(tasks.hasOpenObligation(c1.parentId, c1.childId), false);
+        const rel1 = store
+          .listOutbox("parent", c1.remoteHost, 0)
+          .find((r) => r.category === "relation");
+        assert.ok(rel1);
+        assert.deepEqual(JSON.parse(rel1.data_json), {
+          kind: "child_left",
+          parentTaskId: c1.parentId,
+          childTaskId: c1.childId,
+          accountOpen: true,
+        });
+        // Re-archive is one-way: external parent stays gone.
+        const reArchived = tasks.archiveTask(c1.childId);
+        assert.equal(reArchived?.status, "archived");
+        assert.equal(store.getExternalParentLink(c1.childId), undefined);
+
+        // Case 2: queued inbound on this edge -> fails only edge queued inbound with receipt,
+        // sets accountOpen=false, and leaves unrelated deliveries untouched.
+        const c2 = seedExternalChild(store, dir, { title: "Unarchive Two" });
+        (tasks as any).obligations.arm(c2.parentId, c2.childId, "external");
+        const edgeEntry = enqueueInboundFromParent(store, c2);
+        const otherLocal = createLocalTask(store, dir, "Local Sender");
+        const unrelated = store.enqueueTargetCollaboration({
+          sourceTaskId: otherLocal,
+          targetTaskId: c2.childId,
+          body: "local note",
+        });
+        const res2 = tasks.unarchiveTask(c2.childId);
+        assert.equal(res2.status, "unarchived");
+        assert.equal(
+          store.getCollaborationDelivery(edgeEntry)?.status,
+          "failed",
+        );
+        assert.equal(
+          store.getCollaborationDelivery(edgeEntry)?.failure_reason,
+          "link_mismatch",
+        );
+        assert.equal(
+          store.getCollaborationDelivery(unrelated.deliveryId)?.status,
+          "queued",
+        );
+        const rows2 = store.listOutbox("parent", c2.remoteHost, rel1.pos);
+        assert.ok(rows2.some((r) => r.category === "receipt"));
+        const rel2 = rows2.find((r) => r.category === "relation");
+        assert.ok(rel2);
+        assert.deepEqual(JSON.parse(rel2.data_json), {
+          kind: "child_left",
+          parentTaskId: c2.parentId,
+          childTaskId: c2.childId,
+          accountOpen: false,
+        });
+
+        // Case 3: Root title conflict -> 409 conflict, no mutation, no child_left, account intact.
+        createLocalTask(store, dir, "Conflict Title");
+        const c3 = seedExternalChild(store, dir, { title: "Conflict Title" });
+        (tasks as any).obligations.arm(c3.parentId, c3.childId, "external");
+        const res3 = tasks.unarchiveTask(c3.childId);
+        assert.equal(res3.status, "conflict");
+        assert.equal(res3.reason, "title_conflict");
+        assert.notEqual(store.getExternalParentLink(c3.childId), undefined);
+        assert.equal(tasks.hasOpenObligation(c3.parentId, c3.childId), true);
+        assert.equal(
+          store.listOutbox("parent", c3.remoteHost, rel2.pos).length,
+          0,
+        );
+      } finally {
+        tasks.dispose();
+      }
+    });
+  });
+
+  it("rolls back unarchive child_left and preserves in-memory account on injected transaction failure [behavior proof]", async () => {
+    await withTempStoreAsync(async (store, dir) => {
+      const tasks = makeTaskManager(store, dir);
+      try {
+        const c = seedExternalChild(store, dir, {
+          title: "Unarchive Rollback",
+        });
+        (tasks as any).obligations.arm(c.parentId, c.childId, "external");
+        const db = new Database(join(dir, "webagent.db"));
+        try {
+          db.exec(`
+            CREATE TRIGGER fail_unarchive_relation BEFORE INSERT ON outbox
+            WHEN NEW.category = 'relation'
+            BEGIN
+              SELECT RAISE(ABORT, 'injected_unarchive_failure');
+            END;
+          `);
+        } finally {
+          db.close();
+        }
+        assert.throws(
+          () => tasks.unarchiveTask(c.childId),
+          /injected_unarchive_failure/,
+        );
+        assert.equal(store.getTask(c.childId)?.parent_id, null);
+        assert.notEqual(store.getExternalParentLink(c.childId), undefined);
+        assert.equal(tasks.hasOpenObligation(c.parentId, c.childId), true);
+      } finally {
+        tasks.dispose();
+      }
+    });
+  });
+
+  it("hub archive preserves live remote child edge and accepted queued inbound R1->P delivery while still failing local cross-boundary delivery [behavior proof]", () => {
+    withTempStore((store, dir) => {
+      const p = createLocalTask(store, dir, "Hub P");
+      const q = createLocalTask(store, dir, "Hub Q", p);
+      const r1 = randomUUID();
+      const r2 = randomUUID();
+      store.recordRemoteChild(p, r1, "owner-a");
+      store.recordRemoteChild(q, r2, "owner-a");
+
+      // Accepted queued inbound deliveries from remote children R1->P and R2->Q.
+      const r1Entry = randomUUID();
+      store.applyLinkFeedOperation({
+        remoteRole: "child",
+        remoteHost: "owner-a",
+        expectedApplied: 0,
+        nextApplied: 1,
+        envelope: {
+          id: r1Entry,
+          category: "report",
+          data: {
+            sourceTaskId: r1,
+            targetTaskId: p,
+            sourceLabel: "R1",
+            body: "report from R1",
+          },
+        },
+      });
+      const r2Entry = randomUUID();
+      store.applyLinkFeedOperation({
+        remoteRole: "child",
+        remoteHost: "owner-a",
+        expectedApplied: 1,
+        nextApplied: 2,
+        envelope: {
+          id: r2Entry,
+          category: "report",
+          data: {
+            sourceTaskId: r2,
+            targetTaskId: q,
+            sourceLabel: "R2",
+            body: "report from R2",
+          },
+        },
+      });
+      // Genuine local cross-boundary delivery Root -> P.
+      const localCross = store.enqueueTargetCollaboration({
+        sourceTaskId: store.rootTaskId,
+        targetTaskId: p,
+        body: "local cross boundary",
+      });
+
+      const archived = store.archiveTask(p);
+      assert.equal(archived?.status, "archived");
+      // Remote child edges are preserved.
+      assert.notEqual(store.getRemoteChild("owner-a", r1), undefined);
+      assert.notEqual(store.getRemoteChild("owner-a", r2), undefined);
+      // Accepted queued remote inbound deliveries stay queued (NOT archived_edge_cut).
+      assert.equal(store.getCollaborationDelivery(r1Entry)?.status, "queued");
+      assert.equal(store.getCollaborationDelivery(r2Entry)?.status, "queued");
+      // Genuine local cross-boundary delivery still fails with archived_edge_cut.
+      assert.equal(
+        store.getCollaborationDelivery(localCross.deliveryId)?.status,
+        "failed",
+      );
+      assert.equal(
+        store.getCollaborationDelivery(localCross.deliveryId)?.failure_reason,
+        "archived_edge_cut",
+      );
+    });
+  });
+
+  it("local parity: local child delete and archive produce same busy-gate and target_removed semantics as remote [regression guard]", async () => {
+    await withTempStoreAsync(async (store, dir) => {
+      const tasks = makeTaskManager(store, dir);
+      try {
+        const parent = createLocalTask(store, dir, "Local Parent");
+        const child = createLocalTask(store, dir, "Local Child", parent);
+        (tasks as any).obligations.arm(parent, child, "local");
+        await tasks.deleteTask(undefined, child);
+        const notices = store
+          .getEvents(parent)
+          .filter((e) => e.type === "task_outcome_notice")
+          .map(
+            (e) => JSON.parse(e.data) as { reason: string; message: string },
+          );
+        assert.equal(notices.length, 1);
+        assert.equal(notices[0].reason, "target_removed");
+        assert.equal(
+          notices[0].message,
+          "The target left this edge (deleted or archived); the account is gone.",
+        );
+      } finally {
+        tasks.dispose();
+      }
+    });
+  });
+});

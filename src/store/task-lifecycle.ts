@@ -145,12 +145,25 @@ export class TaskLifecycleStore {
    * The update and the transcript fact are one transaction; nothing about the
    * cut obligation/delivery edges is restored.
    */
-  unarchiveTask(id: string): UnarchiveTaskResult {
-    return this.store.db.transaction(() => {
+  unarchiveTask(
+    id: string,
+    options?: TaskDeleteStoreOptions,
+  ): UnarchiveTaskResult & {
+    externalParent?: { remoteHost: string; remoteTaskId: string };
+  } {
+    const out = this.store.writeOutbox(() => {
       const task = this.store.getTask(id);
-      if (!task) return { status: "not_found" as const };
+      if (!task) {
+        return {
+          result: { status: "not_found" as const },
+          failedDeliveryIds: [] as string[],
+        };
+      }
       if (this.store.isRootTaskId(id) || task.parent_id !== null) {
-        return { status: "not_archived" as const };
+        return {
+          result: { status: "not_archived" as const },
+          failedDeliveryIds: [] as string[],
+        };
       }
 
       const archivedRows = this.store.db
@@ -181,8 +194,11 @@ export class TaskLifecycleStore {
       const target = this.resolveUnarchiveTarget(originalParentId);
       if (!target) {
         return {
-          status: "conflict" as const,
-          reason: "original_parent_unavailable" as const,
+          result: {
+            status: "conflict" as const,
+            reason: "original_parent_unavailable" as const,
+          },
+          failedDeliveryIds: [] as string[],
         };
       }
       const {
@@ -194,8 +210,11 @@ export class TaskLifecycleStore {
       const subtree = new Set([id, ...this.store.getDescendantTaskIds(id)]);
       if (subtree.has(targetParentId)) {
         return {
-          status: "conflict" as const,
-          reason: "original_parent_unavailable" as const,
+          result: {
+            status: "conflict" as const,
+            reason: "original_parent_unavailable" as const,
+          },
+          failedDeliveryIds: [] as string[],
         };
       }
 
@@ -210,8 +229,11 @@ export class TaskLifecycleStore {
           .get(targetParentId, task.title, id) !== undefined
       ) {
         return {
-          status: "conflict" as const,
-          reason: "title_conflict" as const,
+          result: {
+            status: "conflict" as const,
+            reason: "title_conflict" as const,
+          },
+          failedDeliveryIds: [] as string[],
         };
       }
 
@@ -254,14 +276,87 @@ export class TaskLifecycleStore {
         },
         { from_ref: "system" },
       );
+
+      const { failedDeliveryIds, externalParent } =
+        this.detachExternalParentOnUnarchive(id, task.title, options);
+
       return {
-        status: "unarchived" as const,
-        taskId: id,
-        parentId: targetParentId,
-        parentPath,
-        message,
+        result: {
+          status: "unarchived" as const,
+          taskId: id,
+          parentId: targetParentId,
+          parentPath,
+          message,
+          ...(externalParent ? { externalParent } : {}),
+        },
+        failedDeliveryIds,
       };
-    })();
+    });
+    this.store.broadcastDeliveryStatus(out.failedDeliveryIds);
+    return out.result;
+  }
+
+  private detachExternalParentOnUnarchive(
+    id: string,
+    title: string | null,
+    options?: TaskDeleteStoreOptions,
+  ): {
+    failedDeliveryIds: string[];
+    externalParent?: { remoteHost: string; remoteTaskId: string };
+  } {
+    const externalLink = this.remoteRelations.getExternalParentLink(id);
+    if (!externalLink) return { failedDeliveryIds: [] };
+    const hadOpenExternalAccount =
+      options?.hasOpenExternalAccount?.(id, externalLink.remote_task_id) ===
+      true;
+    const failedAt = Date.now();
+    const edgeQueued = this.store.db
+      .prepare(
+        `SELECT d.id FROM deliveries d
+         JOIN messages m ON m.id = d.message_id
+         WHERE d.recipient_task_id = ?
+           AND d.status = 'queued'
+           AND d.source_remote_role = 'parent'
+           AND d.source_remote_host = ?
+           AND m.source_task_id = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM outbox o WHERE o.delivery_id = d.id
+           )`,
+      )
+      .all(id, externalLink.remote_host, externalLink.remote_task_id) as Array<{
+      id: string;
+    }>;
+    const failedDeliveryIds: string[] = [];
+    for (const row of edgeQueued) {
+      if (
+        this.store.transitionDeliveryStatusInTransaction(
+          row.id,
+          "queued",
+          "failed",
+          failedAt,
+          "link_mismatch",
+        )
+      ) {
+        failedDeliveryIds.push(row.id);
+      }
+    }
+    this.remoteRelations.deleteExternalParentLinkInTransaction(id);
+    this.enqueueChildLeftInTransaction(
+      {
+        remoteHost: externalLink.remote_host,
+        remoteTaskId: externalLink.remote_task_id,
+        title,
+      },
+      id,
+      hadOpenExternalAccount && failedDeliveryIds.length === 0,
+    );
+    return {
+      failedDeliveryIds,
+      externalParent: {
+        remoteHost: externalLink.remote_host,
+        remoteTaskId: externalLink.remote_task_id,
+      },
+    };
   }
 
   /**
@@ -283,16 +378,26 @@ export class TaskLifecycleStore {
              SELECT t.id FROM tasks t JOIN subtree s ON t.parent_id = s.id
            )
            SELECT d.id FROM deliveries d
+           JOIN messages m ON m.id = d.message_id
            WHERE d.status = 'queued'
              AND NOT EXISTS (
                SELECT 1 FROM outbox o WHERE o.delivery_id = d.id
              )
-             AND d.message_id IN (
-               SELECT m.id FROM messages m
-               WHERE (
-                   (m.source_task_id IN (SELECT id FROM subtree))
-                   <> (m.direct_target_task_id IN (SELECT id FROM subtree))
-                 )
+             AND (
+               (m.source_task_id IN (SELECT id FROM subtree))
+               <> (m.direct_target_task_id IN (SELECT id FROM subtree))
+             )
+             AND NOT (
+               d.source_remote_role = 'child'
+               AND d.source_remote_host IS NOT NULL
+               AND d.recipient_task_id IN (SELECT id FROM subtree)
+               AND EXISTS (
+                 SELECT 1 FROM remote_tasks r
+                 WHERE r.remote_role = 'child'
+                   AND r.remote_host = d.source_remote_host
+                   AND r.remote_task_id = m.source_task_id
+                   AND r.local_task_id = d.recipient_task_id
+               )
              )`,
         )
         .all(seedTaskId) as Array<{ id: string }>

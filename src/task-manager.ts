@@ -3227,6 +3227,11 @@ export class TaskManager implements ObligationHost {
     },
   };
 
+  private closeExternalAccountIfOpen(tId: string, pId: string): void {
+    if (this.deleteStoreOptions.hasOpenExternalAccount(tId, pId))
+      this.obligations.close(tId);
+  }
+
   private retireDeletedEntries(affected: readonly TaskDelete[]): void {
     for (const entry of affected) {
       this.retireExecution(entry.id, entry.agentId, entry.agentSessionId);
@@ -3371,15 +3376,8 @@ export class TaskManager implements ObligationHost {
     this.store.broadcastDeliveryStatus(
       this.store.failedDeliveryIdsForRecipient(id, "target_deleted"),
     );
-    const openExternal = externalParent
-      ? this.obligations.peekSource(id)
-      : undefined;
-    if (
-      openExternal?.sourceKind === "external" &&
-      openExternal.sourceTaskId === externalParent?.remoteTaskId
-    ) {
-      this.obligations.close(id);
-    }
+    if (externalParent)
+      this.closeExternalAccountIfOpen(id, externalParent.remoteTaskId);
     this.obligations.purgeTask(id);
     this.compactingTasks.delete(id);
     this.rotatingTasks.delete(id);
@@ -3990,11 +3988,16 @@ export class TaskManager implements ObligationHost {
    */
   archiveTask(taskId: string): ArchiveTaskResult | undefined {
     const result = this.store.archiveTask(taskId);
-    if (result?.status !== "archived") return result;
-    if (result.parentId !== null) {
+    if (result?.status === "archived" && result.parentId !== null)
       this.obligations.dropEdge(result.parentId, taskId);
-    }
     return result;
+  }
+
+  unarchiveTask(taskId: string) {
+    const res = this.store.unarchiveTask(taskId, this.deleteStoreOptions);
+    if (res.status === "unarchived" && res.externalParent)
+      this.closeExternalAccountIfOpen(taskId, res.externalParent.remoteTaskId);
+    return res;
   }
 
   /** True when `promptId` is still the task's live agent turn. */
