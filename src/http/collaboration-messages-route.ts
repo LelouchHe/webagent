@@ -4,7 +4,6 @@ import { buildCollaborationBroadcast } from "../collaboration-message.ts";
 import { HTTP_STATUS } from "../http-status.ts";
 import { COLLABORATION_MESSAGE_NAMESPACE, opIdentity } from "../op-identity.ts";
 import type { CollaborationDeliveryStatus } from "../shared/delivery-status.ts";
-import { taskDisplayLabel } from "../shared/task-title.ts";
 import type { SseManager } from "../sse-manager.ts";
 import type { Store } from "../store.ts";
 import type { TaskManager } from "../task-manager.ts";
@@ -33,11 +32,12 @@ interface CollaborationMessageResponseBody {
   clientOpId?: string;
 }
 
-function parseCollaborationBody(body: string): {
+interface CollaborationMessageRequestBody {
   targetTaskId: string;
   body: string;
-  sourceLabel?: string;
-} {
+}
+
+function parseCollaborationBody(body: string): CollaborationMessageRequestBody {
   const raw = JSON.parse(body) as unknown;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error("invalid_collaboration_body");
@@ -45,7 +45,6 @@ function parseCollaborationBody(body: string): {
   const value = raw as {
     targetTaskId?: unknown;
     body?: unknown;
-    sourceLabel?: unknown;
   };
   if (
     typeof value.targetTaskId !== "string" ||
@@ -54,14 +53,9 @@ function parseCollaborationBody(body: string): {
   ) {
     throw new Error("invalid_collaboration_body");
   }
-  const sourceLabel =
-    typeof value.sourceLabel === "string"
-      ? taskDisplayLabel(value.sourceLabel)
-      : undefined;
   return {
     targetTaskId: value.targetTaskId,
     body: value.body,
-    ...(sourceLabel ? { sourceLabel } : {}),
   };
 }
 
@@ -192,11 +186,7 @@ export async function handleCollaborationMessageRoute(
   }
   const opId = parsedOpId.opId;
 
-  let body: {
-    targetTaskId: string;
-    body: string;
-    sourceLabel?: string;
-  };
+  let body: CollaborationMessageRequestBody;
   try {
     body = parseCollaborationBody(await readBody(req));
   } catch {

@@ -244,7 +244,7 @@ describe("api module", () => {
     assert.deepEqual(result, { kind: "accepted", response: acceptedBody });
   });
 
-  it("sendCollaborationMessage does not retry first-attempt 4xx rejection", async () => {
+  it("sendCollaborationMessage does not retry first-attempt 4xx rejection, even when reading the body fails", async () => {
     fetchResponse = {
       status: 404,
       ok: false,
@@ -262,6 +262,61 @@ describe("api module", () => {
       kind: "rejected",
       status: 404,
       message: "Target task not found",
+    });
+
+    // A 4xx whose body read fails must still classify as rejected without retrying.
+    fetchCalls = [];
+    fetchResponse = {
+      status: 404,
+      ok: false,
+      json: () => Promise.reject(new Error("stream reset")),
+      text: () => Promise.reject(new Error("stream reset")),
+    };
+    const brokenBody = await api.sendCollaborationMessage(
+      "s1",
+      "t1",
+      "hello",
+      "op-reject-broken",
+    );
+    assert.equal(fetchCalls.length, 1);
+    assert.deepEqual(brokenBody, {
+      kind: "rejected",
+      status: 404,
+      message: "HTTP 404",
+    });
+  });
+
+  it("sendCollaborationMessage accepts only 202 and treats other 2xx statuses as unknown", async () => {
+    fetchResponse = {
+      status: 200,
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          messageId: "m1",
+          deliveryId: "d1",
+          status: "queued",
+          clientOpId: "op-200",
+        }),
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            messageId: "m1",
+            deliveryId: "d1",
+            status: "queued",
+            clientOpId: "op-200",
+          }),
+        ),
+    };
+    const result = await api.sendCollaborationMessage(
+      "s1",
+      "t1",
+      "hello",
+      "op-200",
+    );
+    assert.equal(fetchCalls.length, 3);
+    assert.deepEqual(result, {
+      kind: "unknown",
+      message: "HTTP 200",
     });
   });
 

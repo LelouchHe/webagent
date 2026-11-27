@@ -46,7 +46,14 @@ export class CollaborationMessagesStore {
     message: CollaborationMessageRow;
     delivery: CollaborationDeliveryRow;
   } {
-    return this.store.db.transaction(() => this.createInTransaction(input))();
+    return this.store.db.transaction(() => {
+      if (input.sourceTaskId === input.directTargetTaskId) {
+        throw new Error("Collaboration source and target must differ");
+      }
+      const sourceTask = this.store.requireLiveTask(input.sourceTaskId);
+      const targetTask = this.store.requireLiveTask(input.directTargetTaskId);
+      return this.insertInTransaction(input, sourceTask, targetTask);
+    })();
   }
 
   /**
@@ -73,8 +80,7 @@ export class CollaborationMessagesStore {
             if (
               existing.source_task_id !== input.sourceTaskId ||
               existing.direct_target_task_id !== input.directTargetTaskId ||
-              existing.body !== input.body ||
-              existing.source_actor !== input.sourceActor
+              existing.body !== input.body
             ) {
               return { kind: "conflict" };
             }
@@ -95,14 +101,18 @@ export class CollaborationMessagesStore {
         if (!targetTask) return { kind: "target_not_found" };
         if (targetTask.id === sourceTask.id) return { kind: "same_task" };
 
-        const created = this.createInTransaction({
-          id: input.deterministicMessageId ?? randomUUID(),
-          deliveryId: randomUUID(),
-          sourceTaskId: sourceTask.id,
-          directTargetTaskId: targetTask.id,
-          sourceActor: input.sourceActor,
-          body: input.body,
-        });
+        const created = this.insertInTransaction(
+          {
+            id: input.deterministicMessageId ?? randomUUID(),
+            deliveryId: randomUUID(),
+            sourceTaskId: sourceTask.id,
+            directTargetTaskId: targetTask.id,
+            sourceActor: input.sourceActor,
+            body: input.body,
+          },
+          sourceTask,
+          targetTask,
+        );
         return {
           kind: "created",
           message: created.message,
@@ -114,17 +124,15 @@ export class CollaborationMessagesStore {
     )();
   }
 
-  private createInTransaction(input: CollaborationMessageInput): {
+  private insertInTransaction(
+    input: CollaborationMessageInput,
+    sourceTask: TaskRow,
+    targetTask: TaskRow,
+  ): {
     message: CollaborationMessageRow;
     delivery: CollaborationDeliveryRow;
   } {
     const createdAt = input.createdAt ?? Date.now();
-    if (input.sourceTaskId === input.directTargetTaskId) {
-      throw new Error("Collaboration source and target must differ");
-    }
-
-    this.store.requireLiveTask(input.sourceTaskId);
-    this.store.requireLiveTask(input.directTargetTaskId);
     this.store.db
       .prepare(
         `INSERT INTO messages
@@ -150,12 +158,8 @@ export class CollaborationMessagesStore {
       "target",
       createdAt,
     );
-    const sourceLabel =
-      this.store.getTask(input.sourceTaskId)?.title ??
-      input.sourceTaskId.slice(0, 8);
-    const targetLabel =
-      this.store.getTask(input.directTargetTaskId)?.title ??
-      input.directTargetTaskId.slice(0, 8);
+    const sourceLabel = sourceTask.title ?? sourceTask.id.slice(0, 8);
+    const targetLabel = targetTask.title ?? targetTask.id.slice(0, 8);
     this.store.saveEvent(
       input.sourceTaskId,
       "system_message",

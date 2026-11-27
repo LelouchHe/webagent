@@ -77,18 +77,9 @@ export async function sendSyncRequest<
   const maxRetries =
     input.opId === null ? 0 : Math.max(0, Math.floor(input.retries ?? 0));
   let result = await sendSyncRequestOnce(input);
-  let lastUnknown: { kind: "unknown"; error: unknown } | null =
-    result.kind === "unknown" ? result : null;
   for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
     if (result.kind !== "unknown") return result;
     result = await sendSyncRequestOnce(input);
-    if (result.kind === "unknown") {
-      lastUnknown = result;
-    } else if (result.kind === "rejected" && lastUnknown !== null) {
-      // Once an earlier attempt had an unknown outcome, a later 4xx cannot
-      // prove the original request did not commit.
-      return lastUnknown;
-    }
   }
   return result;
 }

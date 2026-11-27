@@ -13,7 +13,10 @@ import { createLocalTaskOps } from "../src/host/local/adapter.ts";
 import { createTaskHost } from "../src/host/tasks.ts";
 import { createRequestHandler } from "../src/http/routes.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
-import { opIdentity } from "../src/op-identity.ts";
+import {
+  COLLABORATION_MESSAGE_NAMESPACE,
+  opIdentity,
+} from "../src/op-identity.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { Store } from "../src/store.ts";
 import { TaskManager } from "../src/task-manager.ts";
@@ -428,6 +431,11 @@ describe("structural idempotency conformance", () => {
     tasks.drainCollaborationDeliveries = async () => false;
     try {
       const opId = randomUUID();
+      const expectedMessageId = opIdentity(
+        COLLABORATION_MESSAGE_NAMESPACE,
+        "token:browser",
+        opId,
+      );
       const snapshot = () => ({
         queued: store.countQueuedDeliveries(targetId),
         sourceEvents: store.getEvents(sourceId).length,
@@ -455,6 +463,10 @@ describe("structural idempotency conformance", () => {
           ),
       });
 
+      assert.equal(
+        (first.body as { messageId: string }).messageId,
+        expectedMessageId,
+      );
       assert.equal((first.body as { clientOpId: string }).clientOpId, opId);
     } finally {
       tasks.drainCollaborationDeliveries = originalDrain;

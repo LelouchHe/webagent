@@ -491,20 +491,53 @@ describe("REST collaboration message constructive idempotency", () => {
     assert.notEqual(bob.body.deliveryId, alice.body.deliveryId);
     assert.equal(countRows("messages"), 2);
 
-    // Missing token replaying an accepted op -> 401
+    const beforeDenied = {
+      messages: countRows("messages"),
+      deliveries: countRows("deliveries"),
+      broadcasts: broadcastCalls.length,
+      lastActive: lastActiveCalls.length,
+      drains: drainCalls.length,
+    };
+
+    // Missing token replaying an accepted op -> 401 with zero mutations/side effects
     const unauth = await postMessage(port, "task-a", {
       opId: sharedOpId,
       body: { targetTaskId: "task-b", body: "hello" },
     });
     assert.equal(unauth.status, 401);
 
-    // Host token replaying an accepted op -> 403
+    // Host token replaying an accepted op -> 403 with zero mutations/side effects
     const hostReplay = await postMessage(port, "task-a", {
       token: hostToken,
       opId: sharedOpId,
       body: { targetTaskId: "task-b", body: "hello" },
     });
     assert.equal(hostReplay.status, 403);
+
+    // Fresh op with missing or host token -> 401 / 403 with zero mutations/side effects
+    const unauthFresh = await postMessage(port, "task-a", {
+      opId: randomUUID(),
+      body: { targetTaskId: "task-b", body: "unauthorized fresh" },
+    });
+    assert.equal(unauthFresh.status, 401);
+
+    const hostFresh = await postMessage(port, "task-a", {
+      token: hostToken,
+      opId: randomUUID(),
+      body: { targetTaskId: "task-b", body: "host fresh" },
+    });
+    assert.equal(hostFresh.status, 403);
+
+    assert.deepEqual(
+      {
+        messages: countRows("messages"),
+        deliveries: countRows("deliveries"),
+        broadcasts: broadcastCalls.length,
+        lastActive: lastActiveCalls.length,
+        drains: drainCalls.length,
+      },
+      beforeDenied,
+    );
   });
 
   it("emits zero replay side effects (SSE, lastActive, drain) and never reads or writes client_ops", async () => {

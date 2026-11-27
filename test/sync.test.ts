@@ -127,28 +127,6 @@ describe("shared/sync", () => {
     clock.advance(10);
     assert.equal(signal?.aborted, true);
     assert.equal((await pending).kind, "unknown");
-
-    // Once an attempt is unknown, a subsequent 4xx must still resolve as
-    // unknown (not rejected) because the earlier attempt may have committed.
-    let unknownThen4xxAttempts = 0;
-    const unknownThen4xx = await sendSyncRequest({
-      opId: "op-ambiguous",
-      request: {},
-      timeoutMs: 10,
-      retries: 3,
-      timer: clock.api,
-      transport: {
-        send: async () => {
-          unknownThen4xxAttempts += 1;
-          if (unknownThen4xxAttempts === 1) {
-            return { status: 503, body: null };
-          }
-          return { status: 404, body: { error: "Source task not found" } };
-        },
-      },
-    });
-    assert.equal(unknownThen4xx.kind, "unknown");
-    assert.equal(unknownThen4xxAttempts, 2);
   });
 
   it("fills multiple feed pages, ignores overlap, and serializes arrivals", async () => {

@@ -6,10 +6,6 @@ import {
   isCollaborationDeliveryStatus,
   type CollaborationDeliveryStatus,
 } from "../../src/shared/delivery-status.ts";
-import {
-  sendSyncRequest,
-  type SyncTimer,
-} from "../../src/shared/sync/request.ts";
 
 export class ApiError extends Error {
   name = "ApiError";
@@ -305,17 +301,6 @@ export type CollaborationMessageSendResult =
 
 const COLLABORATION_MESSAGE_RETRIES = 2;
 
-const syncTimer: SyncTimer = {
-  setTimeout(callback, milliseconds) {
-    const handle = setTimeout(callback, milliseconds);
-    (handle as { unref?: () => void }).unref?.();
-    return handle;
-  },
-  clearTimeout(handle) {
-    clearTimeout(handle as ReturnType<typeof setTimeout>);
-  },
-};
-
 function extractErrorMessage(body: unknown, status: number): string {
   if (body && typeof body === "object" && !Array.isArray(body)) {
     const err = (body as Record<string, unknown>).error;
@@ -355,76 +340,127 @@ function parseCollaborationAccepted(
   };
 }
 
-export async function sendCollaborationMessage(
-  sourceTaskId: string,
-  targetTaskId: string,
-  body: string,
+function readTextWithinSignal(
+  res: Response,
+  signal: AbortSignal | undefined,
+): Promise<string | null> {
+  if (!signal) {
+    return res.text().catch(() => null);
+  }
+  if (signal.aborted) return Promise.resolve(null);
+  return new Promise<string | null>((resolve) => {
+    const onAbort = () => {
+      resolve(null);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    res.text().then(
+      (text) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(text);
+      },
+      () => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(null);
+      },
+    );
+  });
+}
+
+async function sendCollaborationMessageOnce(
+  url: string,
+  payload: { targetTaskId: string; body: string },
   clientOpId: string | null,
-  options?: { retries?: number; timeoutMs?: number },
 ): Promise<CollaborationMessageSendResult> {
-  const url = `/api/v1/tasks/${encodeURIComponent(sourceTaskId)}/messages`;
-  const outcome = await sendSyncRequest<
-    { targetTaskId: string; body: string },
-    unknown
-  >({
-    opId: clientOpId,
-    request: { targetTaskId, body },
-    timeoutMs: options?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    retries: options?.retries ?? COLLABORATION_MESSAGE_RETRIES,
-    timer: syncTimer,
-    transport: {
-      async send(opId, payload, signal) {
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-        };
-        if (opId !== null) headers["X-Client-Op-Id"] = opId;
-        const res = await fetch(url, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(payload),
-          signal,
-        });
-        const text = await res.text();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (clientOpId !== null) headers["X-Client-Op-Id"] = clientOpId;
+  try {
+    return await withTimeout(async (signal) => {
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+        ...(signal ? { signal } : {}),
+      });
+      // Classify definite 4xx refusal as soon as headers arrive: if reading
+      // the error body fails or stalls, keep the refusal and fall back to status.
+      if (res.status >= 400 && res.status < 500) {
+        const text = await readTextWithinSignal(res, signal);
         let parsed: unknown = null;
         if (text) {
           try {
             parsed = JSON.parse(text) as unknown;
           } catch {
-            if (Math.floor(res.status / 100) === 2) {
-              throw new Error("Invalid collaboration acceptance response");
-            }
+            parsed = null;
           }
         }
-        if (Math.floor(res.status / 100) === 2) {
-          const accepted = parseCollaborationAccepted(parsed, opId);
-          if (!accepted) {
-            throw new Error("Invalid collaboration acceptance response");
-          }
-          return { status: res.status, body: accepted };
-        }
-        return { status: res.status, body: parsed };
-      },
-    },
-  });
+        return {
+          kind: "rejected",
+          status: res.status,
+          message: extractErrorMessage(parsed, res.status),
+        };
+      }
+      if (res.status !== 202) {
+        return { kind: "unknown", message: `HTTP ${res.status}` };
+      }
+      const text = await readTextWithinSignal(res, signal);
+      if (!text) {
+        return {
+          kind: "unknown",
+          message: "Invalid collaboration acceptance response",
+        };
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text) as unknown;
+      } catch {
+        return {
+          kind: "unknown",
+          message: "Invalid collaboration acceptance response",
+        };
+      }
+      const accepted = parseCollaborationAccepted(parsed, clientOpId);
+      if (!accepted) {
+        return {
+          kind: "unknown",
+          message: "Invalid collaboration acceptance response",
+        };
+      }
+      return { kind: "accepted", response: accepted };
+    }, DEFAULT_TIMEOUT_MS);
+  } catch (err) {
+    return {
+      kind: "unknown",
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
 
-  if (outcome.kind === "success") {
-    return {
-      kind: "accepted",
-      response: outcome.body as CollaborationMessageAccepted,
-    };
+export async function sendCollaborationMessage(
+  sourceTaskId: string,
+  targetTaskId: string,
+  body: string,
+  clientOpId: string | null,
+): Promise<CollaborationMessageSendResult> {
+  const url = `/api/v1/tasks/${encodeURIComponent(sourceTaskId)}/messages`;
+  const payload = { targetTaskId, body };
+  const maxRetries = clientOpId === null ? 0 : COLLABORATION_MESSAGE_RETRIES;
+  let result = await sendCollaborationMessageOnce(url, payload, clientOpId);
+  let lastUnknown: { kind: "unknown"; message: string } | null =
+    result.kind === "unknown" ? result : null;
+  for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
+    if (result.kind !== "unknown") return result;
+    result = await sendCollaborationMessageOnce(url, payload, clientOpId);
+    if (result.kind === "unknown") {
+      lastUnknown = result;
+    } else if (result.kind === "rejected" && lastUnknown !== null) {
+      // Once an earlier attempt had an unknown outcome, a later 4xx cannot
+      // prove the original request did not commit.
+      return lastUnknown;
+    }
   }
-  if (outcome.kind === "rejected") {
-    return {
-      kind: "rejected",
-      status: outcome.status,
-      message: extractErrorMessage(outcome.body, outcome.status),
-    };
-  }
-  const message =
-    outcome.error instanceof Error
-      ? outcome.error.message
-      : String(outcome.error);
-  return { kind: "unknown", message };
+  return result;
 }
 
 /** A remote child in a list read; it follows its local parent. */
