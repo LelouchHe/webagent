@@ -64,9 +64,11 @@ state and must not be lost travels on the **link**; everything else is a
 
 ## Idempotent operations
 
-Only operations that a caller really retries with the same op id are
-idempotent: Task create, link entry delivery, and REST collaboration messages.
-Their interfaces take a required `opId: string | null` (`TaskOps.create`,
+Only operations that a caller really retries with the same op id provide
+same-op replay: Task create, link entry delivery (keyed by the stored envelope
+id), and REST collaboration messages. Reads, absolute sets, and transitions
+that are already reached stay naturally repeatable without an op id. The replay
+interfaces take a required `opId: string | null` (`TaskOps.create`,
 `sendSyncRequest`); a string promises that retrying with the same value is
 safe, and `null` explicitly opts out and is never retried. On the wire the op
 id is `X-Client-Op-Id`; no header means `null`. Other routes do not promise
@@ -92,7 +94,8 @@ cache. A created Task's id is derived from the op id:
 
 A replay compares the Task's current parent edge or link and its current
 agent binding with the request; it returns the Task as it is now, so a later
-rename does not turn a retry into a conflict, but a later move or rebind does. A different parent or agent under the same op id is
+rename does not turn a retry into a conflict, but a later move does, and so
+does a rebind when the request named its agent (host create always does). A different parent or agent under the same op id is
 `409 create_op_conflict`; a soft-deleted Task is `404 target_deleted`. A Task
 hard-deleted inside the retry window is recreated by a replay (see Known
 issues). Link pushes follow the same rule: the inbound delivery id is the

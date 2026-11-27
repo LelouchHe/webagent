@@ -937,7 +937,7 @@ Use `GET /events` for message history (rendering only) and `GET /snapshot` for r
 
 Send a user prompt to the agent. Returns immediately; the agent's response streams via SSE.
 
-Not replay-safe: `X-Client-Op-Id` only correlates the stored `user_message` and its SSE echo. Repeating a request while the turn runs returns `409`; after it ends, a repeat starts a new turn.
+Not replay-safe: `X-Client-Op-Id` only correlates the stored `user_message` and its SSE echo. Repeating a request while the turn runs returns `409`; after it ends, a repeat that is still admissible (execution available, no other busy work, valid input) starts a new turn.
 
 **Request body:**
 
