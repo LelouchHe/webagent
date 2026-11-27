@@ -54,26 +54,6 @@ async function waitForRows(dbPath: string, sql: string): Promise<Json> {
   throw new Error(`rows did not arrive: ${sql}`);
 }
 
-async function waitForExecutionState(
-  inst: {
-    rest(
-      method: string,
-      path: string,
-      body?: Json,
-    ): Promise<{ status: number; body: Json }>;
-  },
-  taskId: string,
-  expected: string,
-): Promise<void> {
-  const deadline = performance.now() + 10_000;
-  while (performance.now() < deadline) {
-    const res = await inst.rest("GET", `/api/v1/tasks/${taskId}/status`);
-    if ((res.body as JsonObject).executionState === expected) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error(`task ${taskId} did not reach executionState=${expected}`);
-}
-
 async function waitSettled(state: State): Promise<void> {
   const ownerMax = (
     readRows(
@@ -420,10 +400,9 @@ export default scenario<State>({
           .rest("POST", `/api/v1/tasks/${state.parentId}/prompt`, {
             text: "dispatch busy child",
           });
-        await waitForExecutionState(
-          client.instance("owner"),
-          busyChildId,
-          "agent",
+        await waitForRows(
+          state.ownerDb,
+          `SELECT 1 FROM events WHERE task_id = '${busyChildId}' AND type = 'collaboration_prompt'`,
         );
 
         // Deleting parent while remote child is busy -> 409, both preserved.
@@ -443,10 +422,9 @@ export default scenario<State>({
         await client
           .instance("owner")
           .rest("POST", `/api/v1/tasks/${busyChildId}/cancel`);
-        await waitForExecutionState(
-          client.instance("owner"),
-          busyChildId,
-          "idle",
+        await waitForRows(
+          state.ownerDb,
+          `SELECT 1 FROM events WHERE task_id = '${busyChildId}' AND type = 'prompt_done'`,
         );
         const deleted = await client
           .instance("hub")
@@ -509,10 +487,9 @@ export default scenario<State>({
           .rest("POST", `/api/v1/tasks/${state.partialParentId}/prompt`, {
             text: "dispatch partial second",
           });
-        await waitForExecutionState(
-          client.instance("owner"),
-          secondId,
-          "agent",
+        await waitForRows(
+          state.ownerDb,
+          `SELECT 1 FROM events WHERE task_id = '${secondId}' AND type = 'collaboration_prompt'`,
         );
 
         // Ensure deterministic order: firstId is deleted, secondId is busy.
@@ -549,7 +526,10 @@ export default scenario<State>({
         await client
           .instance("owner")
           .rest("POST", `/api/v1/tasks/${secondId}/cancel`);
-        await waitForExecutionState(client.instance("owner"), secondId, "idle");
+        await waitForRows(
+          state.ownerDb,
+          `SELECT 1 FROM events WHERE task_id = '${secondId}' AND type = 'prompt_done'`,
+        );
         const retry = await client
           .instance("hub")
           .rest("DELETE", `/api/v1/tasks/${state.partialParentId}`);
@@ -609,7 +589,10 @@ export default scenario<State>({
           .rest("POST", `/api/v1/tasks/${midId}/prompt`, {
             text: "dispatch hop leaf busy",
           });
-        await waitForExecutionState(client.instance("hub"), leafId, "agent");
+        await waitForRows(
+          state.hubDb,
+          `SELECT 1 FROM events WHERE task_id = '${leafId}' AND type = 'collaboration_prompt'`,
+        );
 
         // Second hop busy -> middle owner returns typed 4xx, top-level preserves P.
         const blocked = await client
@@ -618,7 +601,10 @@ export default scenario<State>({
         await client
           .instance("hub")
           .rest("POST", `/api/v1/tasks/${leafId}/cancel`);
-        await waitForExecutionState(client.instance("hub"), leafId, "idle");
+        await waitForRows(
+          state.hubDb,
+          `SELECT 1 FROM events WHERE task_id = '${leafId}' AND type = 'prompt_done'`,
+        );
 
         // Now delete top-level -> deletes leaf, mid, and parent.
         const deleted = await client

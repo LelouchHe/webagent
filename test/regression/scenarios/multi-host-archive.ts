@@ -50,26 +50,6 @@ async function waitForRows(dbPath: string, sql: string): Promise<Json> {
   throw new Error(`rows did not arrive: ${sql}`);
 }
 
-async function waitForExecutionState(
-  inst: {
-    rest(
-      method: string,
-      path: string,
-      body?: Json,
-    ): Promise<{ status: number; body: Json }>;
-  },
-  taskId: string,
-  expected: string,
-): Promise<void> {
-  const deadline = performance.now() + 10_000;
-  while (performance.now() < deadline) {
-    const res = await inst.rest("GET", `/api/v1/tasks/${taskId}/status`);
-    if ((res.body as JsonObject).executionState === expected) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error(`task ${taskId} did not reach executionState=${expected}`);
-}
-
 async function waitSettled(state: State): Promise<void> {
   const ownerMax = (
     readRows(
@@ -417,10 +397,13 @@ export default scenario<State>({
              AND m.body LIKE '%report delivered to archived parent%'
              AND d.status = 'delivered'`,
         );
-        await waitForExecutionState(
-          client.instance("hub"),
-          state.archiveParentId,
-          "idle",
+        await waitForRows(
+          state.hubDb,
+          `SELECT 1 FROM events WHERE task_id = '${state.archiveParentId}' AND type = 'assistant_message' AND data LIKE '%Archived parent received report.%'`,
+        );
+        await waitForRows(
+          state.hubDb,
+          `SELECT 1 FROM events WHERE task_id = '${state.archiveParentId}' AND type = 'prompt_done' AND seq > (SELECT seq FROM events WHERE task_id = '${state.archiveParentId}' AND type = 'assistant_message' AND data LIKE '%Archived parent received report.%' ORDER BY seq DESC LIMIT 1)`,
         );
         await waitSettled(state);
         return {
