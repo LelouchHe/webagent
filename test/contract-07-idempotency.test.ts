@@ -9,7 +9,6 @@ import Database from "better-sqlite3";
 import { AgentRegistry } from "../src/agent-registry.ts";
 import { AuthStore } from "../src/auth-store.ts";
 import { ExecutionAuthority } from "../src/execution-authority.ts";
-import { LinkSyncOwner } from "../src/host/link-sync.ts";
 import { createLocalTaskOps } from "../src/host/local/adapter.ts";
 import { createTaskHost } from "../src/host/tasks.ts";
 import { createRequestHandler } from "../src/http/routes.ts";
@@ -120,7 +119,6 @@ async function createHarness(existingDir?: string): Promise<Harness> {
   await authStore.load();
   const apiToken = (await authStore.addToken("browser", "api")).token;
   const hostToken = (await authStore.addToken("hub-a", "host")).token;
-  const linkSyncOwner = new LinkSyncOwner(store);
 
   const sseManager = {
     broadcast(event: AgentEvent) {
@@ -133,7 +131,6 @@ async function createHarness(existingDir?: string): Promise<Harness> {
     store,
     tasks,
     taskOps,
-    linkSyncOwner,
     authStore,
     sseManager,
     publicDir,
@@ -309,12 +306,14 @@ describe("contract-07: client_ops removal and fixed task create namespace", () =
     const promptOpId = "op-legacy-prompt";
     const ingressOpId = "op-legacy-ingress";
 
+    // Seed a pre-migration TEXT timestamp column and bare-UTC string values so
+    // any restored timestamp-migration entry for client_ops would mutate it.
     dbCheck.exec(`
       CREATE TABLE client_ops (
         task_id      TEXT NOT NULL,
         client_op_id TEXT NOT NULL,
         result_json  TEXT NOT NULL,
-        created_at   INTEGER NOT NULL DEFAULT 0,
+        created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
         PRIMARY KEY (task_id, client_op_id)
       );
     `);
@@ -329,7 +328,7 @@ describe("contract-07: client_ops removal and fixed task create namespace", () =
           status: 200,
           body: { ok: true, sentinel: "legacy-perm" },
         }),
-        created_at: 1700000001000,
+        created_at: "2026-09-19 15:51:07.101",
       },
       {
         task_id: taskId,
@@ -338,7 +337,7 @@ describe("contract-07: client_ops removal and fixed task create namespace", () =
           status: 200,
           body: { ok: true, status: "cancelled", sentinel: "legacy-cancel" },
         }),
-        created_at: 1700000002000,
+        created_at: "2026-09-19 15:51:07.102",
       },
       {
         task_id: taskId,
@@ -347,7 +346,7 @@ describe("contract-07: client_ops removal and fixed task create namespace", () =
           status: 202,
           body: { status: "accepted", sentinel: "legacy-prompt" },
         }),
-        created_at: 1700000003000,
+        created_at: "2026-09-19 15:51:07.103",
       },
       {
         task_id: "__ingress__",
@@ -356,7 +355,7 @@ describe("contract-07: client_ops removal and fixed task create namespace", () =
           status: 200,
           body: { id: "msg-legacy-sentinel", delivered: "pending" },
         }),
-        created_at: 1700000004000,
+        created_at: "2026-09-19 15:51:07.104",
       },
     ];
     for (const row of legacyRows) {
@@ -438,7 +437,11 @@ describe("contract-07: client_ops removal and fixed task create namespace", () =
     assert.notEqual(ingressRes.body.id, "msg-legacy-sentinel");
     assert.equal(ingressRes.body.delivered, "pending");
 
-    // 4. Orphan table DDL and legacy rows remain untouched after boot and calls.
+    // 4. Delete the seeded task to prove task deletion does not touch the
+    //    orphan client_ops table, then assert DDL and rows remain unchanged.
+    await waitUntil(() => !h.tasks.activePrompts.has(taskId));
+    const deleted = h.store.deleteTask(taskId);
+    assert.ok(deleted, "seeded task should be deleted");
     await h.close();
     openHarnesses.pop();
     const dbAfter = new Database(dbPath, { readonly: true });

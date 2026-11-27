@@ -336,8 +336,8 @@ function readBodyRaw(req: IncomingMessage): Promise<string> {
 
 /**
  * Leniently parse the `X-Client-Op-Id` request header (1..128 chars).
- * Used for deterministic op identity on create / collaboration messages and
- * for browser echo correlation on prompt / lifecycle SSE events.
+ * Used for deterministic op identity on create and for browser echo
+ * correlation on prompt / lifecycle SSE events.
  */
 function getClientOpId(req: IncomingMessage): string | null {
   const v = req.headers["x-client-op-id"];
