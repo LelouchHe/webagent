@@ -3,10 +3,7 @@
 
 import type { ConfigOption, TaskDetail, TaskSummary } from "../../src/types.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
-import {
-  isCollaborationDeliveryStatus,
-  type CollaborationDeliveryStatus,
-} from "../../src/shared/delivery-status.ts";
+import type { CollaborationDeliveryStatus } from "../../src/shared/delivery-status.ts";
 
 export class ApiError extends Error {
   name = "ApiError";
@@ -302,148 +299,6 @@ export type CollaborationMessageSendResult =
 
 const COLLABORATION_MESSAGE_RETRIES = 2;
 
-function extractErrorMessage(body: unknown, status: number): string {
-  if (body && typeof body === "object" && !Array.isArray(body)) {
-    const err = (body as Record<string, unknown>).error;
-    if (typeof err === "string" && err.length > 0) return err;
-    if (err !== undefined && err !== null) return JSON.stringify(err);
-  }
-  return `HTTP ${status}`;
-}
-
-function parseCollaborationAccepted(
-  raw: unknown,
-  expectedOpId: string | null,
-): CollaborationMessageAccepted | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const value = raw as Record<string, unknown>;
-  if (
-    typeof value.messageId !== "string" ||
-    value.messageId.length === 0 ||
-    typeof value.deliveryId !== "string" ||
-    value.deliveryId.length === 0 ||
-    !isCollaborationDeliveryStatus(value.status)
-  ) {
-    return null;
-  }
-  if (expectedOpId !== null) {
-    if (value.clientOpId !== expectedOpId) return null;
-  } else if (value.clientOpId !== undefined) {
-    return null;
-  }
-  return {
-    messageId: value.messageId,
-    deliveryId: value.deliveryId,
-    status: value.status,
-    ...(typeof value.clientOpId === "string"
-      ? { clientOpId: value.clientOpId }
-      : {}),
-  };
-}
-
-function readTextWithinSignal(
-  res: Response,
-  signal: AbortSignal | undefined,
-): Promise<string | null> {
-  if (!signal) {
-    return res.text().catch(() => null);
-  }
-  if (signal.aborted) return Promise.resolve(null);
-  return new Promise<string | null>((resolve) => {
-    const onAbort = () => {
-      resolve(null);
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    res.text().then(
-      (text) => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(text);
-      },
-      () => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(null);
-      },
-    );
-  });
-}
-
-async function sendCollaborationMessageOnce(
-  url: string,
-  payload: { targetTaskId: string; body: string },
-  clientOpId: string | null,
-): Promise<CollaborationMessageSendResult> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (clientOpId !== null) headers["X-Client-Op-Id"] = clientOpId;
-  try {
-    return await withTimeout(async (signal) => {
-      const res = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payload),
-        ...(signal ? { signal } : {}),
-      });
-      // Classify definite 4xx refusal as soon as headers arrive: if reading
-      // the error body fails or stalls, keep the refusal and fall back to status.
-      if (
-        res.status >= HTTP_STATUS.BAD_REQUEST &&
-        res.status < HTTP_STATUS.INTERNAL_SERVER_ERROR
-      ) {
-        const text = await readTextWithinSignal(res, signal);
-        let parsed: unknown = null;
-        if (text) {
-          try {
-            parsed = JSON.parse(text) as unknown;
-          } catch {
-            parsed = null;
-          }
-        }
-        return {
-          kind: "rejected",
-          status: res.status,
-          message: extractErrorMessage(parsed, res.status),
-        };
-      }
-      if (res.status !== HTTP_STATUS.ACCEPTED) {
-        // Cancel the discarded response stream without waiting for cleanup so
-        // stalled 5xx / non-202 bodies do not leak open connections across retries.
-        void res.body?.cancel().catch(() => {});
-        return { kind: "unknown", message: `HTTP ${res.status}` };
-      }
-      const text = await readTextWithinSignal(res, signal);
-      if (!text) {
-        return {
-          kind: "unknown",
-          message: "Invalid collaboration acceptance response",
-        };
-      }
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(text) as unknown;
-      } catch {
-        return {
-          kind: "unknown",
-          message: "Invalid collaboration acceptance response",
-        };
-      }
-      const accepted = parseCollaborationAccepted(parsed, clientOpId);
-      if (!accepted) {
-        return {
-          kind: "unknown",
-          message: "Invalid collaboration acceptance response",
-        };
-      }
-      return { kind: "accepted", response: accepted };
-    }, DEFAULT_TIMEOUT_MS);
-  } catch (err) {
-    return {
-      kind: "unknown",
-      message: err instanceof Error ? err.message : String(err),
-    };
-  }
-}
-
 export async function sendCollaborationMessage(
   sourceTaskId: string,
   targetTaskId: string,
@@ -451,18 +306,33 @@ export async function sendCollaborationMessage(
   clientOpId: string | null,
 ): Promise<CollaborationMessageSendResult> {
   const url = `/api/v1/tasks/${encodeURIComponent(sourceTaskId)}/messages`;
-  const payload = { targetTaskId, body };
-  const maxRetries = clientOpId === null ? 0 : COLLABORATION_MESSAGE_RETRIES;
-  let result = await sendCollaborationMessageOnce(url, payload, clientOpId);
-  for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
-    if (result.kind !== "unknown") return result;
-    const next = await sendCollaborationMessageOnce(url, payload, clientOpId);
-    // Once an earlier attempt had an unknown outcome, a later 4xx cannot
-    // prove the original request did not commit.
-    if (next.kind === "rejected") return result;
-    result = next;
+  const maxAttempts =
+    clientOpId === null ? 1 : 1 + COLLABORATION_MESSAGE_RETRIES;
+  let lastUnknown: { kind: "unknown"; message: string } | null = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      const response = await post<CollaborationMessageAccepted>(
+        url,
+        { targetTaskId, body },
+        clientOpId ?? undefined,
+      );
+      return { kind: "accepted", response };
+    } catch (err) {
+      if (
+        err instanceof ApiError &&
+        err.status >= HTTP_STATUS.BAD_REQUEST &&
+        err.status < HTTP_STATUS.INTERNAL_SERVER_ERROR
+      ) {
+        if (lastUnknown !== null) return lastUnknown;
+        return { kind: "rejected", status: err.status, message: err.message };
+      }
+      lastUnknown = {
+        kind: "unknown",
+        message: err instanceof Error ? err.message : String(err),
+      };
+    }
   }
-  return result;
+  return lastUnknown!;
 }
 
 /** A remote child in a list read; it follows its local parent. */

@@ -211,7 +211,7 @@ describe("api module", () => {
     );
   });
 
-  it("sendCollaborationMessage posts a structured target and body and validates acceptance", async () => {
+  it("sendCollaborationMessage posts a structured target, body, and X-Client-Op-Id", async () => {
     const acceptedBody = {
       messageId: "message-1",
       deliveryId: "delivery-1",
@@ -244,7 +244,7 @@ describe("api module", () => {
     assert.deepEqual(result, { kind: "accepted", response: acceptedBody });
   });
 
-  it("sendCollaborationMessage does not retry first-attempt 4xx rejection, even when reading the body fails", async () => {
+  it("sendCollaborationMessage does not retry first-attempt 4xx rejection", async () => {
     fetchResponse = {
       status: 404,
       ok: false,
@@ -263,64 +263,9 @@ describe("api module", () => {
       status: 404,
       message: "Target task not found",
     });
-
-    // A 4xx whose body read fails must still classify as rejected without retrying.
-    fetchCalls = [];
-    fetchResponse = {
-      status: 404,
-      ok: false,
-      json: () => Promise.reject(new Error("stream reset")),
-      text: () => Promise.reject(new Error("stream reset")),
-    };
-    const brokenBody = await api.sendCollaborationMessage(
-      "s1",
-      "t1",
-      "hello",
-      "op-reject-broken",
-    );
-    assert.equal(fetchCalls.length, 1);
-    assert.deepEqual(brokenBody, {
-      kind: "rejected",
-      status: 404,
-      message: "HTTP 404",
-    });
   });
 
-  it("sendCollaborationMessage accepts only 202 and treats other 2xx statuses as unknown", async () => {
-    fetchResponse = {
-      status: 200,
-      ok: true,
-      json: () =>
-        Promise.resolve({
-          messageId: "m1",
-          deliveryId: "d1",
-          status: "queued",
-          clientOpId: "op-200",
-        }),
-      text: () =>
-        Promise.resolve(
-          JSON.stringify({
-            messageId: "m1",
-            deliveryId: "d1",
-            status: "queued",
-            clientOpId: "op-200",
-          }),
-        ),
-    };
-    const result = await api.sendCollaborationMessage(
-      "s1",
-      "t1",
-      "hello",
-      "op-200",
-    );
-    assert.equal(fetchCalls.length, 3);
-    assert.deepEqual(result, {
-      kind: "unknown",
-      message: "HTTP 200",
-    });
-  });
-
-  it("sendCollaborationMessage retries unknown outcomes with the same opId and treats invalid 2xx bodies as unknown", async () => {
+  it("sendCollaborationMessage retries unknown outcomes with the same opId and skips retries when opId is null", async () => {
     let attempt = 0;
     (globalThis as any).fetch = (
       url: string | URL | Request,
@@ -333,23 +278,23 @@ describe("api module", () => {
         return Promise.reject(new TypeError("Failed to fetch"));
       }
       if (attempt === 2) {
-        // Missing echoed clientOpId -> not a valid acceptance response.
         return Promise.resolve({
-          status: 202,
-          ok: true,
-          text: () =>
-            Promise.resolve(
-              JSON.stringify({
-                messageId: "m1",
-                deliveryId: "d1",
-                status: "queued",
-              }),
-            ),
+          status: 503,
+          ok: false,
+          json: () => Promise.resolve({ error: "unavailable" }),
+          text: () => Promise.resolve('{"error":"unavailable"}'),
         });
       }
       return Promise.resolve({
         status: 202,
         ok: true,
+        json: () =>
+          Promise.resolve({
+            messageId: "m1",
+            deliveryId: "d1",
+            status: "delivered",
+            clientOpId: "op-retry",
+          }),
         text: () =>
           Promise.resolve(
             JSON.stringify({
@@ -384,6 +329,29 @@ describe("api module", () => {
         clientOpId: "op-retry",
       },
     });
+
+    // With clientOpId === null, unknown outcomes are not retried and no header is sent.
+    fetchCalls = [];
+    (globalThis as any).fetch = (
+      url: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      // eslint-disable-next-line @typescript-eslint/no-base-to-string
+      fetchCalls.push({ url: String(url), init });
+      return Promise.reject(new TypeError("Failed to fetch"));
+    };
+    const nullResult = await api.sendCollaborationMessage(
+      "s1",
+      "t1",
+      "hello",
+      null,
+    );
+    assert.equal(fetchCalls.length, 1);
+    assert.equal(
+      (fetchCalls[0].init!.headers as Record<string, string>)["X-Client-Op-Id"],
+      undefined,
+    );
+    assert.equal(nullResult.kind, "unknown");
   });
 
   it("sendCollaborationMessage returns unknown when a 4xx follows an unknown attempt or retries are exhausted", async () => {
@@ -399,12 +367,14 @@ describe("api module", () => {
         return Promise.resolve({
           status: 503,
           ok: false,
+          json: () => Promise.resolve({ error: "unavailable" }),
           text: () => Promise.resolve('{"error":"unavailable"}'),
         });
       }
       return Promise.resolve({
         status: 409,
         ok: false,
+        json: () => Promise.resolve({ error: "conflict" }),
         text: () => Promise.resolve('{"error":"conflict"}'),
       });
     };
@@ -429,6 +399,7 @@ describe("api module", () => {
       return Promise.resolve({
         status: 502,
         ok: false,
+        json: () => Promise.resolve({}),
         text: () => Promise.resolve(""),
       });
     };
@@ -440,120 +411,6 @@ describe("api module", () => {
     );
     assert.equal(fetchCalls.length, 3);
     assert.equal(exhausted.kind, "unknown");
-  });
-
-  it("sendCollaborationMessage cancels discarded non-202/non-4xx response bodies without awaiting cleanup", async () => {
-    let cancelCalls = 0;
-    (globalThis as any).fetch = (
-      url: string | URL | Request,
-      init?: RequestInit,
-    ) => {
-      // eslint-disable-next-line @typescript-eslint/no-base-to-string
-      fetchCalls.push({ url: String(url), init });
-      return Promise.resolve({
-        status: 502,
-        ok: false,
-        body: {
-          cancel() {
-            cancelCalls += 1;
-            // Never settles: proves sendCollaborationMessage does not await cleanup.
-            return new Promise<void>(() => {});
-          },
-        },
-        text: () => new Promise<string>(() => {}),
-      });
-    };
-
-    const result = await api.sendCollaborationMessage(
-      "s1",
-      "t1",
-      "hello",
-      "op-502-cancel",
-    );
-    assert.equal(fetchCalls.length, 3);
-    assert.equal(cancelCalls, 3);
-    assert.deepEqual(result, { kind: "unknown", message: "HTTP 502" });
-  });
-
-  it("sendCollaborationMessage settles and aborts stalled 4xx and 202 response bodies at deadline", async () => {
-    const realSetTimeout = globalThis.setTimeout;
-    const raceDeadline = <T>(promise: Promise<T>): Promise<T> =>
-      Promise.race([
-        promise,
-        new Promise<T>((_, reject) => {
-          realSetTimeout(() => {
-            reject(new Error("stalled past deadline"));
-          }, 500);
-        }),
-      ]);
-
-    globalThis.setTimeout = ((
-      fn: (...args: unknown[]) => void,
-      ms?: number,
-      ...args: unknown[]
-    ) =>
-      realSetTimeout(
-        fn,
-        ms === api.DEFAULT_TIMEOUT_MS ? 5 : ms,
-        ...args,
-      )) as typeof globalThis.setTimeout;
-
-    try {
-      // Stalled 4xx body: 1 attempt, rejected with status fallback, request aborted.
-      const signals4xx: AbortSignal[] = [];
-      (globalThis as any).fetch = (
-        url: string | URL | Request,
-        init?: RequestInit,
-      ) => {
-        // eslint-disable-next-line @typescript-eslint/no-base-to-string
-        fetchCalls.push({ url: String(url), init });
-        if (init?.signal) signals4xx.push(init.signal);
-        return Promise.resolve({
-          status: 404,
-          ok: false,
-          text: () => new Promise<string>(() => {}),
-        });
-      };
-
-      const res4xx = await raceDeadline(
-        api.sendCollaborationMessage("s1", "t1", "hello", "op-stall-404"),
-      );
-      assert.equal(fetchCalls.length, 1);
-      assert.deepEqual(res4xx, {
-        kind: "rejected",
-        status: 404,
-        message: "HTTP 404",
-      });
-      assert.equal(signals4xx.length, 1);
-      assert.equal(signals4xx[0].aborted, true);
-
-      // Stalled 202 body: bounded attempts (3), unknown, every attempt aborted.
-      fetchCalls = [];
-      const signals202: AbortSignal[] = [];
-      (globalThis as any).fetch = (
-        url: string | URL | Request,
-        init?: RequestInit,
-      ) => {
-        // eslint-disable-next-line @typescript-eslint/no-base-to-string
-        fetchCalls.push({ url: String(url), init });
-        if (init?.signal) signals202.push(init.signal);
-        return Promise.resolve({
-          status: 202,
-          ok: true,
-          text: () => new Promise<string>(() => {}),
-        });
-      };
-
-      const res202 = await raceDeadline(
-        api.sendCollaborationMessage("s1", "t1", "hello", "op-stall-202"),
-      );
-      assert.equal(fetchCalls.length, 3);
-      assert.equal(res202.kind, "unknown");
-      assert.equal(signals202.length, 3);
-      assert.ok(signals202.every((signal) => signal.aborted));
-    } finally {
-      globalThis.setTimeout = realSetTimeout;
-    }
   });
 
   it("listTasks returns the agent-scoped task array", async () => {
