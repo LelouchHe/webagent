@@ -28,7 +28,10 @@ import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { handleShareRoutes } from "../share/routes.ts";
 import { handleFileRoutes } from "../files/routes.ts";
-import { handleCancelTaskRoute } from "./task-lifecycle.ts";
+import {
+  handleCancelTaskRoute,
+  handleDeleteTaskRoute,
+} from "./task-lifecycle.ts";
 import {
   authenticate,
   isHostScopeAllowedPath,
@@ -3080,120 +3083,18 @@ export function createRequestHandler(
 
         // DELETE /api/v1/tasks/:id
         if (req.method === "DELETE") {
-          const clientOpId = getClientOpId(req);
-          const task = store.getTask(taskId);
-          if (!task) {
-            json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
-            return;
-          }
-          if (tasks && tasks.getGateBusyKind(taskId) !== null) {
-            const busyPath = store.getTaskPath(taskId) ?? taskId;
-            json(res, HTTP_STATUS.CONFLICT, {
-              error: `Cancel active work in ${busyPath} before deleting this task`,
-            });
-            return;
-          }
-          // The cascade removes descendants too; gate on their busy state as
-          // well so deleting an idle parent cannot silently abort an
-          // in-flight prompt or bash run in a child. Name that child by its
-          // path: the user clicked a different task and has to know where the
-          // active work actually is.
-          if (tasks) {
-            const busyDescendant = store
-              .getDescendantTaskIds(taskId)
-              .find(
-                (descendantId) => tasks.getGateBusyKind(descendantId) !== null,
-              );
-            if (busyDescendant) {
-              const busyPath =
-                store.getTaskPath(busyDescendant) ?? busyDescendant;
-              json(res, HTTP_STATUS.CONFLICT, {
-                error: `Cancel active work in ${busyPath} before deleting this task`,
-              });
-              return;
-            }
-          }
-          try {
-            if (taskId === store.rootTaskId) {
-              if (!tasks) {
-                json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-                  error: "Task manager not available",
-                });
-                return;
-              }
-              // Exiting Root deletes the whole tree and replaces Root with a
-              // fresh one, made live before this answers. The agent the new
-              // Root runs on is checked before anything is destroyed (see
-              // `exitRoot`); retirement follows each removed binding's agent.
-              const result = await tasks.exitRoot();
-              const replacedBy = result.rootTaskId;
-              for (const entry of result.affected) {
-                sseManager.broadcast({
-                  type: "task_deleted",
-                  taskId: entry.id,
-                  agentId: entry.agentId,
-                  // Every client viewing the old Root follows to its
-                  // replacement, so the initiator's echo and its own answer
-                  // name the same next task whichever arrives first.
-                  ...(entry.id === taskId
-                    ? { parentId: null, replacedBy }
-                    : {}),
-                  ...(entry.id === taskId && clientOpId ? { clientOpId } : {}),
-                });
-              }
-              const root = store.getTask(replacedBy);
-              if (root) {
-                sseManager.broadcast({
-                  type: "task_created",
-                  taskId: root.id,
-                  ...activationFields(root, { taskId: root.id }),
-                  title: root.title,
-                  configOptions: tasks.applyStoredConfig(
-                    tasks.configOptionsForTask(root.id),
-                    root,
-                  ),
-                  agentCommands: tasks.getAgentCommands(root.id),
-                });
-              }
-              json(res, HTTP_STATUS.OK, {
-                taskId,
-                parentId: null,
-                replacedBy,
-                ...(clientOpId ? { clientOpId } : {}),
-              });
-              return;
-            }
-
-            const affectedStore = tasks
-              ? await tasks.deleteTask(undefined, taskId)
-              : store.deleteTask(taskId);
-            for (const entry of affectedStore.affected) {
-              sseManager.broadcast({
-                type: "task_deleted",
-                taskId: entry.id,
-                agentId: entry.agentId,
-                ...(entry.id === taskId ? { parentId: task.parent_id } : {}),
-                ...(entry.id === taskId && clientOpId ? { clientOpId } : {}),
-              });
-            }
-            json(res, HTTP_STATUS.OK, {
-              taskId,
-              parentId: task.parent_id,
-              ...(clientOpId ? { clientOpId } : {}),
-            });
-          } catch (err) {
-            const status =
-              err instanceof TaskNotFoundError
-                ? HTTP_STATUS.NOT_FOUND
-                : err instanceof TaskBusyError
-                  ? HTTP_STATUS.CONFLICT
-                  : err instanceof AgentUnavailableError
-                    ? HTTP_STATUS.SERVICE_UNAVAILABLE
-                    : HTTP_STATUS.BAD_REQUEST;
-            json(res, status, {
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
+          await handleDeleteTaskRoute({
+            req,
+            res,
+            taskId,
+            principal: getPrincipal(req),
+            clientOpId: getClientOpId(req),
+            store,
+            tasks,
+            sseManager,
+            activationFields,
+            json,
+          });
           return;
         }
       }

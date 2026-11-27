@@ -9,12 +9,15 @@ import {
 } from "../api/tasks.ts";
 import type { TokenRecord } from "../auth-store.ts";
 import { HTTP_STATUS } from "../http-status.ts";
-import type { Store } from "../store.ts";
+import { AgentUnavailableError } from "../agent-registry.ts";
+import type { Store, TaskRow } from "../store.ts";
 import {
   AgentNotReadyError,
+  TaskBusyError,
   TaskNotFoundError,
   type TaskManager,
 } from "../task-manager.ts";
+import type { SseManager } from "../sse-manager.ts";
 
 const HostCancelBodySchema = z.union([
   z.object({ kind: z.literal("user") }).strict(),
@@ -213,4 +216,142 @@ export async function handleCancelTaskRoute(
   const okBody = { ok: true, status: result.status };
   saveClientOpResult(store, entry.opId, taskId, status, okBody);
   json(res, status, okBody);
+}
+
+export interface DeleteTaskRouteContext {
+  req: IncomingMessage;
+  res: ServerResponse;
+  taskId: string;
+  principal?: TokenRecord;
+  clientOpId: string | null;
+  store: Store;
+  tasks?: TaskManager;
+  sseManager: SseManager;
+  activationFields: (
+    task: TaskRow,
+    opts: { taskId: string },
+  ) => Record<string, unknown>;
+  json: (
+    res: ServerResponse,
+    status: number,
+    data: unknown,
+    req?: IncomingMessage,
+  ) => void;
+}
+
+async function handleExitRootDelete(
+  ctx: DeleteTaskRouteContext,
+): Promise<void> {
+  const {
+    res,
+    taskId,
+    clientOpId,
+    store,
+    tasks,
+    sseManager,
+    activationFields,
+    json,
+  } = ctx;
+  if (!tasks) {
+    json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
+      error: "Task manager not available",
+    });
+    return;
+  }
+  const result = await tasks.exitRoot();
+  const replacedBy = result.rootTaskId;
+  for (const entry of result.affected) {
+    sseManager.broadcast({
+      type: "task_deleted",
+      taskId: entry.id,
+      agentId: entry.agentId,
+      ...(entry.id === taskId ? { parentId: null, replacedBy } : {}),
+      ...(entry.id === taskId && clientOpId ? { clientOpId } : {}),
+    });
+  }
+  const root = store.getTask(replacedBy);
+  if (root) {
+    sseManager.broadcast({
+      type: "task_created",
+      taskId: root.id,
+      ...activationFields(root, { taskId: root.id }),
+      title: root.title,
+      configOptions: tasks.applyStoredConfig(
+        tasks.configOptionsForTask(root.id),
+        root,
+      ),
+      agentCommands: tasks.getAgentCommands(root.id),
+    });
+  }
+  json(res, HTTP_STATUS.OK, {
+    taskId,
+    parentId: null,
+    replacedBy,
+    ...(clientOpId ? { clientOpId } : {}),
+  });
+}
+
+export async function handleDeleteTaskRoute(
+  ctx: DeleteTaskRouteContext,
+): Promise<void> {
+  const { res, taskId, clientOpId, store, tasks, sseManager, json } = ctx;
+  const task = store.getTask(taskId);
+  if (!task) {
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
+    return;
+  }
+  if (tasks && tasks.getGateBusyKind(taskId) !== null) {
+    const busyPath = store.getTaskPath(taskId) ?? taskId;
+    json(res, HTTP_STATUS.CONFLICT, {
+      error: `Cancel active work in ${busyPath} before deleting this task`,
+    });
+    return;
+  }
+  if (tasks) {
+    const busyDescendant = store
+      .getDescendantTaskIds(taskId)
+      .find((descendantId) => tasks.getGateBusyKind(descendantId) !== null);
+    if (busyDescendant) {
+      const busyPath = store.getTaskPath(busyDescendant) ?? busyDescendant;
+      json(res, HTTP_STATUS.CONFLICT, {
+        error: `Cancel active work in ${busyPath} before deleting this task`,
+      });
+      return;
+    }
+  }
+  try {
+    if (taskId === store.rootTaskId) {
+      await handleExitRootDelete(ctx);
+      return;
+    }
+    const affectedStore = tasks
+      ? await tasks.deleteTask(undefined, taskId)
+      : store.deleteTask(taskId);
+    for (const entry of affectedStore.affected) {
+      sseManager.broadcast({
+        type: "task_deleted",
+        taskId: entry.id,
+        agentId: entry.agentId,
+        ...(entry.id === taskId ? { parentId: task.parent_id } : {}),
+        ...(entry.id === taskId && clientOpId ? { clientOpId } : {}),
+      });
+    }
+    json(res, HTTP_STATUS.OK, {
+      taskId,
+      parentId: task.parent_id,
+      ...(clientOpId ? { clientOpId } : {}),
+    });
+  } catch (err) {
+    const status =
+      err instanceof TaskNotFoundError
+        ? HTTP_STATUS.NOT_FOUND
+        : err instanceof TaskBusyError
+          ? HTTP_STATUS.CONFLICT
+          : err instanceof AgentUnavailableError
+            ? HTTP_STATUS.SERVICE_UNAVAILABLE
+            : HTTP_STATUS.BAD_REQUEST;
+    json(res, status, {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
