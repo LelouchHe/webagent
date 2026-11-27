@@ -182,20 +182,27 @@ transaction:
 ```
 
 The REST collaboration message route has its own handler and collaborator.
-Store keeps a thin delegate; the route never imports `src/store/`:
+Store keeps a thin delegate; the route never imports `src/store/`. Unlike the
+multi-host collaborators above, `CollaborationMessagesStore` opens its own
+transaction:
 
 ```text
- http/routes.ts ── dispatch ──► http/collaboration-messages-route.ts
-                                 op-id header, body shape, caller scope,
-                                 messageId = opIdentity(fixed ns, token, opId)
-                                        │ store.createOrReplayCollaborationMessage
-                                        ▼
- Store (delegate) ──────────► CollaborationMessagesStore (store/collaboration-messages.ts)
-                               one tx: source → replay / conflict → target → insert
-                               messages, message_projections, deliveries, source event
-                                        │ created | replayed | conflict | not found
-                                        ▼
-                               route: 202 (+ activity, SSE, drain only when created)
+ http/routes.ts  authentication and route scope (401/403)
+        │ dispatch
+        ▼
+ http/collaboration-messages-route.ts
+   host-scope token → 403; X-Client-Op-Id present but invalid → 400; body shape → 400
+   messageId = opIdentity(fixed ns, token:<authenticated name>, opId) | random if no header
+        │ store.createOrReplayCollaborationMessage
+        ▼
+ Store (delegate) ──► CollaborationMessagesStore (store/collaboration-messages.ts), one tx:
+   source live? ─ no ─────────────────────────────► source_not_found ─► 404
+   row for messageId? ─ yes, same content ────────► replayed ─────────► 202, no effects
+                      ─ yes, differs ─────────────► conflict ─────────► 409
+   target live? ─ no ─────────────────────────────► target_not_found ─► 404
+   target = source? ─ yes ────────────────────────► same_task ────────► 400
+   insert messages, projections, delivery, event ─► created ──────────► activity, SSE,
+                                                                        202, then drain
 ```
 
 Behavior that spans these modules:
@@ -281,8 +288,9 @@ Activating push on a device and troubleshooting are in
   ([Multi-host: Idempotent operations](./multi-host.md#idempotent-operations)).
   Four REST routes still replay a cached result from `client_ops`, keyed by
   `(task_id, client_op_id)`: permission responses, cancel, prompt, and message
-  ingress. Task create and delete only echo the op
-  id into their broadcasts for correlation. MCP tools carry no op id.
+  ingress. Task delete uses the op id only to correlate its HTTP response and
+  broadcast. MCP callers supply no op id; `task_create` generates one and
+  passes it to the shared create path.
 - **Errors** — REST answers with an HTTP status and a JSON `{ error }` body;
   MCP answers with tool-error text written for the calling agent
   (`src/mcp/create-errors.ts` for `task_create`).

@@ -101,34 +101,46 @@ Root id, because Root exit rotates the Root id while archived Tasks can still
 message each other:
 
 ```text
- messageId = opIdentity(COLLABORATION_MESSAGE_NAMESPACE, token:<token name>, opId)
+ with X-Client-Op-Id:  messageId = opIdentity(COLLABORATION_MESSAGE_NAMESPACE, token:<authenticated token name>, opId)
+ without the header:   messageId is random (no replay)
 ```
 
 ```text
- browser (@ send)                                 server
-  |-- POST /tasks/S/messages  Op-Id: K ----------->|  auth, op id + body shape (400)
-  |                                                |  one tx: source S live (404), no row
-  |                                                |    target live (404), not self (400)
-  |                                                |    insert Message + Delivery (queued)
-  |      x  response lost (unknown)                |  activity, source SSE, drain
-  |-- POST /tasks/S/messages  Op-Id: K (retry) --->|  one tx: source live, row exists, same
-  |                                                |    source/target/body
-  |<--- 202 same messageId/deliveryId, current ----|  nothing written; no activity, SSE, drain
-  |     delivery status: queued, delivered, failed |
-  | outcome: accepted                              |
+ browser (@ send)                                  server
+  |-- POST /api/v1/tasks/S/messages --------------->|  auth (401/403), X-Client-Op-Id (400),
+  |     X-Client-Op-Id: K                           |  body shape (400)
+  |                                                 |  one tx: source S live (404); no row for
+  |                                                 |    messageId; target live (404), not
+  |                                                 |    self (400); insert Message + Delivery
+  |                                                 |  source activity, source SSE
+  |      x  202 {ids, queued, clientOpId: K} lost <-|  then start drain
+  | attempt unknown: retry with the same K          |
+  |-- POST /api/v1/tasks/S/messages --------------->|  auth, X-Client-Op-Id, body shape again
+  |     X-Client-Op-Id: K                           |  one tx: source S live (404); row exists,
+  |                                                 |    same source/target/body (else 409)
+  |<-- 202 {same ids, current status, clientOpId} --|  nothing written; no activity, SSE, drain
+  | valid body + echo K: accepted                   |
 ```
 
 The stored source, target, and verbatim body are compared before any target
 check, so a known op id with different content is `409` even if the target is
 now gone. A present but empty or over-long op id is `400`; no header keeps the
-non-idempotent path. The browser classifies each attempt by HTTP status as soon
-as headers arrive: only `202` with the expected body is acceptance, a first
-`4xx` is a definite rejection, and once an attempt was unknown, a later `4xx`
-leaves the whole send unknown, because it cannot prove the first attempt did
-not commit. Replay recovers acceptance only; effects missed by a crash after
-commit are recovered by the normal drain. The remaining mutating REST routes
-(ingress, prompt, permission response, local cancel) still use the
-`client_ops` result cache until plan step 5.
+non-idempotent path. Every attempt, retries included, passes authentication and
+the header and body checks first.
+
+The browser classifies each attempt. A `4xx` is known from the status alone,
+even if its body cannot be read. Acceptance needs `202` and a valid body: the
+message id, delivery id, delivery status, and the echoed op id. Network errors,
+the deadline, an invalid acceptance body, and any other status are unknown and
+are retried a bounded number of times with the same op id. Once an attempt was
+unknown, a later `4xx` leaves the whole send unknown, because it cannot prove
+the earlier attempt did not commit.
+
+Replay recovers the acceptance only. If the process stops after the commit but
+before the source activity update, source SSE, or drain, replay does not redo
+them; the queued delivery waits for an ordinary drain. The four routes that
+still use the `client_ops` result cache (ingress, prompt, permission response,
+local cancel) move to construction in the same plan step.
 
 ## Link transport
 

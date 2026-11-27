@@ -31,23 +31,27 @@ time. An entry without a "closing condition" is a wish, not an issue.
   not add a tombstone table for it.
 - **`client_ops` is a result cache rather than structural idempotency.**
   `POST /api/v1/messages` writes under the synthetic task id `__ingress__`;
-  `pruneClientOps` has no production caller so rows grow monotonically (as of
+  `pruneClientOps` has no production caller, so rows go only when their task is
+  deleted and `__ingress__` rows are never removed (as of
   2026-11-25, dogfood hub held 515 rows: 245 `__ingress__` and 398 referencing
   task ids no longer in `tasks`); and results are saved in a separate commit
   after execution, making replay non-atomic. REST collaboration messages no
-  longer use it. *Closing:* migrate the remaining mutating REST routes
-  (ingress, prompt, permission response, local cancel) to structural
-  idempotency and delete `client_ops` in plan v7 step 5.
+  longer use it. *Closing:* move its four remaining users (ingress, prompt,
+  permission response, local cancel) to structural idempotency and delete
+  `client_ops` in plan v7 step 5.
 - **Task create derives its id from the current Root id.** Local and host
   create use `opIdentity(rootTaskId, …)`; Root exit rotates the Root id, so a
-  create retried across a Root exit with the same op id creates a second Task.
+  create retried across a Root exit with the same op id derives a different id
+  and, if the request is still admissible (for example its parent still
+  exists), creates a new Task instead of replaying.
   Collaboration messages already use a fixed namespace. *Closing:* move create
   to a fixed namespace in a later step-5 slice.
 - **A browser retry uses whatever token is current.** The `@` send keeps one op
   id across retries, but each attempt reads the stored token; if another tab
   signs in under a different token name between attempts, the retry derives a
-  different Message id and the message can be delivered twice. Requires a lost
-  response and a token swap inside the retry window. *Closing:* a real browser
+  different Message id and the message can be delivered twice. Requires an
+  attempt that committed but whose outcome was unknown to the browser (lost or
+  malformed response, proxy `5xx`) and a token swap inside the retry window. *Closing:* a real browser
   path that keeps several tokens live at once.
 - **Owner entries stay queued indefinitely if a hub never reconnects.** The
   pull-side outbox does not expire entries when a hub stops dialing. *Closing:*
