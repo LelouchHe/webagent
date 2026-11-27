@@ -424,18 +424,9 @@ never produces a receipt.
   |   no:  tx: applied_pos only           |
 ```
 
-Hard delete of R1 (DELETE or Root exit) cascades its `remote_tasks` row, so
-`deleteTaskInScope` captures the external parent link and R1's title before
-the delete and hands them to the post-commit purge:
-
-```text
- deleteTaskInScope(R1)
-   capture {external parent P, link, R1 title}      before the cascade
-   tx: delete; queued inbound rows -> failed + receipts
- after commit:
-   failed inbound row matched the open account?  -> close silently (P gets A1 via receipt)
-   account still open                            -> notice(target_removed) via captured link
-```
+When R1 leaves P through delete or unarchive, `child_left` carries the
+relationship change and replaces a separate owner `notice(target_removed)`
+for that account. See [When a remote child leaves](#when-a-remote-child-leaves).
 
 ### Offline handoff timeout T
 
@@ -659,6 +650,72 @@ the hub writes the `source` row after the response returns. A `404` is returned
 as-is; timeouts, `5xx`, and malformed responses surface as an unknown result
 with no automatic retry and no fabricated hub `source` row (an owner-side cancel
 that already committed still keeps its `target` row).
+
+## Remote delete
+
+Deleting P (including Root exit) deletes remote children of its current
+subtree before committing locally. Each owner applies the same rule to its
+own remote children. No tree lock or SQLite transaction spans a remote
+request.
+
+```text
+Hub: DELETE P                               Owner: R1
+  preflight local subtree; pin target
+  Root exit: resolve rebuild agent, recheck busy
+  for each remote child:
+    resolve credential; recheck current
+    subtree membership and inbound authority
+    skip a departed child
+    DELETE /api/v1/tasks/R1 ----------------> authenticate parent link
+                                              delete descendants first
+                                              lock, recheck, commit R1
+    <--------------------------------------- 200 with matching taskId
+    remember R1; leave its hub link alone
+  after all confirmations:
+    lock, recheck target, authority, busy
+    state and unhandled remote children
+    commit P (replace it on Root exit)
+```
+
+Only a matching `200` confirms deletion. A typed rejection (including a
+not-found response), offline owner, or unknown result stops the command.
+The error reports any children already confirmed deleted; an unknown result
+means the last child may also have changed. There is no automatic retry or
+compensation. A concurrent removal of P does not retarget the command or
+discard confirmed partial effects.
+
+## When a remote child leaves
+
+Deleting R1 (hard or soft) or unarchiving it under the owner's Root detaches
+it from P. The owner writes `relation(child_left)` to its outbox in the same
+transaction as the local change. `accountOpen` is true if P had an open
+account on R1 and no newly failed inbound delivery on that edge already
+reports the failure by receipt.
+
+```text
+Owner: R1 leaves P                          Hub: P
+  transaction:
+    delete R1 or reattach it under Root
+    remove the external-parent relation
+    enqueue any new failure receipts
+    enqueue child_left(P, R1, accountOpen)
+  after commit: close the external account
+    without a separate notice
+  earlier queued entries -----------------> apply before child_left
+  child_left ------------------------------> transaction:
+                                              match link, P and R1
+                                              remove child row on match
+                                              if accountOpen: record target_removed
+                                              advance feed cursor; no receipt
+```
+
+An absent or mismatched child row is a no-op apart from cursor progress.
+The DELETE response alone never removes the hub's child row: earlier feed
+entries must still be able to use it while P survives. Unarchive only fails
+queued inbound deliveries on the edge it cuts; re-archiving does not
+reconnect it. Archiving P on the hub keeps its remote child links and any
+accepted inbound deliveries queued on those links; genuine local
+cross-boundary deliveries still fail.
 
 ## Differences from local
 
