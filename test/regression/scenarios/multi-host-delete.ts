@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import Database from "better-sqlite3";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -237,7 +238,25 @@ export default scenario<State>({
             ],
           },
           {
-            match: "arm partial first",
+            match: "arm partial Partial First",
+            actions: [
+              {
+                type: "mcp",
+                calls: [
+                  {
+                    tool: "task_send",
+                    arguments: {
+                      target: "$task:Partial First",
+                      body: "queue ordinary then stay armed",
+                    },
+                  },
+                ],
+              },
+              { type: "reply", text: "Armed partial first." },
+            ],
+          },
+          {
+            match: "arm partial Partial Second",
             actions: [
               {
                 type: "mcp",
@@ -255,7 +274,7 @@ export default scenario<State>({
             ],
           },
           {
-            match: "dispatch partial second",
+            match: "dispatch partial Partial First",
             actions: [
               {
                 type: "mcp",
@@ -264,6 +283,24 @@ export default scenario<State>({
                     tool: "task_send",
                     arguments: {
                       target: "$task:Partial First",
+                      body: "hold partial second",
+                    },
+                  },
+                ],
+              },
+              { type: "reply", text: "Dispatched partial second." },
+            ],
+          },
+          {
+            match: "dispatch partial Partial Second",
+            actions: [
+              {
+                type: "mcp",
+                calls: [
+                  {
+                    tool: "task_send",
+                    arguments: {
+                      target: "$task:Partial Second",
                       body: "hold partial second",
                     },
                   },
@@ -468,15 +505,35 @@ export default scenario<State>({
           state.hubDb,
           `SELECT 1 FROM events WHERE task_id = '${state.partialParentId}' AND type = 'prompt_done'`,
         );
-        const firstId = readTaskId(state.ownerDb, "Partial Second");
-        const secondId = readTaskId(state.ownerDb, "Partial First");
+        // Follow the real listRemoteChildren() walk order so whichever child is
+        // visited first is idle/deleted and the second is busy/refused.
+        const walkedChildren = (
+          readRows(
+            state.hubDb,
+            `SELECT local_task_id, remote_task_id FROM remote_tasks WHERE remote_role = 'child'`,
+          ) as Array<{ local_task_id: string; remote_task_id: string }>
+        )
+          .filter((row) => row.local_task_id === state.partialParentId)
+          .map((row) => row.remote_task_id);
+        assert.equal(walkedChildren.length, 2);
+        const [firstId, secondId] = walkedChildren;
+        const readTitle = (id: string): string => {
+          const rows = readRows(
+            state.ownerDb,
+            `SELECT title FROM tasks WHERE id = '${id}'`,
+          ) as Array<{ title: string }>;
+          assert.equal(rows.length, 1);
+          return rows[0].title;
+        };
+        const firstTitle = readTitle(firstId);
+        const secondTitle = readTitle(secondId);
 
         // Hold owner -> hub feed so first child's queued message + child_left wait.
         link.disconnect("watch");
         await client
           .instance("hub")
           .rest("POST", `/api/v1/tasks/${state.partialParentId}/prompt`, {
-            text: "arm partial first",
+            text: `arm partial ${firstTitle}`,
           });
         await waitForRows(
           state.ownerDb,
@@ -485,7 +542,7 @@ export default scenario<State>({
         await client
           .instance("hub")
           .rest("POST", `/api/v1/tasks/${state.partialParentId}/prompt`, {
-            text: "dispatch partial second",
+            text: `dispatch partial ${secondTitle}`,
           });
         await waitForRows(
           state.ownerDb,
@@ -496,12 +553,14 @@ export default scenario<State>({
         const partial = await client
           .instance("hub")
           .rest("DELETE", `/api/v1/tasks/${state.partialParentId}`);
+        assert.equal(partial.status, 409);
         // While watch is still held, hub must still retain firstId's child row
         // (200 does not delete child row early).
         const linksWhileHeld = readRows(
           state.hubDb,
           `SELECT COUNT(*) AS count FROM remote_tasks WHERE local_task_id = '${state.partialParentId}' AND remote_role = 'child'`,
         );
+        assert.deepEqual(linksWhileHeld, [{ count: 2 }]);
 
         // Resume watch: firstId's previously queued message arrives, target_removed
         // fires once, and child_left removes firstId's row while P is preserved.
@@ -511,16 +570,19 @@ export default scenario<State>({
           state.hubDb,
           `SELECT COUNT(*) AS count FROM remote_tasks WHERE local_task_id = '${state.partialParentId}' AND remote_role = 'child'`,
         );
+        assert.deepEqual(linksAfterChildLeft, [{ count: 1 }]);
         const noticesAfterChildLeft = readRows(
           state.hubDb,
           `SELECT json_extract(data, '$.reason') AS reason FROM events
              WHERE task_id = '${state.partialParentId}' AND type = 'task_outcome_notice'`,
         );
+        assert.deepEqual(noticesAfterChildLeft, [{ reason: "target_removed" }]);
         const ordinaryDelivered = readRows(
           state.hubDb,
           `SELECT COUNT(*) AS count FROM messages m JOIN deliveries d ON d.message_id = m.id
              WHERE d.recipient_task_id = '${state.partialParentId}' AND m.body = 'last note before delete'`,
         );
+        assert.deepEqual(ordinaryDelivered, [{ count: 1 }]);
 
         // Release second child and retry delete -> succeeds cleanly.
         await client

@@ -1495,10 +1495,14 @@
         ],
         "linksAfterChildLeft": [
           {
-            "count": 2
+            "count": 1
           }
         ],
-        "noticesAfterChildLeft": [],
+        "noticesAfterChildLeft": [
+          {
+            "reason": "target_removed"
+          }
+        ],
         "ordinaryDelivered": [
           {
             "count": 1
@@ -1551,7 +1555,7 @@
                       "busy": {
                         "kind": "agent",
                         "since": "2026-09-13T21:00:00.000Z",
-                        "promptId": "prompt-3",
+                        "promptId": "prompt-2",
                         "cancelStatus": null
                       }
                     }
@@ -1561,14 +1565,28 @@
                   "type": "system_message",
                   "taskId": "321d8d03-5883-5887-9ec5-3018680a5fcb",
                   "kind": "collaboration",
-                  "messageId": "00000000-0000-4000-8001-000000000017",
+                  "messageId": "00000000-0000-4000-8001-000000000014",
                   "sourceTaskId": "00000000-0000-4000-8001-00000000000c",
                   "sourceLabel": "Partial Parent",
                   "targetTaskId": "321d8d03-5883-5887-9ec5-3018680a5fcb",
                   "targetLabel": "Partial First",
                   "role": "target",
                   "title": "@\"Partial Parent\" sent @\"Partial First\"",
-                  "body": "hold partial second"
+                  "body": "queue ordinary then stay armed"
+                },
+                {
+                  "type": "system_message",
+                  "taskId": "321d8d03-5883-5887-9ec5-3018680a5fcb",
+                  "kind": "collaboration",
+                  "messageId": "00000000-0000-4000-8000-000000000007",
+                  "sourceTaskId": "321d8d03-5883-5887-9ec5-3018680a5fcb",
+                  "sourceLabel": "Partial First",
+                  "targetTaskId": "00000000-0000-4000-8001-00000000000c",
+                  "targetLabel": "Partial Parent",
+                  "role": "source",
+                  "title": "@\"Partial First\" sent @\"Partial Parent\"",
+                  "body": "last note before delete",
+                  "deliveryStatus": "queued"
                 },
                 {
                   "type": "state_patch",
@@ -1586,27 +1604,12 @@
                 {
                   "type": "message_chunk",
                   "taskId": "321d8d03-5883-5887-9ec5-3018680a5fcb",
-                  "text": "REGRESSION_WAIT: partial-second"
+                  "text": "Queued ordinary note."
                 },
                 {
                   "type": "state_patch",
                   "taskId": "321d8d03-5883-5887-9ec5-3018680a5fcb",
                   "seq": 3,
-                  "patch": {
-                    "runtime": {
-                      "busy": {
-                        "kind": "agent",
-                        "since": "2026-09-13T21:00:00.000Z",
-                        "promptId": "prompt-3",
-                        "cancelStatus": "requested"
-                      }
-                    }
-                  }
-                },
-                {
-                  "type": "state_patch",
-                  "taskId": "321d8d03-5883-5887-9ec5-3018680a5fcb",
-                  "seq": 4,
                   "patch": {
                     "runtime": {
                       "busy": null
@@ -1616,7 +1619,7 @@
                 {
                   "type": "state_patch",
                   "taskId": "321d8d03-5883-5887-9ec5-3018680a5fcb",
-                  "seq": 5,
+                  "seq": 4,
                   "patch": {
                     "runtime": {
                       "streaming": {
@@ -1629,14 +1632,21 @@
                 {
                   "type": "prompt_done",
                   "taskId": "321d8d03-5883-5887-9ec5-3018680a5fcb",
-                  "stopReason": "cancelled",
-                  "promptId": "prompt-3"
+                  "stopReason": "end_turn",
+                  "promptId": "prompt-2"
                 },
                 {
                   "type": "task_deleted",
                   "taskId": "321d8d03-5883-5887-9ec5-3018680a5fcb",
                   "agentId": "mock",
                   "parentId": null
+                },
+                {
+                  "type": "collaboration_delivery",
+                  "taskId": "321d8d03-5883-5887-9ec5-3018680a5fcb",
+                  "messageId": "00000000-0000-4000-8000-000000000007",
+                  "status": "delivered",
+                  "deliveredAt": "2026-09-13T21:00:00.000Z"
                 }
               ]
             },
@@ -1652,7 +1662,7 @@
                       "busy": {
                         "kind": "agent",
                         "since": "2026-09-13T21:00:00.000Z",
-                        "promptId": "prompt-2",
+                        "promptId": "prompt-3",
                         "cancelStatus": null
                       }
                     }
@@ -1662,28 +1672,14 @@
                   "type": "system_message",
                   "taskId": "54df17e7-b062-5368-9e20-a0809ebd0f21",
                   "kind": "collaboration",
-                  "messageId": "00000000-0000-4000-8001-000000000014",
+                  "messageId": "00000000-0000-4000-8001-000000000017",
                   "sourceTaskId": "00000000-0000-4000-8001-00000000000c",
                   "sourceLabel": "Partial Parent",
                   "targetTaskId": "54df17e7-b062-5368-9e20-a0809ebd0f21",
                   "targetLabel": "Partial Second",
                   "role": "target",
                   "title": "@\"Partial Parent\" sent @\"Partial Second\"",
-                  "body": "queue ordinary then stay armed"
-                },
-                {
-                  "type": "system_message",
-                  "taskId": "54df17e7-b062-5368-9e20-a0809ebd0f21",
-                  "kind": "collaboration",
-                  "messageId": "00000000-0000-4000-8000-000000000007",
-                  "sourceTaskId": "54df17e7-b062-5368-9e20-a0809ebd0f21",
-                  "sourceLabel": "Partial Second",
-                  "targetTaskId": "00000000-0000-4000-8001-00000000000c",
-                  "targetLabel": "Partial Parent",
-                  "role": "source",
-                  "title": "@\"Partial Second\" sent @\"Partial Parent\"",
-                  "body": "last note before delete",
-                  "deliveryStatus": "queued"
+                  "body": "hold partial second"
                 },
                 {
                   "type": "state_patch",
@@ -1701,12 +1697,27 @@
                 {
                   "type": "message_chunk",
                   "taskId": "54df17e7-b062-5368-9e20-a0809ebd0f21",
-                  "text": "Queued ordinary note."
+                  "text": "REGRESSION_WAIT: partial-second"
                 },
                 {
                   "type": "state_patch",
                   "taskId": "54df17e7-b062-5368-9e20-a0809ebd0f21",
                   "seq": 3,
+                  "patch": {
+                    "runtime": {
+                      "busy": {
+                        "kind": "agent",
+                        "since": "2026-09-13T21:00:00.000Z",
+                        "promptId": "prompt-3",
+                        "cancelStatus": "requested"
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "state_patch",
+                  "taskId": "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                  "seq": 4,
                   "patch": {
                     "runtime": {
                       "busy": null
@@ -1716,7 +1727,7 @@
                 {
                   "type": "state_patch",
                   "taskId": "54df17e7-b062-5368-9e20-a0809ebd0f21",
-                  "seq": 4,
+                  "seq": 5,
                   "patch": {
                     "runtime": {
                       "streaming": {
@@ -1729,15 +1740,8 @@
                 {
                   "type": "prompt_done",
                   "taskId": "54df17e7-b062-5368-9e20-a0809ebd0f21",
-                  "stopReason": "end_turn",
-                  "promptId": "prompt-2"
-                },
-                {
-                  "type": "collaboration_delivery",
-                  "taskId": "54df17e7-b062-5368-9e20-a0809ebd0f21",
-                  "messageId": "00000000-0000-4000-8000-000000000007",
-                  "status": "delivered",
-                  "deliveredAt": "2026-09-13T21:00:00.000Z"
+                  "stopReason": "cancelled",
+                  "promptId": "prompt-3"
                 },
                 {
                   "type": "task_deleted",
@@ -1953,67 +1957,7 @@
                     "321d8d03-5883-5887-9ec5-3018680a5fcb",
                     2,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000017\",\"sourceTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"sourceLabel\":\"Partial Parent\",\"targetTaskId\":\"321d8d03-5883-5887-9ec5-3018680a5fcb\",\"targetLabel\":\"Partial First\",\"role\":\"target\",\"title\":\"@\\\"Partial Parent\\\" sent @\\\"Partial First\\\"\",\"body\":\"hold partial second\"}",
-                    "msg:00000000-0000-4000-8001-000000000017",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
-                    3,
-                    "collaboration_prompt",
-                    "{\"messageIds\":[\"00000000-0000-4000-8001-000000000017\"],\"text\":\"From \\\"Partial Parent\\\" (task id 00000000-0000-4000-8001-00000000000c):\\n---8<---\\nhold partial second\\n---8<---\",\"truncated\":false,\"rawSize\":107}",
-                    "system",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
-                    4,
-                    "assistant_message",
-                    "{\"text\":\"REGRESSION_WAIT: partial-second\"}",
-                    "agent",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
-                    5,
-                    "prompt_done",
-                    "{\"stopReason\":\"cancelled\",\"promptId\":\"prompt-3\"}",
-                    "agent",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
-                    2,
-                    "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000014\",\"sourceTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"sourceLabel\":\"Partial Parent\",\"targetTaskId\":\"54df17e7-b062-5368-9e20-a0809ebd0f21\",\"targetLabel\":\"Partial Second\",\"role\":\"target\",\"title\":\"@\\\"Partial Parent\\\" sent @\\\"Partial Second\\\"\",\"body\":\"queue ordinary then stay armed\"}",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000014\",\"sourceTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"sourceLabel\":\"Partial Parent\",\"targetTaskId\":\"321d8d03-5883-5887-9ec5-3018680a5fcb\",\"targetLabel\":\"Partial First\",\"role\":\"target\",\"title\":\"@\\\"Partial Parent\\\" sent @\\\"Partial First\\\"\",\"body\":\"queue ordinary then stay armed\"}",
                     "msg:00000000-0000-4000-8001-000000000014",
                     1789333200000
                   ]
@@ -2025,7 +1969,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
                     3,
                     "collaboration_prompt",
                     "{\"messageIds\":[\"00000000-0000-4000-8001-000000000014\"],\"text\":\"From \\\"Partial Parent\\\" (task id 00000000-0000-4000-8001-00000000000c):\\n---8<---\\nqueue ordinary then stay armed\\n---8<---\",\"truncated\":false,\"rawSize\":118}",
@@ -2040,7 +1984,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
                     6,
                     "assistant_message",
                     "{\"text\":\"Queued ordinary note.\"}",
@@ -2055,7 +1999,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
                     7,
                     "prompt_done",
                     "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-2\"}",
@@ -2068,10 +2012,70 @@
                 {
                   "kind": "write",
                   "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    2,
+                    "system_message",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000017\",\"sourceTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"sourceLabel\":\"Partial Parent\",\"targetTaskId\":\"54df17e7-b062-5368-9e20-a0809ebd0f21\",\"targetLabel\":\"Partial Second\",\"role\":\"target\",\"title\":\"@\\\"Partial Parent\\\" sent @\\\"Partial Second\\\"\",\"body\":\"hold partial second\"}",
+                    "msg:00000000-0000-4000-8001-000000000017",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    3,
+                    "collaboration_prompt",
+                    "{\"messageIds\":[\"00000000-0000-4000-8001-000000000017\"],\"text\":\"From \\\"Partial Parent\\\" (task id 00000000-0000-4000-8001-00000000000c):\\n---8<---\\nhold partial second\\n---8<---\",\"truncated\":false,\"rawSize\":107}",
+                    "system",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    4,
+                    "assistant_message",
+                    "{\"text\":\"REGRESSION_WAIT: partial-second\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    5,
+                    "prompt_done",
+                    "{\"stopReason\":\"cancelled\",\"promptId\":\"prompt-3\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000007",
-                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
                     "00000000-0000-4000-8001-00000000000c",
                     "agent",
                     "last note before delete",
@@ -2084,7 +2088,7 @@
                   "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000007",
-                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
                     "source",
                     1789333200000
                   ]
@@ -2115,10 +2119,10 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
                     4,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"54df17e7-b062-5368-9e20-a0809ebd0f21\",\"sourceLabel\":\"Partial Second\",\"targetTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"targetLabel\":\"Partial Parent\",\"role\":\"source\",\"title\":\"@\\\"Partial Second\\\" sent @\\\"Partial Parent\\\"\",\"body\":\"last note before delete\",\"deliveryStatus\":\"queued\"}",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"321d8d03-5883-5887-9ec5-3018680a5fcb\",\"sourceLabel\":\"Partial First\",\"targetTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"targetLabel\":\"Partial Parent\",\"role\":\"source\",\"title\":\"@\\\"Partial First\\\" sent @\\\"Partial Parent\\\"\",\"body\":\"last note before delete\",\"deliveryStatus\":\"queued\"}",
                     "msg:00000000-0000-4000-8000-000000000007",
                     1789333200000
                   ]
@@ -2133,7 +2137,7 @@
                     "hub-connection",
                     3,
                     "message",
-                    "{\"sourceTaskId\":\"54df17e7-b062-5368-9e20-a0809ebd0f21\",\"targetTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"sourceLabel\":\"Partial Second\",\"body\":\"last note before delete\"}",
+                    "{\"sourceTaskId\":\"321d8d03-5883-5887-9ec5-3018680a5fcb\",\"targetTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"sourceLabel\":\"Partial First\",\"body\":\"last note before delete\"}",
                     "00000000-0000-4000-8000-000000000008",
                     1789333200000
                   ]
@@ -2147,7 +2151,7 @@
                   "args": [
                     "00000000-0000-4000-8001-000000000014",
                     "00000000-0000-4000-8001-00000000000c",
-                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
                     "agent",
                     "queue ordinary then stay armed",
                     1789333200000
@@ -2159,7 +2163,7 @@
                   "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000014",
-                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
                     "target",
                     1789333200000
                   ]
@@ -2171,8 +2175,8 @@
                   "args": [
                     "00000000-0000-4000-8001-000000000014",
                     "00000000-0000-4000-8001-000000000014",
-                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
-                    "00000000-0000-4000-8001-000000000014:54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
+                    "00000000-0000-4000-8001-000000000014:321d8d03-5883-5887-9ec5-3018680a5fcb",
                     "queued",
                     1789333200000,
                     null,
@@ -2194,7 +2198,7 @@
                   "args": [
                     "00000000-0000-4000-8001-000000000017",
                     "00000000-0000-4000-8001-00000000000c",
-                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
+                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
                     "agent",
                     "hold partial second",
                     1789333200000
@@ -2206,7 +2210,7 @@
                   "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000017",
-                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
+                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
                     "target",
                     1789333200000
                   ]
@@ -2218,8 +2222,8 @@
                   "args": [
                     "00000000-0000-4000-8001-000000000017",
                     "00000000-0000-4000-8001-000000000017",
-                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
-                    "00000000-0000-4000-8001-000000000017:321d8d03-5883-5887-9ec5-3018680a5fcb",
+                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    "00000000-0000-4000-8001-000000000017:54df17e7-b062-5368-9e20-a0809ebd0f21",
                     "queued",
                     1789333200000,
                     null,
@@ -2424,7 +2428,7 @@
                   "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
                   "args": [
                     "mock",
-                    "00000000-0000-4000-8000-000000000003",
+                    "00000000-0000-4000-8000-000000000002",
                     "321d8d03-5883-5887-9ec5-3018680a5fcb",
                     1789333200000
                   ]
@@ -2449,7 +2453,7 @@
                   "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
                   "args": [
                     "mock",
-                    "00000000-0000-4000-8000-000000000002",
+                    "00000000-0000-4000-8000-000000000003",
                     "54df17e7-b062-5368-9e20-a0809ebd0f21",
                     1789333200000
                   ]
@@ -2508,7 +2512,7 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-                  "args": ["idle", "321d8d03-5883-5887-9ec5-3018680a5fcb"]
+                  "args": ["idle", "54df17e7-b062-5368-9e20-a0809ebd0f21"]
                 }
               ],
               [
@@ -2532,24 +2536,24 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-                  "args": ["waiting", "54df17e7-b062-5368-9e20-a0809ebd0f21"]
+                  "args": ["waiting", "321d8d03-5883-5887-9ec5-3018680a5fcb"]
                 },
                 {
                   "kind": "write",
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
                     5,
                     "task_update",
-                    "{\"status\":\"waiting\",\"body\":\"still working\",\"reason\":\"waiting\",\"sourceTaskId\":\"54df17e7-b062-5368-9e20-a0809ebd0f21\",\"targetTaskId\":null}",
+                    "{\"status\":\"waiting\",\"body\":\"still working\",\"reason\":\"waiting\",\"sourceTaskId\":\"321d8d03-5883-5887-9ec5-3018680a5fcb\",\"targetTaskId\":null}",
                     "agent",
                     1789333200000
                   ]
                 }
               ]
             ],
-            "reads": 209
+            "reads": 207
           }
         },
         {
@@ -2842,7 +2846,7 @@
                 {
                   "type": "user_message",
                   "taskId": "00000000-0000-4000-8001-00000000000c",
-                  "text": "arm partial first",
+                  "text": "arm partial Partial First",
                   "clientOpId": "00000000-0000-4000-8001-000000000013"
                 },
                 {
@@ -2867,10 +2871,10 @@
                   "messageId": "00000000-0000-4000-8001-000000000014",
                   "sourceTaskId": "00000000-0000-4000-8001-00000000000c",
                   "sourceLabel": "Partial Parent",
-                  "targetTaskId": "54df17e7-b062-5368-9e20-a0809ebd0f21",
-                  "targetLabel": "Partial Second",
+                  "targetTaskId": "321d8d03-5883-5887-9ec5-3018680a5fcb",
+                  "targetLabel": "Partial First",
                   "role": "source",
-                  "title": "@\"Partial Parent\" sent @\"Partial Second\"",
+                  "title": "@\"Partial Parent\" sent @\"Partial First\"",
                   "body": "queue ordinary then stay armed",
                   "deliveryStatus": "queued"
                 },
@@ -2924,7 +2928,7 @@
                 {
                   "type": "user_message",
                   "taskId": "00000000-0000-4000-8001-00000000000c",
-                  "text": "dispatch partial second",
+                  "text": "dispatch partial Partial Second",
                   "clientOpId": "00000000-0000-4000-8001-000000000016"
                 },
                 {
@@ -2949,10 +2953,10 @@
                   "messageId": "00000000-0000-4000-8001-000000000017",
                   "sourceTaskId": "00000000-0000-4000-8001-00000000000c",
                   "sourceLabel": "Partial Parent",
-                  "targetTaskId": "321d8d03-5883-5887-9ec5-3018680a5fcb",
-                  "targetLabel": "Partial First",
+                  "targetTaskId": "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                  "targetLabel": "Partial Second",
                   "role": "source",
-                  "title": "@\"Partial Parent\" sent @\"Partial First\"",
+                  "title": "@\"Partial Parent\" sent @\"Partial Second\"",
                   "body": "hold partial second",
                   "deliveryStatus": "queued"
                 },
@@ -3030,12 +3034,12 @@
                   "taskId": "00000000-0000-4000-8001-00000000000c",
                   "kind": "collaboration",
                   "messageId": "00000000-0000-4000-8000-000000000007",
-                  "sourceTaskId": "54df17e7-b062-5368-9e20-a0809ebd0f21",
-                  "sourceLabel": "Partial Second",
+                  "sourceTaskId": "321d8d03-5883-5887-9ec5-3018680a5fcb",
+                  "sourceLabel": "Partial First",
                   "targetTaskId": "00000000-0000-4000-8001-00000000000c",
                   "targetLabel": "Partial Parent",
                   "role": "target",
-                  "title": "@\"Partial Second\" sent @\"Partial Parent\"",
+                  "title": "@\"Partial First\" sent @\"Partial Parent\"",
                   "body": "last note before delete"
                 },
                 {
@@ -3174,11 +3178,11 @@
               ]
             },
             {
-              "taskId": "54df17e7-b062-5368-9e20-a0809ebd0f21",
+              "taskId": "321d8d03-5883-5887-9ec5-3018680a5fcb",
               "events": [
                 {
                   "type": "collaboration_delivery",
-                  "taskId": "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                  "taskId": "321d8d03-5883-5887-9ec5-3018680a5fcb",
                   "messageId": "00000000-0000-4000-8000-000000000007",
                   "status": "delivered",
                   "deliveredAt": "2026-09-13T21:00:00.000Z"
@@ -3282,65 +3286,7 @@
                   "kind": "acp",
                   "method": "session/prompt",
                   "sessionId": "00000000-0000-4000-8001-000000000003",
-                  "text": "arm partial first"
-                },
-                {
-                  "kind": "mcp",
-                  "method": "initialize",
-                  "sessionId": "00000000-0000-4000-8001-000000000003",
-                  "status": 200,
-                  "result": {
-                    "result": {
-                      "protocolVersion": "2025-06-18",
-                      "capabilities": {
-                        "tools": {
-                          "listChanged": true
-                        }
-                      },
-                      "serverInfo": {
-                        "name": "lelouchhe_webagent",
-                        "version": "0.1.0"
-                      },
-                      "instructions": "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.\nMessages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.\nAn agent's task_send to a direct child opens one account for that edge when it is delivered; the child's task_update(done|blocked) settles it.\nWhile an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target notifies the requester (target_removed).\nAn agent's message that cannot be delivered notifies its sender (target_removed).\nTask history is the event log; summaries and updates are self-reports."
-                    },
-                    "jsonrpc": "2.0",
-                    "id": 1
-                  }
-                },
-                {
-                  "kind": "mcp",
-                  "method": "notifications/initialized",
-                  "sessionId": "00000000-0000-4000-8001-000000000003",
-                  "status": 202,
-                  "result": null
-                },
-                {
-                  "kind": "mcp",
-                  "sessionId": "00000000-0000-4000-8001-000000000003",
-                  "tool": "task_send",
-                  "arguments": {
-                    "target": "54df17e7-b062-5368-9e20-a0809ebd0f21",
-                    "body": "queue ordinary then stay armed"
-                  },
-                  "status": 200,
-                  "result": {
-                    "result": {
-                      "content": [
-                        {
-                          "type": "text",
-                          "text": "{\"accepted\":true}"
-                        }
-                      ]
-                    },
-                    "jsonrpc": "2.0",
-                    "id": 2
-                  }
-                },
-                {
-                  "kind": "acp",
-                  "method": "session/prompt",
-                  "sessionId": "00000000-0000-4000-8001-000000000003",
-                  "text": "dispatch partial second"
+                  "text": "arm partial Partial First"
                 },
                 {
                   "kind": "mcp",
@@ -3378,6 +3324,64 @@
                   "tool": "task_send",
                   "arguments": {
                     "target": "321d8d03-5883-5887-9ec5-3018680a5fcb",
+                    "body": "queue ordinary then stay armed"
+                  },
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "content": [
+                        {
+                          "type": "text",
+                          "text": "{\"accepted\":true}"
+                        }
+                      ]
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 2
+                  }
+                },
+                {
+                  "kind": "acp",
+                  "method": "session/prompt",
+                  "sessionId": "00000000-0000-4000-8001-000000000003",
+                  "text": "dispatch partial Partial Second"
+                },
+                {
+                  "kind": "mcp",
+                  "method": "initialize",
+                  "sessionId": "00000000-0000-4000-8001-000000000003",
+                  "status": 200,
+                  "result": {
+                    "result": {
+                      "protocolVersion": "2025-06-18",
+                      "capabilities": {
+                        "tools": {
+                          "listChanged": true
+                        }
+                      },
+                      "serverInfo": {
+                        "name": "lelouchhe_webagent",
+                        "version": "0.1.0"
+                      },
+                      "instructions": "Tasks form a tree; these tools reach only the current Task, its parent, and its direct children.\nMessages are queued and delivered at the recipient's next turn boundary; delivery wakes the recipient.\nAn agent's task_send to a direct child opens one account for that edge when it is delivered; the child's task_update(done|blocked) settles it.\nWhile an account is open: a turn that ends without any task_update gets one reminder, and a second such turn notifies the requester (no_update); no agent activity for the configured silence period, during a running turn or after a waiting the runtime cannot see a wake source for, notifies the requester (no_activity); a removed target notifies the requester (target_removed).\nAn agent's message that cannot be delivered notifies its sender (target_removed).\nTask history is the event log; summaries and updates are self-reports."
+                    },
+                    "jsonrpc": "2.0",
+                    "id": 1
+                  }
+                },
+                {
+                  "kind": "mcp",
+                  "method": "notifications/initialized",
+                  "sessionId": "00000000-0000-4000-8001-000000000003",
+                  "status": 202,
+                  "result": null
+                },
+                {
+                  "kind": "mcp",
+                  "sessionId": "00000000-0000-4000-8001-000000000003",
+                  "tool": "task_send",
+                  "arguments": {
+                    "target": "54df17e7-b062-5368-9e20-a0809ebd0f21",
                     "body": "hold partial second"
                   },
                   "status": 200,
@@ -3398,7 +3402,7 @@
                   "kind": "acp",
                   "method": "session/prompt",
                   "sessionId": "00000000-0000-4000-8001-000000000003",
-                  "text": "From \"Partial Second\" (task id 54df17e7-b062-5368-9e20-a0809ebd0f21):\n---8<---\nlast note before delete\n---8<---"
+                  "text": "From \"Partial First\" (task id 321d8d03-5883-5887-9ec5-3018680a5fcb):\n---8<---\nlast note before delete\n---8<---"
                 },
                 {
                   "kind": "acp",
@@ -3452,7 +3456,7 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-00000000000c",
-                    18,
+                    16,
                     "task_outcome_notice",
                     "{\"messageId\":\"00000000-0000-4000-8001-00000000001a\",\"reason\":\"target_removed\",\"sourceTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"targetTaskId\":\"321d8d03-5883-5887-9ec5-3018680a5fcb\",\"message\":\"The target left this edge (deleted or archived); the account is gone.\"}",
                     "system",
@@ -3570,7 +3574,7 @@
                     "00000000-0000-4000-8001-00000000000c",
                     10,
                     "user_message",
-                    "{\"text\":\"dispatch partial second\",\"clientOpId\":\"00000000-0000-4000-8001-000000000016\"}",
+                    "{\"text\":\"dispatch partial Partial Second\",\"clientOpId\":\"00000000-0000-4000-8001-000000000016\"}",
                     "user",
                     1789333200000
                   ]
@@ -3615,7 +3619,7 @@
                     "00000000-0000-4000-8001-00000000000c",
                     14,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"54df17e7-b062-5368-9e20-a0809ebd0f21\",\"sourceLabel\":\"Partial Second\",\"targetTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"targetLabel\":\"Partial Parent\",\"role\":\"target\",\"title\":\"@\\\"Partial Second\\\" sent @\\\"Partial Parent\\\"\",\"body\":\"last note before delete\"}",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"321d8d03-5883-5887-9ec5-3018680a5fcb\",\"sourceLabel\":\"Partial First\",\"targetTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"targetLabel\":\"Partial Parent\",\"role\":\"target\",\"title\":\"@\\\"Partial First\\\" sent @\\\"Partial Parent\\\"\",\"body\":\"last note before delete\"}",
                     "msg:00000000-0000-4000-8000-000000000007",
                     1789333200000
                   ]
@@ -3630,7 +3634,7 @@
                     "00000000-0000-4000-8001-00000000000c",
                     15,
                     "collaboration_prompt",
-                    "{\"messageIds\":[\"00000000-0000-4000-8000-000000000007\"],\"text\":\"From \\\"Partial Second\\\" (task id 54df17e7-b062-5368-9e20-a0809ebd0f21):\\n---8<---\\nlast note before delete\\n---8<---\",\"truncated\":false,\"rawSize\":111}",
+                    "{\"messageIds\":[\"00000000-0000-4000-8000-000000000007\"],\"text\":\"From \\\"Partial First\\\" (task id 321d8d03-5883-5887-9ec5-3018680a5fcb):\\n---8<---\\nlast note before delete\\n---8<---\",\"truncated\":false,\"rawSize\":110}",
                     "system",
                     1789333200000
                   ]
@@ -3643,7 +3647,7 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-00000000000c",
-                    16,
+                    17,
                     "assistant_message",
                     "{\"text\":\"Noted ordinary message.\"}",
                     "agent",
@@ -3658,7 +3662,7 @@
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-00000000000c",
-                    17,
+                    18,
                     "prompt_done",
                     "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-6\"}",
                     "agent",
@@ -3765,7 +3769,7 @@
                     "00000000-0000-4000-8001-00000000000c",
                     6,
                     "user_message",
-                    "{\"text\":\"arm partial first\",\"clientOpId\":\"00000000-0000-4000-8001-000000000013\"}",
+                    "{\"text\":\"arm partial Partial First\",\"clientOpId\":\"00000000-0000-4000-8001-000000000013\"}",
                     "user",
                     1789333200000
                   ]
@@ -3808,7 +3812,7 @@
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000007",
-                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
                     "00000000-0000-4000-8001-00000000000c",
                     "agent",
                     "last note before delete",
@@ -3843,7 +3847,7 @@
                     "child",
                     "owner",
                     "00000000-0000-4000-8000-000000000007",
-                    "Partial Second",
+                    "Partial First",
                     "message"
                   ]
                 },
@@ -3862,7 +3866,7 @@
                   "args": [
                     "00000000-0000-4000-8001-000000000014",
                     "00000000-0000-4000-8001-00000000000c",
-                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
                     "agent",
                     "queue ordinary then stay armed",
                     1789333200000
@@ -3886,8 +3890,8 @@
                   "args": [
                     "00000000-0000-4000-8001-000000000015",
                     "00000000-0000-4000-8001-000000000014",
-                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
-                    "00000000-0000-4000-8001-000000000014:54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
+                    "00000000-0000-4000-8001-000000000014:321d8d03-5883-5887-9ec5-3018680a5fcb",
                     "queued",
                     1789333200000,
                     null,
@@ -3908,7 +3912,7 @@
                     "00000000-0000-4000-8001-00000000000c",
                     7,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000014\",\"sourceTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"sourceLabel\":\"Partial Parent\",\"targetTaskId\":\"54df17e7-b062-5368-9e20-a0809ebd0f21\",\"targetLabel\":\"Partial Second\",\"role\":\"source\",\"title\":\"@\\\"Partial Parent\\\" sent @\\\"Partial Second\\\"\",\"body\":\"queue ordinary then stay armed\",\"deliveryStatus\":\"queued\"}",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000014\",\"sourceTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"sourceLabel\":\"Partial Parent\",\"targetTaskId\":\"321d8d03-5883-5887-9ec5-3018680a5fcb\",\"targetLabel\":\"Partial First\",\"role\":\"source\",\"title\":\"@\\\"Partial Parent\\\" sent @\\\"Partial First\\\"\",\"body\":\"queue ordinary then stay armed\",\"deliveryStatus\":\"queued\"}",
                     "msg:00000000-0000-4000-8001-000000000014",
                     1789333200000
                   ]
@@ -3923,7 +3927,7 @@
                     "owner",
                     1,
                     "message",
-                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"targetTaskId\":\"54df17e7-b062-5368-9e20-a0809ebd0f21\",\"sourceLabel\":\"Partial Parent\",\"body\":\"queue ordinary then stay armed\"}",
+                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"targetTaskId\":\"321d8d03-5883-5887-9ec5-3018680a5fcb\",\"sourceLabel\":\"Partial Parent\",\"body\":\"queue ordinary then stay armed\"}",
                     "00000000-0000-4000-8001-000000000015",
                     1789333200000
                   ]
@@ -3937,7 +3941,7 @@
                   "args": [
                     "00000000-0000-4000-8001-000000000017",
                     "00000000-0000-4000-8001-00000000000c",
-                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
+                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
                     "agent",
                     "hold partial second",
                     1789333200000
@@ -3961,8 +3965,8 @@
                   "args": [
                     "00000000-0000-4000-8001-000000000018",
                     "00000000-0000-4000-8001-000000000017",
-                    "321d8d03-5883-5887-9ec5-3018680a5fcb",
-                    "00000000-0000-4000-8001-000000000017:321d8d03-5883-5887-9ec5-3018680a5fcb",
+                    "54df17e7-b062-5368-9e20-a0809ebd0f21",
+                    "00000000-0000-4000-8001-000000000017:54df17e7-b062-5368-9e20-a0809ebd0f21",
                     "queued",
                     1789333200000,
                     null,
@@ -3983,7 +3987,7 @@
                     "00000000-0000-4000-8001-00000000000c",
                     11,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000017\",\"sourceTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"sourceLabel\":\"Partial Parent\",\"targetTaskId\":\"321d8d03-5883-5887-9ec5-3018680a5fcb\",\"targetLabel\":\"Partial First\",\"role\":\"source\",\"title\":\"@\\\"Partial Parent\\\" sent @\\\"Partial First\\\"\",\"body\":\"hold partial second\",\"deliveryStatus\":\"queued\"}",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000017\",\"sourceTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"sourceLabel\":\"Partial Parent\",\"targetTaskId\":\"54df17e7-b062-5368-9e20-a0809ebd0f21\",\"targetLabel\":\"Partial Second\",\"role\":\"source\",\"title\":\"@\\\"Partial Parent\\\" sent @\\\"Partial Second\\\"\",\"body\":\"hold partial second\",\"deliveryStatus\":\"queued\"}",
                     "msg:00000000-0000-4000-8001-000000000017",
                     1789333200000
                   ]
@@ -3998,7 +4002,7 @@
                     "owner",
                     2,
                     "message",
-                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"targetTaskId\":\"321d8d03-5883-5887-9ec5-3018680a5fcb\",\"sourceLabel\":\"Partial Parent\",\"body\":\"hold partial second\"}",
+                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-00000000000c\",\"targetTaskId\":\"54df17e7-b062-5368-9e20-a0809ebd0f21\",\"sourceLabel\":\"Partial Parent\",\"body\":\"hold partial second\"}",
                     "00000000-0000-4000-8001-000000000018",
                     1789333200000
                   ]
@@ -4279,7 +4283,7 @@
                 }
               ]
             ],
-            "reads": 277
+            "reads": 278
           }
         }
       ]
@@ -6872,14 +6876,14 @@
           {
             "id": "00000000-0000-4000-8001-000000000014",
             "source_task_id": "00000000-0000-4000-8001-00000000000c",
-            "direct_target_task_id": "54df17e7-b062-5368-9e20-a0809ebd0f21",
+            "direct_target_task_id": "321d8d03-5883-5887-9ec5-3018680a5fcb",
             "source_actor": "agent",
             "body": "queue ordinary then stay armed",
             "created_at": 1789333200000
           },
           {
             "id": "00000000-0000-4000-8000-000000000007",
-            "source_task_id": "54df17e7-b062-5368-9e20-a0809ebd0f21",
+            "source_task_id": "321d8d03-5883-5887-9ec5-3018680a5fcb",
             "direct_target_task_id": "00000000-0000-4000-8001-00000000000c",
             "source_actor": "agent",
             "body": "last note before delete",
@@ -6888,7 +6892,7 @@
           {
             "id": "00000000-0000-4000-8001-000000000017",
             "source_task_id": "00000000-0000-4000-8001-00000000000c",
-            "direct_target_task_id": "321d8d03-5883-5887-9ec5-3018680a5fcb",
+            "direct_target_task_id": "54df17e7-b062-5368-9e20-a0809ebd0f21",
             "source_actor": "agent",
             "body": "hold partial second",
             "created_at": 1789333200000
@@ -6923,8 +6927,8 @@
           {
             "id": "00000000-0000-4000-8001-000000000014",
             "message_id": "00000000-0000-4000-8001-000000000014",
-            "recipient_task_id": "54df17e7-b062-5368-9e20-a0809ebd0f21",
-            "idempotency_key": "00000000-0000-4000-8001-000000000014:54df17e7-b062-5368-9e20-a0809ebd0f21",
+            "recipient_task_id": "321d8d03-5883-5887-9ec5-3018680a5fcb",
+            "idempotency_key": "00000000-0000-4000-8001-000000000014:321d8d03-5883-5887-9ec5-3018680a5fcb",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -6955,8 +6959,8 @@
           {
             "id": "00000000-0000-4000-8001-000000000017",
             "message_id": "00000000-0000-4000-8001-000000000017",
-            "recipient_task_id": "321d8d03-5883-5887-9ec5-3018680a5fcb",
-            "idempotency_key": "00000000-0000-4000-8001-000000000017:321d8d03-5883-5887-9ec5-3018680a5fcb",
+            "recipient_task_id": "54df17e7-b062-5368-9e20-a0809ebd0f21",
+            "idempotency_key": "00000000-0000-4000-8001-000000000017:54df17e7-b062-5368-9e20-a0809ebd0f21",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -7155,7 +7159,7 @@
           {
             "id": "00000000-0000-4000-8001-000000000014",
             "source_task_id": "00000000-0000-4000-8001-00000000000c",
-            "direct_target_task_id": "54df17e7-b062-5368-9e20-a0809ebd0f21",
+            "direct_target_task_id": "321d8d03-5883-5887-9ec5-3018680a5fcb",
             "source_actor": "agent",
             "body": "queue ordinary then stay armed",
             "created_at": 1789333200000
@@ -7163,14 +7167,14 @@
           {
             "id": "00000000-0000-4000-8001-000000000017",
             "source_task_id": "00000000-0000-4000-8001-00000000000c",
-            "direct_target_task_id": "321d8d03-5883-5887-9ec5-3018680a5fcb",
+            "direct_target_task_id": "54df17e7-b062-5368-9e20-a0809ebd0f21",
             "source_actor": "agent",
             "body": "hold partial second",
             "created_at": 1789333200000
           },
           {
             "id": "00000000-0000-4000-8000-000000000007",
-            "source_task_id": "54df17e7-b062-5368-9e20-a0809ebd0f21",
+            "source_task_id": "321d8d03-5883-5887-9ec5-3018680a5fcb",
             "direct_target_task_id": "00000000-0000-4000-8001-00000000000c",
             "source_actor": "agent",
             "body": "last note before delete",
@@ -7214,8 +7218,8 @@
           {
             "id": "00000000-0000-4000-8001-000000000015",
             "message_id": "00000000-0000-4000-8001-000000000014",
-            "recipient_task_id": "54df17e7-b062-5368-9e20-a0809ebd0f21",
-            "idempotency_key": "00000000-0000-4000-8001-000000000014:54df17e7-b062-5368-9e20-a0809ebd0f21",
+            "recipient_task_id": "321d8d03-5883-5887-9ec5-3018680a5fcb",
+            "idempotency_key": "00000000-0000-4000-8001-000000000014:321d8d03-5883-5887-9ec5-3018680a5fcb",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -7230,8 +7234,8 @@
           {
             "id": "00000000-0000-4000-8001-000000000018",
             "message_id": "00000000-0000-4000-8001-000000000017",
-            "recipient_task_id": "321d8d03-5883-5887-9ec5-3018680a5fcb",
-            "idempotency_key": "00000000-0000-4000-8001-000000000017:321d8d03-5883-5887-9ec5-3018680a5fcb",
+            "recipient_task_id": "54df17e7-b062-5368-9e20-a0809ebd0f21",
+            "idempotency_key": "00000000-0000-4000-8001-000000000017:54df17e7-b062-5368-9e20-a0809ebd0f21",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -7256,7 +7260,7 @@
             "source_remote_role": "child",
             "source_remote_host": "owner",
             "source_entry_id": "00000000-0000-4000-8000-000000000007",
-            "source_label": "Partial Second",
+            "source_label": "Partial First",
             "source_category": "message"
           },
           {
