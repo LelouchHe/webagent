@@ -649,7 +649,7 @@ describe("contract-07: client_ops removal and fixed task create namespace", () =
     assert.deepEqual(rowsAfter, legacyRows);
   });
 
-  it("replays opted-in routes byte-for-byte with headers and executes side effects once (including 204, Cache-Control, Root exit, push async-iter, beta/prompt)", async () => {
+  it("replays opted-in routes byte-for-byte with headers and executes side effects once (including 204, Cache-Control, Root exit, push/subscribe, beta/prompt)", async () => {
     const h = await track(await createHarness());
     const created = await postJson(h.port, "/api/v1/tasks", h.apiToken, {
       agentId: "mock",
@@ -798,7 +798,7 @@ describe("contract-07: client_ops removal and fixed task create namespace", () =
     assert.equal(sb1.headers["cache-control"], "no-store");
     assert.equal(sb2.headers["cache-control"], "no-store");
 
-    // 7. Push subscribe consumes buffered body via `for await (const chunk of req)`.
+    // 7. Push subscribe consumes buffered body via the shared `readBody` helper.
     const [ps1] = await sendPair({
       method: "POST",
       path: "/api/beta/push/subscribe",

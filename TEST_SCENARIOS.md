@@ -151,8 +151,8 @@ spot gaps, and decide what still needs to be added without reading every spec.
     prompt, and ingress routes
   - unified HTTP `ops` replay across opted-in routes (permission, prompt with
     raw `clientOpId` echo, cancel, ingress, `DELETE /tokens/:name` `204` empty
-    body, `share` `Cache-Control: no-store`, `push/subscribe` async iteration,
-    `beta/prompt`, Root exit `replacedBy`, unmatched `404`, files `405`),
+    body, `share` `Cache-Control: no-store`, `push/subscribe` buffered body
+    reader, `beta/prompt`, Root exit `replacedBy`, unmatched `404`, files `405`),
     fingerprint conflict (`409 op_conflict` on method/URL/raw bytes), caller
     isolation, non-owning host rejection, demoted admin `403` before replay,
     headerless fast path, strict physical header validation (`400 invalid_op_id`),

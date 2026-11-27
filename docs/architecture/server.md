@@ -25,9 +25,10 @@ The entrypoint contracts live in [Client Architecture](client.md) and
  | HTTP router (http/routes.ts)  |     | MCP entry  (mcp/server.ts)       |
  |  auth, REST, SSE, static      |     |                                  |
  |  request boundary             |     |  capability token -> TaskCaller  |
- |  auth gate (auth-middleware)  |     |  tool registration (mcp/tools.ts)|
- |  share / files sub-routers    |     +----------------+-----------------+
- |  /api/v1 route handlers       |                      |
+ |  auth gate + /tokens admin    |     |  tool registration (mcp/tools.ts)|
+ |  ops adapter (ops-adapter.ts) |     +----------------+-----------------+
+ |  share / files sub-routers    |                      |
+ |  /api/v1 & /api/beta handlers |                      |
  +---------------+---------------+                      v
                  |                      |
                  +----------+-----------+
@@ -95,17 +96,24 @@ present REST data while calling that port once.
    per-session capability, not with a Bearer token.
 2. **Auth gate** — any `/api/**` path outside the public whitelist in
    `src/auth-middleware.ts` requires a Bearer token. A `host`-scope token is
-   further limited to its explicit connection, task read, create, and
-   dispatch allowlist.
-3. **Share routes** (`src/share/routes.ts`) — public viewer paths and owner
+   further limited to its explicit connection, task read, create, cancel,
+   delete, and dispatch allowlist; `/api/v1/tokens` writes also enforce
+   `admin` scope here before idempotency replay.
+3. **HTTP `ops` idempotency adapter** (`src/http/ops-adapter.ts`) — handles
+   `X-Client-Op-Id` across `/api/**` writes before sub-routers run: rejects
+   unsupported credential/upload routes (`400 op_id_not_supported`) and
+   malformed/duplicate headers (`400 invalid_op_id`), passes headerless writes
+   and fact-based routes straight through, and deduplicates all other writes
+   through `OpsStore` (`src/store/ops.ts`, 24h TTL) and in-flight coalescing.
+4. **Share routes** (`src/share/routes.ts`) — public viewer paths and owner
    share endpoints, claimed before the generic API branch.
-4. **File routes** (`src/files/routes.ts`) — task-less, read-only access to
+5. **File routes** (`src/files/routes.ts`) — task-less, read-only access to
    local paths (`/api/v1/files/{info,list,content}`); `content` is served only
    through an HMAC-signed URL.
-5. **`/api/v1` routes** — tasks, messages, permissions, config, recent paths,
-   tokens, bash, attachments, SSE streams, inbox, and the rest of the
-   [API Reference](../api.md).
-6. **Static files** — the app shell and hashed bundles; HTML entrypoints are
+6. **`/api/v1` and `/api/beta` routes** — tasks, messages, permissions, config,
+   recent paths, tokens, bash, attachments, SSE streams, inbox, push, and the
+   rest of the [API Reference](../api.md).
+7. **Static files** — the app shell and hashed bundles; HTML entrypoints are
    registered in `HTML_ENTRYPOINTS`.
 
 `withRequestErrorBoundary()` (`src/request-boundary.ts`) wraps the handler so a
@@ -146,8 +154,8 @@ before any of this on every launch path, and
 | Module | Responsibility |
 | --- | --- |
 | `src/task-manager.ts` | Live task runtime: creation (one entry point for REST create, quick prompt, inbox consume, and `task_create`), prompt submission slots, chunk buffers, collaboration delivery drain, bash processes, compaction and clear rotation, deletion and Root replacement. Broadcasts through callbacks injected by `server.ts`. |
-| `src/store.ts` | SQLite persistence: tasks, bindings, raw ACP events, messages and deliveries, attachments, shares, push subscriptions, client op results, recent paths. See [Database Schema](../schema.md). |
-| `src/store/` | Store collaborators: `collaboration-messages.ts` (REST collaboration message create-or-replay by derived Message id), and for multi-host persistence `remote-relations.ts` (`remote_tasks`), `link-outbox.ts` (`outbox`, `outbox_cursors`, push cursor), `link-apply.ts` (inbound apply, receipts, notices, rejection and timeout failures), and `internal.ts` (the `StoreInternal` handle they share). See [Multi-host](./multi-host.md). |
+| `src/store.ts` | SQLite persistence: tasks, bindings, raw ACP events, messages and deliveries, attachments, shares, push subscriptions, HTTP `ops` records, recent paths. See [Database Schema](../schema.md). |
+| `src/store/` | Store collaborators: `ops.ts` (`OpsStore`: bounded-TTL `ops` claim, complete, and sweep), `collaboration-messages.ts` (REST collaboration message create-or-replay by derived Message id), and for multi-host persistence `remote-relations.ts` (`remote_tasks`), `link-outbox.ts` (`outbox`, `outbox_cursors`, push cursor), `link-apply.ts` (inbound apply, receipts, notices, rejection and timeout failures), and `internal.ts` (the `StoreInternal` handle they share). See [Multi-host](./multi-host.md). |
 | `src/execution-authority.ts` | Which execution may still write to a task: the binding, the per-task generation (not persisted), and the lease validated at the write boundaries. |
 | `src/task-state.ts` | Per-task runtime state (busy, streaming, pending permissions, plan): a snapshot on connect plus incremental `state_patch` events. |
 | `src/obligation-controller.ts`, `src/task-collaboration.ts`, `src/collaboration-message.ts` | Directed-dispatch accounts, reminders, and notices; the arming policy; runtime message titles. See [Task Obligations](../task-obligations.md). |
@@ -161,11 +169,12 @@ transaction:
 
 ```text
  TaskManager, host/, http/, link-sync
-        │  store.<method>(…)
+        │  store.<method>(…) / store.ops.<method>(…)
         ▼
  ┌─────────────────────────────────────────────────────────────────────┐
  │ Store (store.ts)  tasks, bindings, events, messages and deliveries,  │
  │                   attachments, shares …; writeOutbox / outbox flush; │
+ │                   ops: OpsStore (store/ops.ts — ops table, 24h TTL); │
  │                   thin delegates for the link and relation API        │
  └──────┬──────────────────────────┬──────────────────────────┬─────────┘
         │ StoreInternal            │ StoreInternal            │ StoreInternal
@@ -179,6 +188,43 @@ transaction:
         └──────────────────────────┼──────────────────────────┘
                                    │
  Store.transitionDeliveryStatusInTransaction ── receipt enqueue (same tx)
+```
+
+General `/api/**` writes with `X-Client-Op-Id` pass through `createOpsAdapter()`
+(`src/http/ops-adapter.ts`) backed by `OpsStore` (`src/store/ops.ts`):
+
+```text
+ http/routes.ts  Bearer auth + host allowlist + static /tokens admin gate (401/403)
+        │
+        ▼
+ http/ops-adapter.ts  (/api/** POST | PUT | PATCH | DELETE)
+   no X-Client-Op-Id ─────────────────────────────────────► run innerHandler unbuffered
+   reject list (/tokens, /sse-ticket, /attachments) ──────► 400 op_id_not_supported
+   empty / >128 / duplicate physical header ──────────────► 400 invalid_op_id
+   bypass list (/tasks, /tasks/:id/messages, /link/entries)► run fact-based handler
+   read full body (abort before EOF → close, no claim)
+   key = opIdentity(OPS_NAMESPACE, host:<n>|token:<n>, opId)
+   fingerprint = sha256(method + "\0" + url + "\0" + rawBody)
+        │
+        ├─ inFlight.get(key)? ─ differs ──────────────────► 409 op_conflict
+        │                     ─ same ─────────────────────► await promise ─► write response
+        ▼
+   store.ops.claim(key, fingerprint, now)  [one sync tx, 24h TTL]
+        ├─ conflict (unexpired, fingerprint differs) ─────► 409 op_conflict
+        ├─ pending  (unexpired, status IS NULL, no flight)► 409 op_aborted
+        ├─ replay   (unexpired, status != NULL) ──────────► write stored {status, headers, body}
+        └─ new      (missing or age >= 24h)
+             │  buffer body on original req (WeakMap); register inFlight
+             │  run innerHandler on ResponseCapture (reject or unended → 400/500)
+             │  store.ops.complete(key, response, createdAt)  [persist before socket write]
+             └────────────────────────────────────────────► write response to caller & waiters
+
+ ops row lifecycle:
+   (missing | age >= 24h) ──claim()──► pending (status = NULL) ──complete()──► completed
+                                           │                                       │
+                                  (process crash/exit)             sweep() (age >= 24h, not inFlight)
+                                           ▼                                       ▼
+                                   orphan pending → 409 op_aborted              deleted
 ```
 
 The REST collaboration message route has its own handler and collaborator.
@@ -342,8 +388,8 @@ the task's submission slot, resolves its execution (resuming it if needed), and
 submits through `AgentBridge` → ACP events stream back through
 `handleAgentEvent()` → SSE.
 
-**A user cancels a task**: `POST /api/v1/tasks/:id/cancel` → the route checks
-task existence and client-op replay → `TaskOps.cancel()` resolves only an
+**A user cancels a task**: `POST /api/v1/tasks/:id/cancel` → after the HTTP
+`ops` entry check, the route checks task existence → `TaskOps.cancel()` resolves only an
 already-running execution, with no agent warm-up → the existing cancellation
 state machine and SSE behavior apply. Unlike MCP cancellation, this user command
 does not write agent cancellation audit rows.
@@ -386,8 +432,10 @@ re-export imports. See `eslint.config.js` for the exact scope of the rules.
   caller defaults inside the shared command. Cancellation deliberately keeps
   MCP parent/child authorization, generation fencing, and source/target audit
   separate from REST's bearer authorization and existing replay/no-audit path.
-- **Entry-specific mechanisms.** Idempotency exists only for REST and is keyed
-  by task; errors have two presentations.
+- **Entry-specific mechanisms.** Request idempotency lives at the HTTP wire
+  boundary (`ops` keyed by authenticated caller and op id, plus fact-based ids
+  on create, collaboration messages, and link entries); errors have two
+  presentations.
 
 [Multi-host](multi-host.md) describes the direction: every entrypoint converges
 on one server interface, below which execution is dispatched to the local

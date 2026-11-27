@@ -27,13 +27,14 @@ local parent exists. Links are durable decisions. Reachability is in memory
 and never becomes a Task fact; there is no remote-child mirror.
 
 Every host call authenticates with an owner-issued `host`-scoped token. Host
-scope reaches only `auth/verify`, the three link routes, task create, and the
-per-Task status and events reads; it has no task list, no browser SSE,
-and no `/tasks/:id/messages`. Per-Task reads are further limited to Tasks whose
+scope reaches only `auth/verify`, the three link routes, task create, task
+cancel, task delete, and the per-Task status and events reads; it has no task list, no browser SSE,
+and no `/tasks/:id/messages`. Per-Task reads, cancels, and deletes are further limited to Tasks whose
 `parent` row names the authenticated token.
 
-There is no multi-host protocol version. Owner and hub must be upgraded
-together; malformed current-wire responses fail as invalid responses.
+There is no multi-host protocol version. When upgrading across instances, update
+and restart owners before hubs so owner entry `ops` is active before hubs emit
+single-hop retries; malformed current-wire responses fail as invalid responses.
 
 ## Two paths for every remote call
 
@@ -51,9 +52,11 @@ state and must not be lost travels on the **link**; everything else is a
  |                                   <--|--- READ  -----| GET  /api/v1/link/outbox |
  +--------------------------------------+               |                          |
  | request (shared/sync/request)        |               |                          |
- |   create (opId, bounded retry)    ---|-------------->| POST /api/v1/tasks       |
- |   task_list / REST list status    ---|-------------->| GET  /tasks/:id/status   |
- |   task_query / task_read          ---|-------------->| GET  /tasks/:id/events   |
+ |   create (opId, bounded retry)    ---|-------------->| POST   /api/v1/tasks     |
+ |   cancel (hop UUID, fenced retry) ---|-------------->| POST   /tasks/:id/cancel |
+ |   delete (hop UUID, fenced retry) ---|-------------->| DELETE /api/v1/tasks/:id |
+ |   task_list / REST list status    ---|-------------->| GET    /tasks/:id/status |
+ |   task_query / task_read          ---|-------------->| GET    /tasks/:id/events |
  +--------------------------------------+               +--------------------------+
 ```
 
@@ -93,6 +96,21 @@ their `beforeSend` fence before every HTTP send (stopping as `unknown` if a
 retry fence fails after an initial unknown attempt), retry up to 2 times on
 unknown outcomes, and classify owner `409 op_aborted` or any post-unknown `4xx`
 as terminal `unknown`.
+
+```text
+ client / hub                                      server / owner (ops adapter)
+  |-- write /api/...  X-Client-Op-Id: U ---------->|  auth + /tokens admin gate (401/403)
+  |                                                 |  read full body -> key, fingerprint
+  |                                                 |  ops.claim(key, fp) -> new (status=NULL)
+  |      x  client timeout -> retry same U          |  register inFlight; run handler
+  |-- write /api/...  X-Client-Op-Id: U ---------->|  inFlight hit (same fp) -> await promise
+  |                                                 |  handler finishes -> ops.complete(key, res)
+  |<------------------------ stored response ------|  write finalized response to both sockets
+  |                                                 |
+  |-- later retry within 24h (same U, same fp) --->|  ops.claim -> replay (handler not run)
+  |<------------------------ stored response ------|  (different fp -> 409 op_conflict;
+                                                    |   crash before complete -> 409 op_aborted)
+```
 
 For fact-based task creation, a created Task's id is derived from the op id:
 
@@ -686,23 +704,25 @@ local or remote.
  caller (P agent or user)   hub                                     owner                      R1
    │ cancel(R1)              │                                         │                          │
    ├────────────────────────►│ resolveCancelTarget                     │                          │
-   │                         │ resolve credential                      │                          │
-   │                         │ agent: generation fence                 │                          │
-   │                         ├── POST /tasks/R1/cancel ───────────────►│ read + parse body        │
-   │                         │   user: {}                              │ then, with no await:     │
-   │                         │   agent: {reason, sourceLabel}          │  R1 live? parent row     │
-   │                         │                                         │  link = token name?      │
-   │                         │                                         │  no → 404                │
+   │                         │ resolve credential; U = randomUUID()    │                          │
+   │                         │ each send (≤3 tries, same U):           │                          │
+   │                         │   agent: generation fence (beforeSend)  │                          │
+   │                         ├── POST /tasks/R1/cancel (opId: U) ─────►│ ops (host:hub, U):       │
+   │                         │   user: {}                              │  replay if already done  │
+   │                         │   agent: {reason, sourceLabel}          │  else read + parse body  │
+   │                         │                                         │  R1 live & parent link   │
+   │                         │                                         │  = token name? no → 404  │
    │                         │                                         │  yes → local cancel ────►│ turn stops
-   │                         │                                         │ agent: R1 target row     │
-   │                         │◄─────────── 200 idle | cancelled ───────┤                          │
+   │                         │                                         │  agent: R1 target row    │
+   │                         │◄─────────── 200 idle | cancelled ───────┤  ops.complete            │
    │                         │             202 cancelling | superseded │                          │
    │                         │ HTTP code must match the body status    │                          │
    │                         │ agent: generation fence, P source row   │                          │
    │◄── status ──────────────┤                                         │                          │
    │                         │                                         │                          │
-   │  404 → not found · other 4xx → rejected                                                        │
-   │  timeout · 5xx · mismatched pair → unknown: no retry, no P source row                          │
+   │  1st-attempt 404 → not found · other 1st-attempt 4xx → rejected                              │
+   │  timeout · 5xx · bad body → retry same U (recheck fence; fence fail stops as unknown)        │
+   │  budget exhausted · 409 op_aborted · post-unknown 4xx → unknown, no P source row             │
 ```
 
 On the owner, `POST /api/v1/tasks/:id/cancel` is in host scope and runs an
@@ -739,14 +759,19 @@ request.
 Hub: DELETE P                               Owner: R1
   preflight local subtree; pin target
   Root exit: resolve rebuild agent, recheck busy
-  for each remote child:
-    resolve credential; recheck current
-    subtree membership and inbound authority
-    skip a departed child
-    DELETE /api/v1/tasks/R1 ----------------> authenticate parent link
-                                              delete descendants first
-                                              lock, recheck, commit R1
-    <--------------------------------------- 200 with matching taskId
+  for each remote child R_i:
+    resolve credential; U_i = randomUUID()
+    each send (≤3 tries, same U_i):
+      recheck current subtree membership &
+      child edge (skip on 1st try if gone;
+      stop as unknown if retry fence fails)
+      DELETE /api/v1/tasks/R1 (opId: U_i) --> ops (host:hub, U_i):
+                                                replay 200 if already done
+                                                else authenticate parent link
+                                                delete descendants first
+                                                lock, recheck, commit R1
+                                                ops.complete
+      <------------------------------------- 200 with matching taskId
     remember R1; leave its hub link alone
   after all confirmations:
     lock, recheck target, authority, busy
