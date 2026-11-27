@@ -29,8 +29,10 @@ import {
   writeSpecConfig,
   type SpecServer,
 } from "../e2e/spawn-server.ts";
-import { pickFreePort } from "../e2e/run-context.ts";
+import { createRegressionPortAllocator } from "./ports.ts";
 import { RegressionForwarder } from "./forwarder.ts";
+
+const allocateRegressionPort = createRegressionPortAllocator();
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SCENARIO_DIR = join(ROOT, "test", "regression", "scenarios");
@@ -260,8 +262,10 @@ async function createInstances(
     definition.instances ?? {
       default: { mock: definition.mock },
     };
-  const plans = Object.entries(specs).map(([instanceName, spec], index) =>
-    createInstancePlan(name, instanceName, spec, index),
+  const plans = await Promise.all(
+    Object.entries(specs).map(([instanceName, spec], index) =>
+      createInstancePlan(name, instanceName, spec, index),
+    ),
   );
   const forwarders = new Map<string, RegressionForwarder>();
   for (const [forwarderName, spec] of Object.entries(
@@ -351,12 +355,12 @@ async function createInstances(
   }
 }
 
-function createInstancePlan(
+async function createInstancePlan(
   scenarioName: string,
   instanceName: string,
   spec: RegressionInstanceSpec,
   index: number,
-): InstancePlan {
+): Promise<InstancePlan> {
   const root = join(
     tmpdir(),
     `webagent-regression-${scenarioName}-${instanceName}-${randomBytes(4).toString("hex")}`,
@@ -397,7 +401,7 @@ function createInstancePlan(
       WEBAGENT_REGRESSION_BEHAVIOR_PATH: behaviorPath,
       WEBAGENT_REGRESSION_CALLS_PATH: mockLog,
     },
-    port: pickFreePort(),
+    port: await allocateRegressionPort(),
     spec,
   };
 }
