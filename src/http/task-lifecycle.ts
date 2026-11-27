@@ -335,12 +335,7 @@ function sendDeleteError(
       });
       return;
     }
-    json(res, HTTP_STATUS.BAD_REQUEST, {
-      error: message,
-      code: "delete_failed",
-      failedTaskId: taskId,
-    });
-    return;
+    throw err;
   }
 
   if (err instanceof TaskRemoteDeleteError) {
@@ -402,33 +397,39 @@ export async function handleDeleteTaskRoute(
     json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
     return;
   }
-  try {
-    if (!isHostScope && taskId === store.rootTaskId) {
+  if (!isHostScope && taskId === store.rootTaskId) {
+    try {
       await handleExitRootDelete(ctx);
-      return;
+    } catch (err) {
+      sendDeleteError(ctx, err, false);
     }
-    const affectedStore = tasks
+    return;
+  }
+  let affectedStore: { affected: ReturnType<Store["deleteTask"]>["affected"] };
+  try {
+    affectedStore = tasks
       ? await tasks.deleteTask(undefined, taskId, {
           ...(isHostScope
             ? { requiredExternalParentHost: principal.name }
             : {}),
         })
       : store.deleteTask(taskId);
-    for (const entry of affectedStore.affected) {
-      sseManager.broadcast({
-        type: "task_deleted",
-        taskId: entry.id,
-        agentId: entry.agentId,
-        ...(entry.id === taskId ? { parentId: task.parent_id } : {}),
-        ...(entry.id === taskId && clientOpId ? { clientOpId } : {}),
-      });
-    }
-    json(res, HTTP_STATUS.OK, {
-      taskId,
-      parentId: task.parent_id,
-      ...(clientOpId ? { clientOpId } : {}),
-    });
   } catch (err) {
     sendDeleteError(ctx, err, isHostScope);
+    return;
   }
+  for (const entry of affectedStore.affected) {
+    sseManager.broadcast({
+      type: "task_deleted",
+      taskId: entry.id,
+      agentId: entry.agentId,
+      ...(entry.id === taskId ? { parentId: task.parent_id } : {}),
+      ...(entry.id === taskId && clientOpId ? { clientOpId } : {}),
+    });
+  }
+  json(res, HTTP_STATUS.OK, {
+    taskId,
+    parentId: task.parent_id,
+    ...(clientOpId ? { clientOpId } : {}),
+  });
 }

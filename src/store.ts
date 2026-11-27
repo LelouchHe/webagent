@@ -89,11 +89,10 @@ function assertStorableExecutionId(
   }
 }
 
-/** External parent metadata captured before a hard delete cascades remote_tasks. */
+/** External parent metadata captured before delete removes remote_tasks. */
 export interface DeletedExternalParent {
   remoteHost: string;
   remoteTaskId: string;
-  title: string | null;
 }
 
 /** One task removed by a delete (the requested id or a cascaded descendant). */

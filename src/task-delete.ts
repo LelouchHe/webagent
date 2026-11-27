@@ -1,25 +1,15 @@
+import type {
+  RemoteTaskDeleteAttempt,
+  RemoteTaskDeleter,
+} from "./api/tasks.ts";
 import type { Store } from "./store.ts";
+
+export type { RemoteTaskDeleteAttempt, RemoteTaskDeleter };
 
 export interface DeletedRemoteChildRef {
   host: string;
   taskId: string;
 }
-
-export type RemoteTaskDeleteAttempt =
-  | { kind: "deleted" }
-  | {
-      kind: "rejected";
-      status: number;
-      reason: string;
-      code?: string;
-      failedTaskId?: string;
-    }
-  | { kind: "unknown"; reason: string };
-
-export type RemoteTaskDeleter = (
-  host: string,
-  taskId: string,
-) => Promise<RemoteTaskDeleteAttempt>;
 
 export class TaskRemoteDeleteError extends Error {
   readonly outcome: "rejected" | "unknown";
@@ -93,6 +83,7 @@ export interface SynchronizedDeleteDeps<T> {
   deleteRemote?: RemoteTaskDeleter;
   acquireLock: (taskId: string) => Promise<() => void>;
   createNotFoundError: (taskId: string) => Error;
+  isNotFoundError?: (err: unknown) => boolean;
   createBusyError: (taskId: string, path: string | undefined) => Error;
   commit: () => T;
 }
@@ -140,6 +131,18 @@ function remoteChildrenInSubtree(
   return all.filter((child) => subtree.has(child.local_task_id));
 }
 
+function targetChangedError(
+  targetId: string,
+  confirmed: readonly DeletedRemoteChildRef[],
+): TaskDeleteStateChangedError {
+  return new TaskDeleteStateChangedError({
+    code: "target_changed",
+    failedTaskId: targetId,
+    deletedRemoteTasks: confirmed,
+    message: `Target task ${targetId} was already removed or replaced during deletion.${formatPartialSuffix(confirmed)}`,
+  });
+}
+
 function checkTargetAndEdge<T>(
   deps: SynchronizedDeleteDeps<T>,
   confirmed: readonly DeletedRemoteChildRef[],
@@ -150,12 +153,7 @@ function checkTargetAndEdge<T>(
     (!expectRoot || store.rootTaskId === targetId);
   if (!targetLive) {
     if (confirmed.length > 0) {
-      throw new TaskDeleteStateChangedError({
-        code: "target_changed",
-        failedTaskId: targetId,
-        deletedRemoteTasks: confirmed,
-        message: `Target task ${targetId} was already removed or replaced during deletion.${formatPartialSuffix(confirmed)}`,
-      });
+      throw targetChangedError(targetId, confirmed);
     }
     throw deps.createNotFoundError(targetId);
   }
@@ -176,6 +174,15 @@ function checkTargetAndEdge<T>(
   }
 }
 
+function assertSubtreeIdle<T>(deps: SynchronizedDeleteDeps<T>): void {
+  const { store, targetId } = deps;
+  checkTargetAndEdge(deps, []);
+  const busy = findBusyInSubtree(deps, subtreeIdsFor(store, targetId));
+  if (busy) {
+    throw deps.createBusyError(busy, store.getTaskPath(busy));
+  }
+}
+
 function findBusyInSubtree<T>(
   deps: SynchronizedDeleteDeps<T>,
   subtreeIds: readonly string[],
@@ -191,6 +198,31 @@ function findBusyInSubtree<T>(
   });
 }
 
+function throwRemoteDeleteFailure(
+  targetId: string,
+  candidate: { remote_host: string; remote_task_id: string },
+  attempt: Extract<RemoteTaskDeleteAttempt, { kind: "rejected" | "unknown" }>,
+  deleted: readonly DeletedRemoteChildRef[],
+): never {
+  if (attempt.kind === "rejected") {
+    throw new TaskRemoteDeleteError({
+      outcome: "rejected",
+      host: candidate.remote_host,
+      failedTaskId: candidate.remote_task_id,
+      remoteStatus: attempt.status,
+      deletedRemoteTasks: deleted,
+      message: `Target task ${targetId} was preserved because deleting remote child ${candidate.remote_task_id} on ${candidate.remote_host} failed: ${attempt.reason}.${formatPartialSuffix(deleted)}`,
+    });
+  }
+  throw new TaskRemoteDeleteError({
+    outcome: "unknown",
+    host: candidate.remote_host,
+    failedTaskId: candidate.remote_task_id,
+    deletedRemoteTasks: deleted,
+    message: `Target task ${targetId} was preserved because deleting remote child ${candidate.remote_task_id} on ${candidate.remote_host} had an unknown result (${attempt.reason}); that remote child may already have changed.${formatPartialSuffix(deleted)}`,
+  });
+}
+
 export async function runSynchronizedDelete<T>(
   deps: SynchronizedDeleteDeps<T>,
 ): Promise<T> {
@@ -198,25 +230,18 @@ export async function runSynchronizedDelete<T>(
   const confirmed = new Map<string, DeletedRemoteChildRef>();
   const confirmedList = (): DeletedRemoteChildRef[] => [...confirmed.values()];
 
-  // 1. Local preflight before any remote call (no lock or transaction held).
+  // 1. Local preflight before any remote call or Root rebuild-agent check.
   const initialCandidates = deps.deleteRemote
     ? remoteChildrenInSubtree(store, targetId)
     : [];
-  if (initialCandidates.length > 0) {
-    checkTargetAndEdge(deps, []);
-    const preflightBusy = findBusyInSubtree(
-      deps,
-      subtreeIdsFor(store, targetId),
-    );
-    if (preflightBusy) {
-      throw deps.createBusyError(
-        preflightBusy,
-        store.getTaskPath(preflightBusy),
-      );
-    }
+  if (initialCandidates.length > 0 || deps.preflightExtra !== undefined) {
+    assertSubtreeIdle(deps);
   }
   if (deps.preflightExtra) {
     await deps.preflightExtra();
+    if (initialCandidates.length > 0) {
+      assertSubtreeIdle(deps);
+    }
   }
 
   // 2. Synchronous children-first remote delete loop (no lock held).
@@ -224,25 +249,31 @@ export async function runSynchronizedDelete<T>(
     const key = remoteKey(candidate.remote_host, candidate.remote_task_id);
     if (confirmed.has(key)) continue;
 
-    checkTargetAndEdge(deps, confirmedList());
-    const liveSubtree = new Set(subtreeIdsFor(store, targetId));
-    const currentEdge = store.getRemoteChild(
-      candidate.remote_host,
-      candidate.remote_task_id,
-    );
-    if (
-      currentEdge?.local_task_id !== candidate.local_task_id ||
-      !liveSubtree.has(candidate.local_task_id)
-    ) {
-      continue;
-    }
+    const verifyBeforeSend = (): boolean => {
+      checkTargetAndEdge(deps, confirmedList());
+      const liveSubtree = new Set(subtreeIdsFor(store, targetId));
+      const currentEdge = store.getRemoteChild(
+        candidate.remote_host,
+        candidate.remote_task_id,
+      );
+      return (
+        currentEdge?.local_task_id === candidate.local_task_id &&
+        liveSubtree.has(candidate.local_task_id)
+      );
+    };
+    if (!verifyBeforeSend()) continue;
 
     const attempt: RemoteTaskDeleteAttempt = deps.deleteRemote
-      ? await deps.deleteRemote(candidate.remote_host, candidate.remote_task_id)
+      ? await deps.deleteRemote(
+          candidate.remote_host,
+          candidate.remote_task_id,
+          verifyBeforeSend,
+        )
       : {
           kind: "unknown",
           reason: "Remote host transport is not configured",
         };
+    if (attempt.kind === "skipped") continue;
     if (attempt.kind === "deleted") {
       confirmed.set(key, {
         host: candidate.remote_host,
@@ -250,28 +281,20 @@ export async function runSynchronizedDelete<T>(
       });
       continue;
     }
-    const deleted = confirmedList();
-    if (attempt.kind === "rejected") {
-      throw new TaskRemoteDeleteError({
-        outcome: "rejected",
-        host: candidate.remote_host,
-        failedTaskId: candidate.remote_task_id,
-        remoteStatus: attempt.status,
-        deletedRemoteTasks: deleted,
-        message: `Target task ${targetId} was preserved because deleting remote child ${candidate.remote_task_id} on ${candidate.remote_host} failed: ${attempt.reason}.${formatPartialSuffix(deleted)}`,
-      });
-    }
-    throw new TaskRemoteDeleteError({
-      outcome: "unknown",
-      host: candidate.remote_host,
-      failedTaskId: candidate.remote_task_id,
-      deletedRemoteTasks: deleted,
-      message: `Target task ${targetId} was preserved because deleting remote child ${candidate.remote_task_id} on ${candidate.remote_host} had an unknown result (${attempt.reason}); that remote child may already have changed.${formatPartialSuffix(deleted)}`,
-    });
+    throwRemoteDeleteFailure(targetId, candidate, attempt, confirmedList());
   }
 
   // 3. Final recheck and commit inside tree mutation lock (no awaits).
-  const release = await deps.acquireLock(targetId);
+  let release: () => void;
+  try {
+    release = await deps.acquireLock(targetId);
+  } catch (err) {
+    const deleted = confirmedList();
+    if (deleted.length > 0 && deps.isNotFoundError?.(err) === true) {
+      throw targetChangedError(targetId, deleted);
+    }
+    throw err;
+  }
   try {
     const deleted = confirmedList();
     checkTargetAndEdge(deps, deleted);

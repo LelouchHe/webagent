@@ -3246,6 +3246,7 @@ export class TaskManager implements ObligationHost {
       deleteRemote: this.remoteTaskDeleter,
       acquireLock: (id) => this.acquireTaskTreeMutationLock(id),
       createNotFoundError: (id) => new TaskNotFoundError(id),
+      isNotFoundError: (err) => err instanceof TaskNotFoundError,
       createBusyError: (id, path) => new TaskBusyError(id, path),
       getBusyKind: (id) => this.getGateBusyKind(id),
       isOwnCreationClaim: opts.ownCreationClaim

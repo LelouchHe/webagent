@@ -16,6 +16,7 @@ import {
   cancelHttpStatus,
   TaskRemoteCancelError,
   type RemoteTaskCreateInput,
+  type RemoteTaskDeleteAttempt,
   type TaskCancelOutcome,
   type TaskReadInput,
   type TaskReadResult,
@@ -106,20 +107,13 @@ const TaskDeleteResponseSchema = z.object({
 
 const RemoteDeleteRejectionSchema = z.object({
   error: z.string().min(1),
-  code: z.string().min(1).optional(),
+  code: z.string().min(1),
   failedTaskId: z.string().min(1).optional(),
 });
 
-export type HostTaskDeleteAttempt =
-  | { kind: "deleted" }
-  | {
-      kind: "rejected";
-      status: number;
-      reason: string;
-      code?: string;
-      failedTaskId?: string;
-    }
-  | { kind: "unknown"; reason: string };
+const AuthRejectionSchema = z.object({
+  error: z.string().min(1),
+});
 
 export type RemoteTaskStatus = z.infer<typeof RemoteTaskStatusSchema>;
 
@@ -415,12 +409,18 @@ export class HostConnection {
     return parsed.data.status;
   }
 
-  async deleteTask(taskId: string): Promise<HostTaskDeleteAttempt> {
+  async deleteTask(
+    taskId: string,
+    beforeSend?: () => boolean | void,
+  ): Promise<RemoteTaskDeleteAttempt> {
     let token: string;
     try {
       token = await this.resolveToken();
     } catch {
       return { kind: "unknown", reason: "Host credential is unavailable" };
+    }
+    if (beforeSend?.() === false) {
+      return { kind: "skipped" };
     }
     const outcome = await sendSyncRequest({
       opId: null,
@@ -439,18 +439,29 @@ export class HostConnection {
     }
     if (outcome.kind === "rejected") {
       const parsed = RemoteDeleteRejectionSchema.safeParse(outcome.body);
+      if (parsed.success) {
+        return {
+          kind: "rejected",
+          status: outcome.status,
+          reason: parsed.data.error,
+        };
+      }
+      if (
+        outcome.status === HTTP_STATUS.UNAUTHORIZED ||
+        outcome.status === HTTP_STATUS.FORBIDDEN
+      ) {
+        const authParsed = AuthRejectionSchema.safeParse(outcome.body);
+        if (authParsed.success) {
+          return {
+            kind: "rejected",
+            status: outcome.status,
+            reason: authParsed.data.error,
+          };
+        }
+      }
       return {
-        kind: "rejected",
-        status: outcome.status,
-        reason: parsed.success
-          ? parsed.data.error
-          : responseError(outcome.body, outcome.status),
-        ...(parsed.success && parsed.data.code
-          ? { code: parsed.data.code }
-          : {}),
-        ...(parsed.success && parsed.data.failedTaskId
-          ? { failedTaskId: parsed.data.failedTaskId }
-          : {}),
+        kind: "unknown",
+        reason: `Remote returned an invalid HTTP ${outcome.status} task-delete rejection`,
       };
     }
     if (outcome.status !== HTTP_STATUS.OK) {

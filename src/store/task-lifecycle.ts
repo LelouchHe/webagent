@@ -278,7 +278,7 @@ export class TaskLifecycleStore {
       );
 
       const { failedDeliveryIds, externalParent } =
-        this.detachExternalParentOnUnarchive(id, task.title, options);
+        this.detachExternalParentOnUnarchive(id, options);
 
       return {
         result: {
@@ -298,16 +298,19 @@ export class TaskLifecycleStore {
 
   private detachExternalParentOnUnarchive(
     id: string,
-    title: string | null,
     options?: TaskDeleteStoreOptions,
   ): {
     failedDeliveryIds: string[];
-    externalParent?: { remoteHost: string; remoteTaskId: string };
+    externalParent?: DeletedExternalParent;
   } {
     const externalLink = this.remoteRelations.getExternalParentLink(id);
     if (!externalLink) return { failedDeliveryIds: [] };
+    const externalParent: DeletedExternalParent = {
+      remoteHost: externalLink.remote_host,
+      remoteTaskId: externalLink.remote_task_id,
+    };
     const hadOpenExternalAccount =
-      options?.hasOpenExternalAccount?.(id, externalLink.remote_task_id) ===
+      options?.hasOpenExternalAccount?.(id, externalParent.remoteTaskId) ===
       true;
     const failedAt = Date.now();
     const edgeQueued = this.store.db
@@ -323,7 +326,11 @@ export class TaskLifecycleStore {
              SELECT 1 FROM outbox o WHERE o.delivery_id = d.id
            )`,
       )
-      .all(id, externalLink.remote_host, externalLink.remote_task_id) as Array<{
+      .all(
+        id,
+        externalParent.remoteHost,
+        externalParent.remoteTaskId,
+      ) as Array<{
       id: string;
     }>;
     const failedDeliveryIds: string[] = [];
@@ -342,21 +349,11 @@ export class TaskLifecycleStore {
     }
     this.remoteRelations.deleteExternalParentLinkInTransaction(id);
     this.enqueueChildLeftInTransaction(
-      {
-        remoteHost: externalLink.remote_host,
-        remoteTaskId: externalLink.remote_task_id,
-        title,
-      },
+      externalParent,
       id,
       hadOpenExternalAccount && failedDeliveryIds.length === 0,
     );
-    return {
-      failedDeliveryIds,
-      externalParent: {
-        remoteHost: externalLink.remote_host,
-        remoteTaskId: externalLink.remote_task_id,
-      },
-    };
+    return { failedDeliveryIds, externalParent };
   }
 
   /**
@@ -449,11 +446,63 @@ export class TaskLifecycleStore {
     this.store.db
       .prepare("DELETE FROM shares WHERE task_id = ? AND shared_at IS NULL")
       .run(id);
-    const taskDeleteInfo = this.store.db
+    const { activeShares, externalParent } = this.readDeleteInfo(id);
+    const hadOpenExternalAccount =
+      externalParent !== undefined &&
+      options?.hasOpenExternalAccount?.(id, externalParent.remoteTaskId) ===
+        true;
+    this.store.db.prepare("DELETE FROM client_ops WHERE task_id = ?").run(id);
+
+    const mode: "hard" | "soft" = activeShares > 0 ? "soft" : "hard";
+    let edgeFailed = false;
+    if (mode === "soft") {
+      this.store.db
+        .prepare("UPDATE tasks SET deleted_at = ? WHERE id = ?")
+        .run(Date.now(), id);
+      this.store.db
+        .prepare("DELETE FROM agent_sessions WHERE task_id = ?")
+        .run(id);
+      this.remoteRelations.deleteRemoteRelationsForLocalTaskInTransaction(id);
+    } else {
+      this.store.reparentChildrenToRoot(id);
+      const failedDeliveryIds =
+        this.store.failOutstandingDeliveriesForDeletedTask(id);
+      edgeFailed =
+        externalParent !== undefined &&
+        this.anyFailedDeliveryOnExternalParentEdge(
+          failedDeliveryIds,
+          id,
+          externalParent,
+        );
+      this.store.db.prepare("DELETE FROM events WHERE task_id = ?").run(id);
+      this.store.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
+    }
+    if (externalParent) {
+      this.enqueueChildLeftInTransaction(
+        externalParent,
+        id,
+        hadOpenExternalAccount && !edgeFailed,
+      );
+    }
+    this.store.collectBindingChange(id, beforeBinding);
+    affected.unshift({
+      id,
+      mode,
+      agentSessionId: binding?.agent_session_id ?? null,
+      agentId: binding?.agent_key ?? null,
+      ...(externalParent ? { externalParent } : {}),
+    });
+    return { mode, affected };
+  }
+
+  private readDeleteInfo(id: string): {
+    activeShares: number;
+    externalParent: DeletedExternalParent | undefined;
+  } {
+    const row = this.store.db
       .prepare(
         `SELECT
            (SELECT COUNT(*) FROM shares WHERE task_id = ? AND shared_at IS NOT NULL) AS active_shares,
-           t.title,
            r.remote_host,
            r.remote_task_id
          FROM tasks t
@@ -464,128 +513,20 @@ export class TaskLifecycleStore {
       .get(id, id) as
       | {
           active_shares: number;
-          title: string | null;
           remote_host: string | null;
           remote_task_id: string | null;
         }
       | undefined;
-    const activeShareCount = taskDeleteInfo?.active_shares ?? 0;
-    const externalParent: DeletedExternalParent | undefined =
-      taskDeleteInfo?.remote_host && taskDeleteInfo.remote_task_id
-        ? {
-            remoteHost: taskDeleteInfo.remote_host,
-            remoteTaskId: taskDeleteInfo.remote_task_id,
-            title: taskDeleteInfo.title,
-          }
-        : undefined;
-    const hadOpenExternalAccount =
-      externalParent !== undefined &&
-      options?.hasOpenExternalAccount?.(id, externalParent.remoteTaskId) ===
-        true;
-    this.store.db.prepare("DELETE FROM client_ops WHERE task_id = ?").run(id);
-    if (activeShareCount > 0) {
-      return this.softDeleteTaskInScope({
-        id,
-        binding,
-        beforeBinding,
-        externalParent,
-        hadOpenExternalAccount,
-        affected,
-      });
-    }
-    return this.hardDeleteTaskInScope({
-      id,
-      binding,
-      beforeBinding,
-      externalParent,
-      hadOpenExternalAccount,
-      affected,
-    });
-  }
-
-  private softDeleteTaskInScope(input: {
-    id: string;
-    binding: ReturnType<StoreInternal["getCurrentExecutionBinding"]>;
-    beforeBinding: ExecutionBinding | null;
-    externalParent: DeletedExternalParent | undefined;
-    hadOpenExternalAccount: boolean;
-    affected: TaskDelete[];
-  }): { mode: "soft"; affected: TaskDelete[] } {
-    const {
-      id,
-      binding,
-      beforeBinding,
-      externalParent,
-      hadOpenExternalAccount,
-      affected,
-    } = input;
-    this.store.db
-      .prepare("UPDATE tasks SET deleted_at = ? WHERE id = ?")
-      .run(Date.now(), id);
-    this.store.db
-      .prepare("DELETE FROM agent_sessions WHERE task_id = ?")
-      .run(id);
-    this.remoteRelations.deleteRemoteRelationsForLocalTaskInTransaction(id);
-    if (externalParent) {
-      this.enqueueChildLeftInTransaction(
-        externalParent,
-        id,
-        hadOpenExternalAccount,
-      );
-    }
-    this.store.collectBindingChange(id, beforeBinding);
-    affected.unshift({
-      id,
-      mode: "soft",
-      agentSessionId: binding?.agent_session_id ?? null,
-      agentId: binding?.agent_key ?? null,
-      ...(externalParent ? { externalParent } : {}),
-    });
-    return { mode: "soft", affected };
-  }
-
-  private hardDeleteTaskInScope(input: {
-    id: string;
-    binding: ReturnType<StoreInternal["getCurrentExecutionBinding"]>;
-    beforeBinding: ExecutionBinding | null;
-    externalParent: DeletedExternalParent | undefined;
-    hadOpenExternalAccount: boolean;
-    affected: TaskDelete[];
-  }): { mode: "hard"; affected: TaskDelete[] } {
-    const {
-      id,
-      binding,
-      beforeBinding,
-      externalParent,
-      hadOpenExternalAccount,
-      affected,
-    } = input;
-    this.store.reparentChildrenToRoot(id);
-    const failedDeliveryIds =
-      this.store.failOutstandingDeliveriesForDeletedTask(id);
-    if (externalParent) {
-      const edgeFailed = this.anyFailedDeliveryOnExternalParentEdge(
-        failedDeliveryIds,
-        id,
-        externalParent,
-      );
-      this.enqueueChildLeftInTransaction(
-        externalParent,
-        id,
-        hadOpenExternalAccount && !edgeFailed,
-      );
-    }
-    this.store.db.prepare("DELETE FROM events WHERE task_id = ?").run(id);
-    this.store.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
-    this.store.collectBindingChange(id, beforeBinding);
-    affected.unshift({
-      id,
-      mode: "hard",
-      agentSessionId: binding?.agent_session_id ?? null,
-      agentId: binding?.agent_key ?? null,
-      ...(externalParent ? { externalParent } : {}),
-    });
-    return { mode: "hard", affected };
+    return {
+      activeShares: row?.active_shares ?? 0,
+      externalParent:
+        row?.remote_host && row.remote_task_id
+          ? {
+              remoteHost: row.remote_host,
+              remoteTaskId: row.remote_task_id,
+            }
+          : undefined,
+    };
   }
 
   private anyFailedDeliveryOnExternalParentEdge(

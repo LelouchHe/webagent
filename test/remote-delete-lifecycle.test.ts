@@ -1,11 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import Database from "better-sqlite3";
+import { HostConnection } from "../src/host/remote/connection.ts";
+import { HostRegistry } from "../src/host/remote/registry.ts";
 import { Store } from "../src/store.ts";
 import {
   SingleAgentEnvironment,
@@ -958,6 +960,441 @@ describe("remote lifecycle: owner unarchive and hub archive boundary", () => {
           "The target left this edge (deleted or archived); the account is gone.",
         );
       } finally {
+        tasks.dispose();
+      }
+    });
+  });
+});
+
+async function waitForFile(path: string): Promise<void> {
+  const deadline = performance.now() + 5_000;
+  while (performance.now() < deadline) {
+    if (existsSync(path)) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for ${path}`);
+}
+
+describe("remote lifecycle: review hardening (credential fence, missing-lock, decoding, Root busy)", () => {
+  it("fences DELETE after credential await for both departed candidate and lost owner authority [behavior proof]", async () => {
+    // Manifestation A: candidate's local ancestor Q is archived while credentials await -> 0 DELETEs sent.
+    await withTempStoreAsync(async (store, dir) => {
+      const tasks = makeTaskManager(store, dir);
+      try {
+        const p = createLocalTask(store, dir, "Fence P");
+        const q = createLocalTask(store, dir, "Fence Q", p);
+        const r1 = randomUUID();
+        store.recordRemoteChild(q, r1, "owner-1");
+
+        const readyFile = join(dir, "cred-a-ready");
+        const goFile = join(dir, "cred-a-go");
+        const tokenCmd = `!node -e "const fs=require('fs');fs.writeFileSync(process.argv[1],'1');const iv=setInterval(()=>{if(fs.existsSync(process.argv[2])){clearInterval(iv);console.log('tok-a');}},10);" ${JSON.stringify(readyFile)} ${JSON.stringify(goFile)}`;
+
+        const sentDeletes: string[] = [];
+        const registry = new HostRegistry(
+          { "owner-1": { url: "http://127.0.0.1:1", token: tokenCmd } },
+          {
+            fetch: async (input) => {
+              sentDeletes.push(
+                typeof input === "string"
+                  ? input
+                  : input instanceof URL
+                    ? input.toString()
+                    : input.url,
+              );
+              return new Response(JSON.stringify({ taskId: r1 }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+              });
+            },
+            listLinks: () => [],
+          },
+        );
+        tasks.setRemoteTaskDeleter((host, taskId, beforeSend) =>
+          registry.deleteRemote(host, taskId, beforeSend),
+        );
+
+        const pending = tasks.deleteTask(undefined, p);
+        await waitForFile(readyFile);
+        store.archiveTask(q);
+        writeFileSync(goFile, "go");
+        await pending;
+
+        assert.deepEqual(
+          sentDeletes,
+          [],
+          "archived candidate must receive zero DELETEs after credential await",
+        );
+        assert.equal(store.getTask(p), undefined);
+        assert.notEqual(store.getTask(q), undefined);
+        assert.notEqual(store.getRemoteChild("owner-1", r1), undefined);
+      } finally {
+        tasks.dispose();
+      }
+    });
+
+    // Manifestation B: owner loses inbound external parent edge while 2nd child's credentials await ->
+    // aborts with edge_removed preserving 1st confirmed child, and sends zero DELETEs for 2nd child.
+    await withTempStoreAsync(async (store, dir) => {
+      const tasks = makeTaskManager(store, dir);
+      try {
+        const mid = seedExternalChild(store, dir, {
+          remoteHost: "hub-a",
+          title: "Fence Mid",
+        });
+        const leaf1 = "00000000-0000-4000-8000-000000000001";
+        const leaf2 = "00000000-0000-4000-8000-000000000002";
+        store.recordRemoteChild(mid.childId, leaf1, "owner-1");
+        store.recordRemoteChild(mid.childId, leaf2, "owner-2");
+
+        const readyFile = join(dir, "cred-b-ready");
+        const goFile = join(dir, "cred-b-go");
+        const slowCmd = `!node -e "const fs=require('fs');fs.writeFileSync(process.argv[1],'1');const iv=setInterval(()=>{if(fs.existsSync(process.argv[2])){clearInterval(iv);console.log('tok-b');}},10);" ${JSON.stringify(readyFile)} ${JSON.stringify(goFile)}`;
+
+        const sentDeletes: string[] = [];
+        const registry = new HostRegistry(
+          {
+            "owner-1": { url: "http://127.0.0.1:1", token: "tok-1" },
+            "owner-2": { url: "http://127.0.0.1:2", token: slowCmd },
+          },
+          {
+            fetch: async (input) => {
+              const url =
+                typeof input === "string"
+                  ? input
+                  : input instanceof URL
+                    ? input.toString()
+                    : input.url;
+              sentDeletes.push(url);
+              return new Response(JSON.stringify({ taskId: leaf1 }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+              });
+            },
+            listLinks: () => [],
+          },
+        );
+        tasks.setRemoteTaskDeleter((host, taskId, beforeSend) =>
+          registry.deleteRemote(host, taskId, beforeSend),
+        );
+
+        const pending = tasks.deleteTask(undefined, mid.childId, {
+          requiredExternalParentHost: "hub-a",
+        });
+        await waitForFile(readyFile);
+        tasks.unarchiveTask(mid.childId);
+        writeFileSync(goFile, "go");
+
+        await assert.rejects(
+          () => pending,
+          (err: unknown) => {
+            assert.ok(err instanceof TaskDeleteStateChangedError);
+            assert.equal(err.code, "edge_removed");
+            assert.deepEqual(err.deletedRemoteTasks, [
+              { host: "owner-1", taskId: leaf1 },
+            ]);
+            return true;
+          },
+        );
+        assert.equal(
+          sentDeletes.length,
+          1,
+          "must send DELETE only for leaf1, zero DELETEs for leaf2",
+        );
+        assert.match(sentDeletes[0], new RegExp(leaf1));
+        assert.notEqual(store.getTask(mid.childId), undefined);
+      } finally {
+        tasks.dispose();
+      }
+    });
+  });
+
+  it("preserves confirmed partial results when real TaskManager tree lock throws not-found [behavior proof]", async () => {
+    await withTempStoreAsync(async (store, dir) => {
+      const tasks = makeTaskManager(store, dir);
+      try {
+        const p = createLocalTask(store, dir, "Missing Lock P");
+        const r1 = randomUUID();
+        store.recordRemoteChild(p, r1, "owner-a");
+        tasks.setRemoteTaskDeleter(async () => {
+          // Delete P concurrently before remote DELETE resolves so the real
+          // acquireTaskTreeMutationLock(p) throws TaskNotFoundError.
+          store.deleteTask(p);
+          return { kind: "deleted" };
+        });
+
+        await assert.rejects(
+          () => tasks.deleteTask(undefined, p),
+          (err: unknown) => {
+            assert.ok(err instanceof TaskDeleteStateChangedError);
+            assert.equal(err.code, "target_changed");
+            assert.equal(err.failedTaskId, p);
+            assert.deepEqual(err.deletedRemoteTasks, [
+              { host: "owner-a", taskId: r1 },
+            ]);
+            return true;
+          },
+        );
+      } finally {
+        tasks.dispose();
+      }
+    });
+  });
+
+  it("decodes only typed 4xx and known auth 401/403 as rejected, treats malformed 4xx as unknown, and does not disguise unexpected or post-commit owner errors as typed 400 [behavior proof]", async () => {
+    const childId = randomUUID();
+    const makeConn = (response: () => Response) =>
+      new HostConnection(
+        { url: "http://127.0.0.1:1", token: "tok" },
+        { fetch: async () => response() },
+      );
+
+    // Valid matching 200 -> deleted; mismatched 200 -> unknown.
+    assert.deepEqual(
+      await makeConn(
+        () =>
+          new Response(JSON.stringify({ taskId: childId }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+      ).deleteTask(childId),
+      { kind: "deleted" },
+    );
+    assert.equal(
+      (
+        await makeConn(
+          () =>
+            new Response(JSON.stringify({ taskId: "wrong-id" }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }),
+        ).deleteTask(childId)
+      ).kind,
+      "unknown",
+    );
+
+    // Typed 409 / 404 -> rejected (never inferred deleted from 404).
+    assert.deepEqual(
+      await makeConn(
+        () =>
+          new Response(
+            JSON.stringify({ error: "Task is busy", code: "task_busy" }),
+            { status: 409, headers: { "Content-Type": "application/json" } },
+          ),
+      ).deleteTask(childId),
+      { kind: "rejected", status: 409, reason: "Task is busy" },
+    );
+    assert.deepEqual(
+      await makeConn(
+        () =>
+          new Response(
+            JSON.stringify({ error: "Task not found", code: "not_found" }),
+            { status: 404, headers: { "Content-Type": "application/json" } },
+          ),
+      ).deleteTask(childId),
+      { kind: "rejected", status: 404, reason: "Task not found" },
+    );
+
+    // Intentional known auth 401 / 403 -> rejected.
+    assert.deepEqual(
+      await makeConn(
+        () =>
+          new Response(JSON.stringify({ error: "Unauthorized" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          }),
+      ).deleteTask(childId),
+      { kind: "rejected", status: 401, reason: "Unauthorized" },
+    );
+    assert.deepEqual(
+      await makeConn(
+        () =>
+          new Response(JSON.stringify({ error: "Forbidden" }), {
+            status: 403,
+            headers: { "Content-Type": "application/json" },
+          }),
+      ).deleteTask(childId),
+      { kind: "rejected", status: 403, reason: "Forbidden" },
+    );
+
+    // Malformed 4xx (HTML proxy 404, untyped JSON 409 without code, empty 400) -> unknown.
+    for (const bad of [
+      () =>
+        new Response("<html>404 Not Found</html>", {
+          status: 404,
+          headers: { "Content-Type": "text/html" },
+        }),
+      () =>
+        new Response(JSON.stringify({ error: "untyped busy" }), {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        }),
+      () => new Response("", { status: 400 }),
+    ]) {
+      const res = await makeConn(bad).deleteTask(childId);
+      assert.equal(res.kind, "unknown");
+    }
+
+    // Owner host-scoped DELETE: post-commit broadcast error must propagate (never disguised as typed 400).
+    await withTempStoreAsync(async (store, dir) => {
+      const tasks = makeTaskManager(store, dir);
+      try {
+        const c = seedExternalChild(store, dir, {
+          remoteHost: "hub-a",
+          title: "Post Commit Crash",
+        });
+        let responded = false;
+        await assert.rejects(
+          () =>
+            handleDeleteTaskRoute({
+              req: {} as IncomingMessage,
+              res: {} as ServerResponse,
+              taskId: c.childId,
+              principal: hostPrincipal("hub-a"),
+              clientOpId: null,
+              store,
+              tasks,
+              sseManager: {
+                broadcast: () => {
+                  throw new Error("sse_broadcast_boom");
+                },
+              } as never,
+              activationFields: () => ({}),
+              json: () => {
+                responded = true;
+              },
+            }),
+          /sse_broadcast_boom/,
+        );
+        assert.equal(responded, false);
+        assert.equal(store.getTask(c.childId), undefined);
+
+        // Unexpected pre-commit error on host-scoped DELETE must also propagate (not typed 400).
+        const c2 = seedExternalChild(store, dir, {
+          remoteHost: "hub-a",
+          title: "Pre Commit Crash",
+        });
+        const db = new Database(join(dir, "webagent.db"));
+        try {
+          db.exec(`
+            CREATE TRIGGER crash_delete BEFORE DELETE ON tasks
+            BEGIN
+              SELECT RAISE(ABORT, 'unexpected_sqlite_fault');
+            END;
+          `);
+        } finally {
+          db.close();
+        }
+        await assert.rejects(
+          () =>
+            handleDeleteTaskRoute({
+              req: {} as IncomingMessage,
+              res: {} as ServerResponse,
+              taskId: c2.childId,
+              principal: hostPrincipal("hub-a"),
+              clientOpId: null,
+              store,
+              tasks,
+              sseManager: { broadcast: () => {} } as never,
+              activationFields: () => ({}),
+              json: () => {
+                responded = true;
+              },
+            }),
+          /unexpected_sqlite_fault/,
+        );
+        assert.equal(responded, false);
+      } finally {
+        tasks.dispose();
+      }
+    });
+  });
+
+  it("Root exit rejects busy subtree before unavailable rebuild agent and re-checks busy after rebuild wait before remote DELETE [behavior proof]", async () => {
+    // Part A: Local Root with NO remote candidates — busy child must reject with TaskBusyError
+    // before agents.resolve is even called (so unavailable agent 503 does not mask busy 409).
+    await withTempStoreAsync(async (store, dir) => {
+      const rootId = store.rootTaskId;
+      store.attachAgentSession(rootId, "pi", "sess-root");
+      const child = createLocalTask(store, dir, "Busy Local Child", rootId);
+
+      let resolveCalls = 0;
+      const agents = new SingleAgentEnvironment("pi");
+      agents.resolve = async () => {
+        resolveCalls += 1;
+        throw new AgentUnavailableError("pi", "agent down");
+      };
+      const tasks = new TaskManager({
+        store,
+        defaultCwd: dir,
+        dataDir: dir,
+        state: new TaskStateManager(),
+        authority: new ExecutionAuthority(),
+        agents,
+      });
+      try {
+        tasks.activePrompts.add(child);
+        await assert.rejects(() => tasks.exitRoot(), TaskBusyError);
+        assert.equal(
+          resolveCalls,
+          0,
+          "busy check must run before rebuild-agent resolution",
+        );
+      } finally {
+        tasks.activePrompts.delete(child);
+        tasks.dispose();
+      }
+    });
+
+    // Part B: Root with remote child — local work starts while rebuild-agent wait is pending ->
+    // exitRoot rejects with TaskBusyError and sends ZERO remote DELETEs.
+    await withTempStoreAsync(async (store, dir) => {
+      const rootId = store.rootTaskId;
+      store.attachAgentSession(rootId, "pi", "sess-root");
+      const localChild = createLocalTask(store, dir, "Late Busy Child", rootId);
+      const remoteChild = randomUUID();
+      store.recordRemoteChild(rootId, remoteChild, "owner-a");
+
+      let releaseResolve!: () => void;
+      let resolveEntered!: () => void;
+      const enteredPromise = new Promise<void>((r) => {
+        resolveEntered = r;
+      });
+      const resolveGate = new Promise<void>((r) => {
+        releaseResolve = r;
+      });
+      const agents = new SingleAgentEnvironment("pi");
+      agents.resolve = async () => {
+        resolveEntered();
+        await resolveGate;
+        return {} as never;
+      };
+      const tasks = new TaskManager({
+        store,
+        defaultCwd: dir,
+        dataDir: dir,
+        state: new TaskStateManager(),
+        authority: new ExecutionAuthority(),
+        agents,
+      });
+      const remoteDeletes: string[] = [];
+      tasks.setRemoteTaskDeleter(async (_host, taskId) => {
+        remoteDeletes.push(taskId);
+        return { kind: "deleted" };
+      });
+      try {
+        const pending = tasks.exitRoot();
+        await enteredPromise;
+        tasks.activePrompts.add(localChild);
+        releaseResolve();
+        await assert.rejects(() => pending, TaskBusyError);
+        assert.deepEqual(
+          remoteDeletes,
+          [],
+          "must send zero remote DELETEs when work starts during rebuild-agent wait",
+        );
+      } finally {
+        tasks.activePrompts.delete(localChild);
         tasks.dispose();
       }
     });
