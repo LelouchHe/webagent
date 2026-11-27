@@ -901,7 +901,7 @@ describe("Prompt REST API", () => {
       assert.equal(res.status, 400);
     });
 
-    it("starts a new turn when the same X-Client-Op-Id is sent after idle", async () => {
+    it("replays the first 202 response without starting a second turn when X-Client-Op-Id is resent", async () => {
       const taskId = await createTask();
       let promptCount = 0;
       const origPrompt = mockBridge.prompt;
@@ -933,7 +933,8 @@ describe("Prompt REST API", () => {
         headers,
       );
       assert.equal(res2.status, 202);
-      assert.equal(promptCount, 2);
+      assert.equal(res2.body, res1.body);
+      assert.equal(promptCount, 1);
     });
   });
 
