@@ -715,13 +715,18 @@ external-parent link matches the authenticated host token name, returning `404`
 otherwise.
 
 Recording matches local rules: user cancels write no rows on either host. For an
-agent cancel, the hub checks the caller's execution generation before and after
-the remote call; the owner writes the `target` `task_cancel` row deriving
-`sourceTaskId` from the matched edge and taking the target title locally, and
-the hub writes the `source` row after the response returns. A `404` is returned
-as-is; timeouts, `5xx`, and malformed responses surface as an unknown result
-with no automatic retry and no fabricated hub `source` row (an owner-side cancel
-that already committed still keeps its `target` row).
+agent cancel, the hub checks the caller's execution generation before every
+HTTP send and after the remote call; the owner writes the `target`
+`task_cancel` row deriving `sourceTaskId` from the matched edge and taking the
+target title locally, and the hub writes the `source` row after the response
+returns. A first-attempt `404` or other business `4xx` is returned as a
+definitive rejection; timeouts, `5xx`, and network errors trigger bounded
+single-hop retries (up to 2 retries) with a per-call `X-Client-Op-Id` UUID
+(stopping as `unknown` without sending another packet if the generation fence
+fails before a retry). Once the retry budget is exhausted — or if the owner
+returns `409 op_aborted` or any `4xx` after a prior unknown attempt — the call
+stops as an unknown result with no fabricated hub `source` row (an owner-side
+cancel that already committed still keeps its `target` row).
 
 ## Remote delete
 
@@ -749,12 +754,18 @@ Hub: DELETE P                               Owner: R1
     commit P (replace it on Root exit)
 ```
 
-Only a matching `200` confirms deletion. A typed rejection (including a
-not-found response), offline owner, or unknown result stops the command.
-The error reports any children already confirmed deleted; an unknown result
-means the last child may also have changed. There is no automatic retry or
-compensation. A concurrent removal of P does not retarget the command or
-discard confirmed partial effects.
+Only a matching `200` confirms deletion. Each remote child hop generates its
+own single-hop `X-Client-Op-Id` UUID and performs bounded retries (up to 2
+retries) on unknown outcomes, re-checking the subtree membership and parent
+link fence before every HTTP send (stopping as `unknown` without sending again
+if a post-unknown fence fails). A first-attempt typed `4xx` rejection
+(including `404`) stops the command immediately as `rejected`, whereas `409
+op_aborted`, any `4xx` after a prior unknown attempt, or an exhausted retry
+budget stops the command as `unknown` without further retries, compensation, or
+re-running the whole tree. The error reports any children already confirmed
+deleted; an unknown result means the last child may also have changed. A
+concurrent removal of P does not retarget the command or discard confirmed
+partial effects.
 
 ## When a remote child leaves
 

@@ -38,9 +38,11 @@ import {
   COLLABORATION_MESSAGE_ROUTE_RE,
   createOpsAdapter,
   enforceTokensAdminWriteGate,
+  getBufferedRequestBody,
   getValidatedClientOpId,
   isOpsClaimedRequest,
   TOKEN_DELETE_ROUTE_RE,
+  type ActiveOpKeySet,
 } from "./ops-adapter.ts";
 import {
   authenticate,
@@ -337,7 +339,7 @@ export type RequestHandler = ((
   req: IncomingMessage,
   res: ServerResponse,
 ) => Promise<void>) & {
-  readonly activeOpKeys: ReadonlySet<string>;
+  readonly activeOpKeys: ActiveOpKeySet;
 };
 
 /** Read the full request body as a string. */
@@ -673,8 +675,12 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
     getPrincipal,
     clock: deps.opsClock,
   });
-  /** Every body read in this handler reports that it started. */
+  /** Read the buffered body for ops-claimed requests, or stream directly. */
   const readBody = (req: IncomingMessage): Promise<string> => {
+    const buffered = getBufferedRequestBody(req);
+    if (buffered !== undefined) {
+      return Promise.resolve(buffered.toString("utf-8"));
+    }
     deps.onRequestBodyReadStart?.(req.url ?? "/");
     return readBodyRaw(req);
   };
@@ -764,6 +770,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
           config: deps.shareConfig,
           dataDir: deps.dataDir,
           publicDir: deps.publicDir,
+          readBody,
         }))
       ) {
         return;
@@ -3771,10 +3778,8 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
           );
           const streamUrl = `/api/v1/tasks/${taskId}/events/stream`;
 
-          // `createTask` already broadcast `task_created`.
-          json(res, HTTP_STATUS.ACCEPTED, { taskId, streamUrl });
-
-          // Fire-and-forget: send the prompt asynchronously, tracking busy state
+          // Fire-and-forget: start the turn synchronously before sending 202 so
+          // a synchronous throw never races ahead of a staged response.
           tasks.beginAgentTurn(taskId, { origin: "interactive" });
           const betaPromptId =
             tasks.state.getState(taskId).runtime.busy?.promptId ?? undefined;
@@ -3785,6 +3790,9 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
             .finally(() => {
               tasks.endTurn(taskId, { promptId: betaPromptId });
             });
+
+          // `createTask` already broadcast `task_created`.
+          json(res, HTTP_STATUS.ACCEPTED, { taskId, streamUrl });
           return;
         }
 
@@ -3900,15 +3908,13 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Push not configured" });
             return;
           }
-          const chunks: Buffer[] = [];
-          for await (const chunk of req) chunks.push(chunk as Buffer);
           let body: {
             endpoint?: string;
             keys?: { auth?: string; p256dh?: string };
             clientId?: string;
           };
           try {
-            body = JSON.parse(Buffer.concat(chunks).toString()) as {
+            body = JSON.parse(await readBody(req)) as {
               endpoint?: string;
               keys?: { auth?: string; p256dh?: string };
               clientId?: string;
@@ -3942,11 +3948,9 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Push not configured" });
             return;
           }
-          const chunks: Buffer[] = [];
-          for await (const chunk of req) chunks.push(chunk as Buffer);
           let body: { clientId?: string; endpoint?: string };
           try {
-            body = JSON.parse(Buffer.concat(chunks).toString()) as {
+            body = JSON.parse(await readBody(req)) as {
               clientId?: string;
               endpoint?: string;
             };
@@ -3971,13 +3975,9 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Push not configured" });
             return;
           }
-          const chunks: Buffer[] = [];
-          for await (const chunk of req) chunks.push(chunk as Buffer);
           let body: { endpoint?: string };
           try {
-            body = JSON.parse(Buffer.concat(chunks).toString()) as {
-              endpoint?: string;
-            };
+            body = JSON.parse(await readBody(req)) as { endpoint?: string };
           } catch {
             json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
             return;

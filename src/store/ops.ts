@@ -132,7 +132,10 @@ export class OpsStore {
     return result.changes === 1;
   }
 
-  sweep(now: number = Date.now(), activeKeys?: ReadonlySet<string>): number {
+  sweep(
+    now: number = Date.now(),
+    activeKeys?: Pick<ReadonlySet<string>, "size" | "has">,
+  ): number {
     const cutoff = now - OPS_TTL_MS;
     if (!activeKeys || activeKeys.size === 0) {
       return this.db

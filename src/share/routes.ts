@@ -36,6 +36,7 @@ export interface ShareRouteDeps {
   config: Config["share"];
   dataDir?: string;
   publicDir?: string;
+  readBody?: (req: IncomingMessage) => Promise<string>;
 }
 
 const MAX_TTL_HOURS = 168;
@@ -72,24 +73,22 @@ function viewerCsp(enforce: boolean): { name: string; value: string } {
   return { name, value };
 }
 
-function readJson(req: IncomingMessage): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (c: Buffer) => chunks.push(c));
-    req.on("end", () => {
-      const s = Buffer.concat(chunks).toString();
-      if (!s) {
-        resolve({});
-        return;
-      }
-      try {
-        resolve(JSON.parse(s));
-      } catch (e) {
-        reject(e instanceof Error ? e : new Error(String(e)));
-      }
-    });
-    req.on("error", reject);
-  });
+async function readJson(
+  req: IncomingMessage,
+  readBody?: (req: IncomingMessage) => Promise<string>,
+): Promise<unknown> {
+  const s = readBody
+    ? await readBody(req)
+    : await new Promise<string>((resolve, reject) => {
+        const chunks: Buffer[] = [];
+        req.on("data", (c: Buffer) => chunks.push(c));
+        req.on("end", () => {
+          resolve(Buffer.concat(chunks).toString());
+        });
+        req.on("error", reject);
+      });
+  if (!s) return {};
+  return JSON.parse(s) as unknown;
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
@@ -312,7 +311,7 @@ async function handlePreviewCreate(
     owner_label?: string | null;
   };
   try {
-    body = (await readJson(req)) as typeof body;
+    body = (await readJson(req, deps.readBody)) as typeof body;
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime defense; cast above lies to TS
     if (body === null || typeof body !== "object") body = {};
   } catch {
@@ -563,7 +562,7 @@ async function handlePublish(
     owner_label?: string | null;
   };
   try {
-    body = (await readJson(req)) as typeof body;
+    body = (await readJson(req, deps.readBody)) as typeof body;
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime defense; cast above lies to TS
     if (body === null || typeof body !== "object") body = {};
   } catch {
@@ -1070,7 +1069,7 @@ async function handleRevoke(
 ): Promise<void> {
   let body: { token?: string };
   try {
-    body = (await readJson(req)) as typeof body;
+    body = (await readJson(req, deps.readBody)) as typeof body;
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime defense; cast above lies to TS
     if (body === null || typeof body !== "object") body = {};
   } catch {
@@ -1136,7 +1135,7 @@ async function handlePatchLabel(
 ): Promise<void> {
   let body: { token?: string; owner_label?: unknown; display_name?: unknown };
   try {
-    body = (await readJson(req)) as typeof body;
+    body = (await readJson(req, deps.readBody)) as typeof body;
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime defense; cast above lies to TS
     if (body === null || typeof body !== "object") body = {};
   } catch {
@@ -1250,7 +1249,7 @@ async function handleByPut(
 ): Promise<void> {
   let body: { value?: unknown };
   try {
-    body = (await readJson(req)) as typeof body;
+    body = (await readJson(req, deps.readBody)) as typeof body;
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime defense; cast above lies to TS
     if (body === null || typeof body !== "object") body = {};
   } catch {

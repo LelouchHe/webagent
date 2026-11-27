@@ -30,6 +30,7 @@ import {
 } from "../../task-history.ts";
 
 const REQUEST_TIMEOUT_MS = 8_000;
+const LIFECYCLE_REQUEST_RETRIES = 2;
 export const REMOTE_STATUS_TIMEOUT_MS = 2_000;
 
 const ConfigOptionSchema = z.union([
@@ -184,7 +185,6 @@ export interface HostConnectionOptions {
   requestTransport?: SyncRequestTransport<HostHttpRequest, unknown>;
   timer?: SyncTimer;
   createRetries?: number;
-  requestRetries?: number;
 }
 
 const DEFAULT_TIMER: SyncTimer = {
@@ -264,7 +264,6 @@ export class HostConnection {
   >;
   private readonly timer: SyncTimer;
   private readonly createRetries: number;
-  private readonly requestRetries: number;
   private tokenCommand: Promise<string> | null = null;
 
   constructor(config: HostConfig, options: HostConnectionOptions = {}) {
@@ -272,7 +271,6 @@ export class HostConnection {
     this.fetchImpl = options.fetch ?? globalThis.fetch;
     this.timer = options.timer ?? DEFAULT_TIMER;
     this.createRetries = Math.max(0, options.createRetries ?? 2);
-    this.requestRetries = Math.max(0, options.requestRetries ?? 2);
     this.requestTransport = options.requestTransport ?? {
       send: async (opId, request, signal) => {
         const token = request.token ?? (await this.resolveToken(signal));
@@ -375,10 +373,9 @@ export class HostConnection {
     beforeSend?: () => boolean | void,
   ): Promise<FencedRequestOutcome> {
     const opId = randomUUID();
-    let sawUnknown = false;
     let lastUnknownReason = "Remote request result is unknown";
 
-    for (let attempt = 0; attempt <= this.requestRetries; attempt += 1) {
+    for (let attempt = 0; attempt <= LIFECYCLE_REQUEST_RETRIES; attempt += 1) {
       if (beforeSend) {
         if (attempt === 0) {
           if (beforeSend() === false) return { kind: "skipped" };
@@ -410,7 +407,7 @@ export class HostConnection {
             reason: responseError(outcome.body, outcome.status),
           };
         }
-        if (sawUnknown) {
+        if (attempt > 0) {
           return {
             kind: "unknown",
             reason: `${lastUnknownReason}; retry returned HTTP ${outcome.status}: ${responseError(outcome.body, outcome.status)}`,
@@ -419,7 +416,6 @@ export class HostConnection {
         return outcome;
       }
 
-      sawUnknown = true;
       lastUnknownReason = errorMessage(outcome.error);
     }
 

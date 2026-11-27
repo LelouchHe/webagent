@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { EventEmitter } from "node:events";
 import type {
   IncomingMessage,
   OutgoingHttpHeaders,
@@ -39,9 +38,16 @@ const EXCLUDED_RESPONSE_HEADERS = new Set([
 ]);
 
 const opsClaimedRequests = new WeakSet<IncomingMessage>();
+const bufferedRequestBodies = new WeakMap<IncomingMessage, Buffer>();
 
 export function isOpsClaimedRequest(req: IncomingMessage): boolean {
   return opsClaimedRequests.has(req);
+}
+
+export function getBufferedRequestBody(
+  req: IncomingMessage,
+): Buffer | undefined {
+  return bufferedRequestBodies.get(req);
 }
 
 export function isTokensAdminWriteRoute(method: string, url: string): boolean {
@@ -100,37 +106,12 @@ export function isOpsBypassedRoute(
 export type ParsedClientOpId =
   { kind: "absent" } | { kind: "valid"; opId: string } | { kind: "invalid" };
 
-function readPhysicalClientOpIdHeaders(
-  req: IncomingMessage,
-): string[] | undefined {
-  const distinct = (
-    req as { headersDistinct?: Record<string, string[] | undefined> }
-  ).headersDistinct;
-  if (distinct !== undefined) {
-    return distinct["x-client-op-id"];
-  }
-  if (Array.isArray(req.rawHeaders)) {
-    const found: string[] = [];
-    for (let i = 0; i + 1 < req.rawHeaders.length; i += 2) {
-      if (req.rawHeaders[i].toLowerCase() === "x-client-op-id") {
-        found.push(req.rawHeaders[i + 1]);
-      }
-    }
-    return found.length > 0 ? found : undefined;
-  }
-  const raw = req.headers["x-client-op-id"];
-  if (raw === undefined) return undefined;
-  return Array.isArray(raw) ? raw : [raw];
-}
-
 export function parseClientOpIdHeader(req: IncomingMessage): ParsedClientOpId {
-  const values = readPhysicalClientOpIdHeaders(req);
+  const values = req.headersDistinct["x-client-op-id"];
   if (!values || values.length === 0) return { kind: "absent" };
   if (values.length !== 1) return { kind: "invalid" };
   const value = values[0];
-  if (typeof value !== "string" || value.length === 0 || value.length > 128) {
-    return { kind: "invalid" };
-  }
+  if (value.length === 0 || value.length > 128) return { kind: "invalid" };
   return { kind: "valid", opId: value };
 }
 
@@ -143,35 +124,31 @@ export function getValidatedClientOpId(req: IncomingMessage): string | null {
   return parsed.kind === "valid" ? parsed.opId : null;
 }
 
+function isResponseClosed(res: ServerResponse): boolean {
+  return res.destroyed || res.writableEnded || res.socket?.destroyed === true;
+}
+
 function sendJsonError(
   res: ServerResponse,
   status: number,
   error: string,
   code?: string,
 ): void {
-  if (res.destroyed || res.writableEnded) return;
-  try {
-    res.writeHead(status, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(code ? { error, code } : { error }));
-  } catch {
-    // Socket closed before error could be written.
-  }
+  if (isResponseClosed(res)) return;
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(code ? { error, code } : { error }));
 }
 
 function writeStoredResponse(
   res: ServerResponse,
   stored: StoredOpResponse,
 ): void {
-  if (res.destroyed || res.writableEnded) return;
-  try {
-    res.writeHead(stored.status, stored.headers);
-    if (stored.body.length > 0) {
-      res.end(stored.body);
-    } else {
-      res.end();
-    }
-  } catch {
-    // Socket write failure must not affect the already-persisted op record.
+  if (isResponseClosed(res)) return;
+  res.writeHead(stored.status, stored.headers);
+  if (stored.body.length > 0) {
+    res.end(stored.body);
+  } else {
+    res.end();
   }
 }
 
@@ -227,132 +204,21 @@ function readFullRequestBody(req: IncomingMessage): Promise<BodyReadOutcome> {
   });
 }
 
-/**
- * Re-expose buffered request bytes on the original `IncomingMessage` instance
- * so downstream `readBody`, `share`'s `readJson`, and `push/*` async iteration
- * all consume the same body without replacing `req` (preserving WeakMap auth
- * principal identity).
- */
-function attachBufferedBody(req: IncomingMessage, bytes: Buffer): void {
-  const replay = new EventEmitter();
-  let scheduled = false;
-  const scheduleReplay = () => {
-    if (scheduled) return;
-    scheduled = true;
-    queueMicrotask(() => {
-      if (bytes.length > 0) replay.emit("data", bytes);
-      replay.emit("end");
-    });
-  };
-  const origOn = req.on.bind(req);
-  const origOnce = req.once.bind(req);
-  const origAddListener = req.addListener.bind(req);
-  const origOff = req.off.bind(req);
-  const origRemoveListener = req.removeListener.bind(req);
-  const isBodyEvent = (event: string | symbol) =>
-    event === "data" || event === "end";
-
-  req.on = ((
-    event: string | symbol,
-    listener: (...args: unknown[]) => void,
-  ) => {
-    if (isBodyEvent(event)) {
-      replay.on(event, listener);
-      scheduleReplay();
-      return req;
-    }
-    return origOn(event, listener);
-  }) as IncomingMessage["on"];
-  req.addListener = ((
-    event: string | symbol,
-    listener: (...args: unknown[]) => void,
-  ) => {
-    if (isBodyEvent(event)) {
-      replay.addListener(event, listener);
-      scheduleReplay();
-      return req;
-    }
-    return origAddListener(event, listener);
-  }) as IncomingMessage["addListener"];
-  req.once = ((
-    event: string | symbol,
-    listener: (...args: unknown[]) => void,
-  ) => {
-    if (isBodyEvent(event)) {
-      replay.once(event, listener);
-      scheduleReplay();
-      return req;
-    }
-    return origOnce(event, listener);
-  }) as IncomingMessage["once"];
-  req.off = ((
-    event: string | symbol,
-    listener: (...args: unknown[]) => void,
-  ) => {
-    if (isBodyEvent(event)) {
-      replay.off(event, listener);
-      return req;
-    }
-    return origOff(event, listener);
-  }) as IncomingMessage["off"];
-  req.removeListener = ((
-    event: string | symbol,
-    listener: (...args: unknown[]) => void,
-  ) => {
-    if (isBodyEvent(event)) {
-      replay.removeListener(event, listener);
-      return req;
-    }
-    return origRemoveListener(event, listener);
-  }) as IncomingMessage["removeListener"];
-  req[Symbol.asyncIterator] = async function* (): AsyncGenerator<
-    Buffer,
-    undefined,
-    unknown
-  > {
-    if (bytes.length > 0) yield bytes;
-    return undefined;
-  };
-}
-
-function normalizeHeaderValue(
-  value: number | string | readonly string[] | undefined,
-): string | string[] | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value === "number") return String(value);
-  if (typeof value === "string") return value;
-  return [...value];
-}
-
-function toChunkBuffer(
-  chunk: unknown,
-  encoding?: BufferEncoding,
-): Buffer | null {
-  if (chunk === undefined || chunk === null) return null;
-  if (Buffer.isBuffer(chunk)) return chunk;
-  if (chunk instanceof Uint8Array) {
-    return Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-  }
-  if (typeof chunk === "string") {
-    return Buffer.from(chunk, encoding ?? "utf8");
-  }
-  return null;
-}
-
-class ResponseCapture extends EventEmitter {
+class ResponseCapture {
   statusCode: number = HTTP_STATUS.OK;
-  statusMessage = "";
-  headersSent = false;
-  writableEnded = false;
-  destroyed = false;
+  ended = false;
   private readonly headers = new Map<string, string | string[]>();
-  private readonly chunks: Buffer[] = [];
+  private body: Buffer = Buffer.alloc(0);
 
   setHeader(name: string, value: number | string | readonly string[]): this {
-    const normalized = normalizeHeaderValue(value);
-    if (normalized !== undefined) {
-      this.headers.set(name.toLowerCase(), normalized);
-    }
+    this.headers.set(
+      name.toLowerCase(),
+      typeof value === "number"
+        ? String(value)
+        : typeof value === "string"
+          ? value
+          : [...value],
+    );
     return this;
   }
 
@@ -360,101 +226,25 @@ class ResponseCapture extends EventEmitter {
     return this.headers.get(name.toLowerCase());
   }
 
-  getHeaders(): StoredOpHeaders {
-    const out: StoredOpHeaders = {};
-    for (const [k, v] of this.headers) out[k] = v;
-    return out;
-  }
-
-  getHeaderNames(): string[] {
-    return [...this.headers.keys()];
-  }
-
-  hasHeader(name: string): boolean {
-    return this.headers.has(name.toLowerCase());
-  }
-
-  removeHeader(name: string): void {
-    this.headers.delete(name.toLowerCase());
-  }
-
-  flushHeaders(): void {
-    this.headersSent = true;
-  }
-
-  cork(): void {}
-  uncork(): void {}
-
-  writeHead(
-    statusCode: number,
-    statusMessageOrHeaders?: string | OutgoingHttpHeaders | readonly string[],
-    maybeHeaders?: OutgoingHttpHeaders | readonly string[],
-  ): this {
+  writeHead(statusCode: number, headers?: OutgoingHttpHeaders): this {
     this.statusCode = statusCode;
-    let headersArg: OutgoingHttpHeaders | readonly string[] | undefined;
-    if (typeof statusMessageOrHeaders === "string") {
-      this.statusMessage = statusMessageOrHeaders;
-      headersArg = maybeHeaders;
-    } else {
-      headersArg = statusMessageOrHeaders;
-    }
-    if (Array.isArray(headersArg)) {
-      for (let i = 0; i + 1 < headersArg.length; i += 2) {
-        this.setHeader(String(headersArg[i]), String(headersArg[i + 1]));
-      }
-    } else if (headersArg && typeof headersArg === "object") {
-      for (const [key, val] of Object.entries(
-        headersArg as OutgoingHttpHeaders,
-      )) {
+    if (headers) {
+      for (const [key, val] of Object.entries(headers)) {
         if (val !== undefined) this.setHeader(key, val);
       }
     }
-    this.headersSent = true;
     return this;
   }
 
-  write(
-    chunk: unknown,
-    encodingOrCb?: BufferEncoding | ((err?: Error | null) => void),
-    cb?: (err?: Error | null) => void,
-  ): boolean {
-    const encoding =
-      typeof encodingOrCb === "string" ? encodingOrCb : undefined;
-    const callback = typeof encodingOrCb === "function" ? encodingOrCb : cb;
-    this.headersSent = true;
-    const buf = toChunkBuffer(chunk, encoding);
-    if (buf && buf.length > 0) this.chunks.push(buf);
-    callback?.(null);
-    return true;
-  }
-
-  end(
-    chunkOrCb?: unknown,
-    encodingOrCb?: BufferEncoding | (() => void),
-    cb?: () => void,
-  ): this {
-    let chunk: unknown;
-    let encoding: BufferEncoding | undefined;
-    let callback: (() => void) | undefined;
-    if (typeof chunkOrCb === "function") {
-      callback = chunkOrCb as () => void;
-    } else {
-      chunk = chunkOrCb;
-      if (typeof encodingOrCb === "function") {
-        callback = encodingOrCb;
-      } else {
-        encoding = encodingOrCb;
-        callback = cb;
-      }
+  end(chunk?: string | Buffer | Uint8Array): this {
+    if (chunk !== undefined) {
+      this.body = Buffer.isBuffer(chunk)
+        ? chunk
+        : typeof chunk === "string"
+          ? Buffer.from(chunk, "utf8")
+          : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
     }
-    const buf = toChunkBuffer(chunk, encoding);
-    if (buf && buf.length > 0) this.chunks.push(buf);
-    this.headersSent = true;
-    if (!this.writableEnded) {
-      this.writableEnded = true;
-      this.emit("finish");
-    }
-    callback?.();
+    this.ended = true;
     return this;
   }
 
@@ -464,11 +254,7 @@ class ResponseCapture extends EventEmitter {
       if (EXCLUDED_RESPONSE_HEADERS.has(key)) continue;
       filtered[key] = value;
     }
-    return {
-      status: this.statusCode,
-      headers: filtered,
-      body: Buffer.concat(this.chunks),
-    };
+    return { status: this.statusCode, headers: filtered, body: this.body };
   }
 }
 
@@ -516,6 +302,8 @@ function errorResponseFromCatch(
   };
 }
 
+export type ActiveOpKeySet = Pick<ReadonlySet<string>, "size" | "has">;
+
 export interface OpsAdapterDeps {
   ops: OpsStore;
   getPrincipal: (req: IncomingMessage) => TokenRecord | undefined;
@@ -523,7 +311,7 @@ export interface OpsAdapterDeps {
 }
 
 export interface OpsAdapter {
-  readonly activeKeys: ReadonlySet<string>;
+  readonly activeKeys: ActiveOpKeySet;
   handle(
     req: IncomingMessage,
     res: ServerResponse,
@@ -537,7 +325,6 @@ export function createOpsAdapter(deps: OpsAdapterDeps): OpsAdapter {
     string,
     { fingerprint: string; promise: Promise<StoredOpResponse> }
   >();
-  const activeKeys = new Set<string>();
 
   async function executeClaimed(
     req: IncomingMessage,
@@ -550,18 +337,13 @@ export function createOpsAdapter(deps: OpsAdapterDeps): OpsAdapter {
     let stored: StoredOpResponse;
     try {
       await innerHandler(req, capture as unknown as ServerResponse);
+      if (!capture.ended) {
+        throw new Error("ops_handler_did_not_end_response");
+      }
       stored = capture.toStoredResponse();
     } catch (err) {
-      if (capture.headersSent) {
-        log.error("request handler rejected", {
-          method: req.method,
-          url: req.url,
-          error: err instanceof Error ? err.message : "unknown error",
-        });
-        stored = capture.toStoredResponse();
-      } else {
-        stored = errorResponseFromCatch(req, err);
-      }
+      // Discard any response staged in `capture` before the handler rejected.
+      stored = errorResponseFromCatch(req, err);
     }
 
     let persisted: boolean;
@@ -646,10 +428,9 @@ export function createOpsAdapter(deps: OpsAdapterDeps): OpsAdapter {
     }
 
     // No `await` between `claim` returning `new` and registering `inFlight`.
-    attachBufferedBody(req, rawBodyBytes);
+    bufferedRequestBodies.set(req, rawBodyBytes);
     const promise = executeClaimed(req, key, claimed.createdAt, innerHandler);
     inFlight.set(key, { fingerprint, promise });
-    activeKeys.add(key);
 
     let stored: StoredOpResponse;
     try {
@@ -664,7 +445,6 @@ export function createOpsAdapter(deps: OpsAdapterDeps): OpsAdapter {
     } finally {
       if (inFlight.get(key)?.promise === promise) {
         inFlight.delete(key);
-        activeKeys.delete(key);
       }
     }
     writeStoredResponse(res, stored);
@@ -718,13 +498,7 @@ export function createOpsAdapter(deps: OpsAdapterDeps): OpsAdapter {
 
     const bodyResult = await readFullRequestBody(req);
     if (bodyResult.kind === "aborted") {
-      if (!res.destroyed && !res.writableEnded) {
-        try {
-          res.end();
-        } catch {
-          // Connection already gone.
-        }
-      }
+      if (!isResponseClosed(res)) res.end();
       return;
     }
     if (bodyResult.kind === "error") {
@@ -754,7 +528,7 @@ export function createOpsAdapter(deps: OpsAdapterDeps): OpsAdapter {
   }
 
   return {
-    activeKeys,
+    activeKeys: inFlight,
     handle,
   };
 }
