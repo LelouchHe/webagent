@@ -354,6 +354,11 @@ const routedTaskOps: TaskOps = {
   }),
 };
 tasks.setRemoteChildWakeSource((taskId) => hostRegistry.hasRemoteChild(taskId));
+if (hostRegistry.hasConnections()) {
+  tasks.setRemoteTaskDeleter((host, taskId, beforeSend) =>
+    hostRegistry.deleteRemote(host, taskId, beforeSend),
+  );
+}
 const messageCleanup: CleanupHandle = startMessageCleanup(
   store,
   config.messages.unprocessed_ttl_days,

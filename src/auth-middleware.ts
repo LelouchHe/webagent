@@ -101,6 +101,10 @@ const HOST_SCOPE_PATHS: readonly WhitelistEntry[] = [
     test: (p) => /^\/api\/v1\/tasks\/[A-Za-z0-9_-]+\/cancel\/?$/.test(p),
   },
   {
+    method: "DELETE",
+    test: (p) => /^\/api\/v1\/tasks\/[A-Za-z0-9_-]+\/?$/.test(p),
+  },
+  {
     method: "GET",
     test: (p) =>
       /^\/api\/v1\/tasks\/[A-Za-z0-9_-]+\/(?:events|status)$/.test(p),

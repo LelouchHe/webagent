@@ -141,7 +141,6 @@ describe("task list egress with remote children", () => {
       title: "Remote owned",
       creationAnchor: { kind: "task_created" },
     });
-    store.unarchiveTask("remote-owned");
     authStore = new AuthStore(join(root, "auth.json"));
     await authStore.load();
     apiToken = (await authStore.addToken("hub", "api")).token;
@@ -194,10 +193,7 @@ describe("task list egress with remote children", () => {
     const response = await request(port, "/api/v1/tasks", apiToken);
     assert.equal(response.status, 200);
     const entries = response.body as Array<Record<string, unknown>>;
-    assert.deepEqual(
-      new Set(asked ?? []),
-      new Set([store.rootTaskId, "remote-owned"]),
-    );
+    assert.deepEqual(new Set(asked ?? []), new Set([store.rootTaskId]));
     assert.deepEqual(
       entries.find((entry) => entry.id === "remote-child"),
       {
@@ -208,8 +204,19 @@ describe("task list egress with remote children", () => {
         workflow_status: "done",
       },
     );
+
+    const archivedResponse = await request(
+      port,
+      "/api/v1/tasks?archived=true",
+      apiToken,
+    );
+    assert.equal(archivedResponse.status, 200);
+    const archivedEntries = archivedResponse.body as Array<
+      Record<string, unknown>
+    >;
+    assert.deepEqual(new Set(asked ?? []), new Set(["remote-owned"]));
     assert.deepEqual(
-      entries.find((entry) => entry.id === "external-parent"),
+      archivedEntries.find((entry) => entry.id === "external-parent"),
       {
         id: "external-parent",
         host: null,

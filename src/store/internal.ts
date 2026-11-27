@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import type { ExecutionBinding } from "../execution-authority.ts";
 import type { CollaborationDeliveryStatus } from "../shared/delivery-status.ts";
 import type {
+  AgentSessionRow,
   CollaborationDeliveryRow,
   CollaborationMessageRow,
   EventRow,
@@ -37,6 +38,17 @@ export interface StoreInternal {
   recordPendingOutboxEntry(row: OutboxRow): void;
   getTask(id: string): TaskRow | undefined;
   getTaskIncludingDeleted(id: string): TaskRow | undefined;
+  getTaskPath(id: string): string | undefined;
+  getTaskLineage(id: string): string[] | undefined;
+  getDescendantTaskIds(id: string): string[];
+  listChildren(parentId: string): string[];
+  getCurrentExecutionBinding(taskId: string): AgentSessionRow | undefined;
+  reparentChildrenToRoot(parentId: string): void;
+  failOutstandingDeliveriesForDeletedTask(taskId: string): string[];
+  broadcastDeliveryStatus(
+    ids: readonly string[],
+    options?: { suppressFailureNotice?: boolean },
+  ): void;
   requireLiveTask(taskId: string): TaskRow;
   insertRootRow(cwd: string): void;
   insertBindingRow(

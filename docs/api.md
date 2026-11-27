@@ -626,6 +626,11 @@ and id, and the missing original id when it fell back to Root) share one
 transaction. Nothing about the account or delivery edges cut by the archive
 is restored.
 
+For a task with an external parent, unarchive attaches it under the owner's
+Root and removes that external link in the same transaction. The owner fails
+queued inbound deliveries on the detached edge and emits `child_left` for
+the hub. Archiving the task again does not restore the link.
+
 **Response** `200`:
 
 ```json
@@ -668,6 +673,20 @@ For a non-Root task, the response is `200`:
 { "taskId": "abc-123", "parentId": "4f0c8a52-3b1e-4d7a-9c2e-8b5d1f6a0e37" }
 ```
 
+**Remote children and host-scoped deletes.** When the deleted subtree has remote
+children, each remote child is deleted synchronously on its owner before the
+local commit (without holding SQLite transactions or tree locks across network
+waits). Only a validated `200` confirms a remote child. For user callers,
+a valid rejection maps to `409` (`outcome: "rejected"`); transport failure,
+timeout, `5xx`, or an invalid reply maps to `502` (`outcome: "unknown"`).
+The command stops before its local commit and reports any confirmed deletions
+in `deletedRemoteTasks`. Confirmed `200` responses do not delete
+the hub's child link early; the owner's ordered `child_left` feed entry removes
+it. Host-scoped callers (`scope: "host"`) are authorized only for a local task
+whose external parent link matches the authenticated token name (`404`
+otherwise) and receive typed `4xx` rejection bodies (`{ error, code, failedTaskId? }`)
+when local or downstream deletion is rejected.
+
 The `parentId` is the parent of the requested task, not of every cascaded
 descendant. The optional `clientOpId` echoes the request's
 `X-Client-Op-Id` header so the initiating client can correlate the HTTP
@@ -689,15 +708,17 @@ workspace's directory, title, saved model, and the agent Root ran on, starts in
 agent mode with no history, and becomes the task `GET /api/v1/config` reports.
 Its execution is created before the response, so a client that opens it next
 finds a live, idle task instead of one that is still being materialized. The
-agent is resolved first: when it cannot start the request fails with `503` and
+subtree must be idle before resolving the rebuild agent. If the agent cannot
+start, the request fails with `503` and
 nothing is deleted, because a workspace whose Root cannot start is not usable.
 Two cases have no execution to create and answer `200` without one: a Root that
 was never bound (the new Root's first prompt attaches an execution) and a Root
 whose recorded agent is no longer configured (an operation rotates it). A
 session that fails *after* the commit leaves the new Root's empty execution
-slot, which the next use materializes. An exit of a Root that another exit has
-already replaced answers `404`: the exit never retargets to the new Root. The
-response names the replacement:
+slot, which the next use materializes. An exit never retargets to a replacement
+Root: it returns `404` if no remote deletion was confirmed, or `409`
+(`code: "target_changed"`) with the confirmed effects otherwise. On success
+the response names the replacement:
 
 ```json
 {

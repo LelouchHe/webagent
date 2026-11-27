@@ -424,18 +424,9 @@ never produces a receipt.
   |   no:  tx: applied_pos only           |
 ```
 
-Hard delete of R1 (DELETE or Root exit) cascades its `remote_tasks` row, so
-`deleteTaskInScope` captures the external parent link and R1's title before
-the delete and hands them to the post-commit purge:
-
-```text
- deleteTaskInScope(R1)
-   capture {external parent P, link, R1 title}      before the cascade
-   tx: delete; queued inbound rows -> failed + receipts
- after commit:
-   failed inbound row matched the open account?  -> close silently (P gets A1 via receipt)
-   account still open                            -> notice(target_removed) via captured link
-```
+When R1 leaves P through delete or unarchive, `child_left` carries the
+relationship change and replaces a separate owner `notice(target_removed)`
+for that account. See [When a remote child leaves](#when-a-remote-child-leaves).
 
 ### Offline handoff timeout T
 
@@ -660,6 +651,72 @@ as-is; timeouts, `5xx`, and malformed responses surface as an unknown result
 with no automatic retry and no fabricated hub `source` row (an owner-side cancel
 that already committed still keeps its `target` row).
 
+## Remote delete
+
+Deleting P (including Root exit) deletes remote children of its current
+subtree before committing locally. Each owner applies the same rule to its
+own remote children. No tree lock or SQLite transaction spans a remote
+request.
+
+```text
+Hub: DELETE P                               Owner: R1
+  preflight local subtree; pin target
+  Root exit: resolve rebuild agent, recheck busy
+  for each remote child:
+    resolve credential; recheck current
+    subtree membership and inbound authority
+    skip a departed child
+    DELETE /api/v1/tasks/R1 ----------------> authenticate parent link
+                                              delete descendants first
+                                              lock, recheck, commit R1
+    <--------------------------------------- 200 with matching taskId
+    remember R1; leave its hub link alone
+  after all confirmations:
+    lock, recheck target, authority, busy
+    state and unhandled remote children
+    commit P (replace it on Root exit)
+```
+
+Only a matching `200` confirms deletion. A typed rejection (including a
+not-found response), offline owner, or unknown result stops the command.
+The error reports any children already confirmed deleted; an unknown result
+means the last child may also have changed. There is no automatic retry or
+compensation. A concurrent removal of P does not retarget the command or
+discard confirmed partial effects.
+
+## When a remote child leaves
+
+Deleting R1 (hard or soft) or unarchiving it under the owner's Root detaches
+it from P. The owner writes `relation(child_left)` to its outbox in the same
+transaction as the local change. `accountOpen` is true if P had an open
+account on R1 and no newly failed inbound delivery on that edge already
+reports the failure by receipt.
+
+```text
+Owner: R1 leaves P                          Hub: P
+  transaction:
+    delete R1 or reattach it under Root
+    remove the external-parent relation
+    enqueue any new failure receipts
+    enqueue child_left(P, R1, accountOpen)
+  after commit: close the external account
+    without a separate notice
+  earlier queued entries -----------------> apply before child_left
+  child_left ------------------------------> transaction:
+                                              match link, P and R1
+                                              remove child row on match
+                                              if accountOpen: record target_removed
+                                              advance feed cursor; no receipt
+```
+
+An absent or mismatched child row is a no-op apart from cursor progress.
+The DELETE response alone never removes the hub's child row: earlier feed
+entries must still be able to use it while P survives. Unarchive only fails
+queued inbound deliveries on the edge it cuts; re-archiving does not
+reconnect it. Archiving P on the hub keeps its remote child links and any
+accepted inbound deliveries queued on those links; genuine local
+cross-boundary deliveries still fail.
+
 ## Differences from local
 
 A cross-host operation behaves like the same operation on one host; the
@@ -683,12 +740,12 @@ Two rules follow from it:
 | # | Difference | Status |
 | --- | --- | --- |
 | E1 | A hub message not handed off within timeout T while no watch is online fails ("handoff not confirmed"); a persistently failing but online link does not time out. A remote child whose status read fails or whose watch is down shows as unreachable, distinct from finished. | Approved |
-| E2 | Results arrive with transport delay: receipts, reports, and notices travel through the peer's queue. | Approved |
+| E2 | Results and relation facts arrive with transport delay: receipts, reports, notices, and `child_left` entries travel through the peer's queue. | Approved |
 | E3 | A waiting P with any remote child counts as having a possible wake source. | Approved |
 | E5 | Remote reads return egress-rewritten data; text search reads the full history. | Approved |
 | E6 | Remote create does not start ACP; without `cwd` the owner's default applies, an explicit `cwd` is resolved by the owner. | Approved |
 | E7 | An external source or target shows the title recorded on the entry or link, or an id prefix; it does not follow later renames. | Temporary, closes with the cross-host naming convention |
-| E8 | Deleting P on the hub does not delete R1 on the owner. | Temporary, closes with synchronous remote delete |
+| E8 | Deleting P is a synchronous children-first command: if a remote child cannot be deleted, the delete fails and preserves P; it is not all-or-nothing, and remote children already confirmed deleted are not restored. | Approved |
 | E9 | R1's `task_list` has no entry for its external parent P, and reading P is refused; R1 may still `task_send` to P. | Approved |
 | E10 | Remote create requires an explicit agent and does not accept model or thinking overrides. | Approved |
 
@@ -706,7 +763,8 @@ Two rules follow from it:
 | Offline handoff timeout T | Yes, hub pusher (`limits.remote_delivery_timeout`, default 10 min) |
 | Restart and reconnect | Yes, from durable cursors; no full catch-up |
 | Remote cancel | Yes, synchronous request (agent `task_cancel` and user REST) |
-| Remote rename/archive/delete | No |
+| Remote delete, unarchive, and archive boundary | Yes, synchronous children-first DELETE (including Root exit and recursion), owner `relation(child_left)` feed entries on delete/unarchive, hub archive preserves live remote child edges and accepted queued inbound rows |
+| Remote rename | No |
 | Browser task routing | No |
 | Server-side search | No |
 

@@ -19,6 +19,11 @@ import {
 } from "./store.ts";
 import { shouldArm } from "./task-collaboration.ts";
 import {
+  runSynchronizedDelete,
+  type DeleteFlowOptions,
+  type RemoteTaskDeleter,
+} from "./task-delete.ts";
+import {
   RUNTIME_MESSAGE_KINDS,
   buildCollaborationSystemMessage,
   isRuntimeMessageKind,
@@ -309,12 +314,14 @@ export class TaskNotFoundError extends Error {
 }
 
 export class TaskBusyError extends Error {
+  readonly taskId: string;
   /** `taskPath` is the task's tree path when the store could resolve one. */
   constructor(taskId: string, taskPath?: string) {
     super(
       `Cancel active work in ${taskPath ?? taskId} before modifying that task`,
     );
     this.name = "TaskBusyError";
+    this.taskId = taskId;
   }
 }
 
@@ -667,10 +674,7 @@ export class TaskManager implements ObligationHost {
   readonly restoringTasks = new Set<string>();
   readonly assistantBuffers = new Map<string, string>();
   readonly thinkingBuffers = new Map<string, string>();
-  private readonly deletedExternalParents = new Map<
-    string,
-    DeletedExternalParent
-  >();
+  private remoteTaskDeleter: RemoteTaskDeleter | undefined;
   /**
    * Per-turn metadata of the slot. Declared before `activePrompts` because the
    * membership set writes through it.
@@ -3212,52 +3216,73 @@ export class TaskManager implements ObligationHost {
    * workspace whose Root cannot start is not usable: refusing then leaves it
    * intact instead of clearing it around a shell.
    */
-  async exitRoot(
-    bridge?: SessionBridge,
-  ): Promise<{ rootTaskId: string; affected: TaskDelete[] }> {
+  setRemoteTaskDeleter(deleter: RemoteTaskDeleter | undefined): void {
+    this.remoteTaskDeleter = deleter;
+  }
+
+  private readonly deleteStoreOptions = {
+    hasOpenExternalAccount: (tId: string, pId: string) => {
+      const open = this.obligations.peekSource(tId);
+      return open?.sourceKind === "external" && open.sourceTaskId === pId;
+    },
+  };
+
+  private closeExternalAccountIfOpen(tId: string, pId: string): void {
+    if (this.deleteStoreOptions.hasOpenExternalAccount(tId, pId))
+      this.obligations.close(tId);
+  }
+
+  private retireDeletedEntries(affected: readonly TaskDelete[]): void {
+    for (const entry of affected) {
+      this.retireExecution(entry.id, entry.agentId, entry.agentSessionId);
+      this.releaseTaskRuntime(entry.id, entry.mode, entry.externalParent);
+    }
+  }
+
+  private runDeleteFlow<T>(opts: DeleteFlowOptions<T>): Promise<T> {
+    return runSynchronizedDelete({
+      ...opts,
+      store: this.store,
+      deleteRemote: this.remoteTaskDeleter,
+      acquireLock: (id) => this.acquireTaskTreeMutationLock(id),
+      createNotFoundError: (id) => new TaskNotFoundError(id),
+      isNotFoundError: (err) => err instanceof TaskNotFoundError,
+      createBusyError: (id, path) => new TaskBusyError(id, path),
+      getBusyKind: (id) => this.getGateBusyKind(id),
+      isOwnCreationClaim: opts.ownCreationClaim
+        ? (id) => this.creatingTasks.has(id) && !this.hasOtherWorkClaims(id)
+        : undefined,
+    });
+  }
+
+  async exitRoot(bridge?: SessionBridge) {
     if (bridge) this.attachExecutionBridge(bridge);
     const oldRootId = this.store.rootTaskId;
     const rebuildAgentId = this.rebuildAgentFor(oldRootId);
-    if (rebuildAgentId) {
-      try {
-        await this.agents.resolve(rebuildAgentId);
-      } catch (error) {
-        // Name what the exit actually needed, not the transport's own words:
-        // the user asked to exit and has to know the agent is the reason.
-        throw new AgentUnavailableError(
-          rebuildAgentId,
-          `Root's agent ${rebuildAgentId} could not start, so Root cannot be rebuilt: ${errorMessage(error)}`,
+    const result = await this.runDeleteFlow({
+      targetId: oldRootId,
+      expectRoot: true,
+      preflightExtra: rebuildAgentId
+        ? async () => {
+            await this.agents
+              .resolve(rebuildAgentId)
+              .catch((error: unknown) => {
+                throw new AgentUnavailableError(
+                  rebuildAgentId,
+                  `Root's agent ${rebuildAgentId} could not start, so Root cannot be rebuilt: ${errorMessage(error)}`,
+                );
+              });
+          }
+        : undefined,
+      commit: () => {
+        const replaced = this.store.replaceRoot(
+          oldRootId,
+          this.deleteStoreOptions,
         );
-      }
-    }
-    const release = await this.acquireTaskTreeMutationLock(oldRootId);
-    let result: { rootTaskId: string; affected: TaskDelete[] };
-    try {
-      // Another exit may have replaced this Root while this one waited (for
-      // the agent or for the lock). A shared old Root survives as a tombstone,
-      // so its lock is still grantable; the busy check below would then look at
-      // the old tree while the replacement deleted the new one. Refuse instead.
-      if (this.store.rootTaskId !== oldRootId) {
-        throw new TaskNotFoundError(oldRootId);
-      }
-      const affectedIds = [
-        oldRootId,
-        ...this.store.getDescendantTaskIds(oldRootId),
-      ];
-      const busyTask = affectedIds.find(
-        (id) => this.getGateBusyKind(id) !== null,
-      );
-      if (busyTask) {
-        throw new TaskBusyError(busyTask, this.store.getTaskPath(busyTask));
-      }
-      result = this.store.replaceRoot(oldRootId);
-      for (const entry of result.affected) {
-        this.retireExecution(entry.id, entry.agentId, entry.agentSessionId);
-        this.releaseTaskRuntime(entry.id, entry.mode, entry.externalParent);
-      }
-    } finally {
-      release();
-    }
+        this.retireDeletedEntries(replaced.affected);
+        return replaced;
+      },
+    });
     await this.rebuildRootExecution();
     return result;
   }
@@ -3316,48 +3341,19 @@ export class TaskManager implements ObligationHost {
   async deleteTask(
     bridge: SessionBridge | undefined,
     taskId: string,
-    opts?: {
-      /**
-       * The caller is rolling back a task it is still creating, and deletes it
-       * while its own creation claim is standing. Only that claim is waived —
-       * any other work on the task, or on a descendant, still refuses.
-       */
-      ownCreationClaim?: boolean;
-    },
-  ): Promise<{ mode: "hard" | "soft"; affected: TaskDelete[] }> {
+    opts?: { ownCreationClaim?: boolean; requiredExternalParentHost?: string },
+  ) {
     if (bridge) this.attachExecutionBridge(bridge);
-    const release = await this.acquireTaskTreeMutationLock(taskId);
-    const task = this.liveTask(taskId);
-    if (!task) {
-      release();
-      throw new TaskNotFoundError(taskId);
-    }
-    const affectedIds = [taskId, ...this.store.getDescendantTaskIds(taskId)];
-    const busyTask = affectedIds.find((id) => {
-      const busy = this.getGateBusyKind(id);
-      if (busy === null) return false;
-      const ownClaim =
-        opts?.ownCreationClaim === true &&
-        id === taskId &&
-        busy === "agent" &&
-        this.creatingTasks.has(id) &&
-        !this.hasOtherWorkClaims(id);
-      return !ownClaim;
+    return this.runDeleteFlow({
+      targetId: taskId,
+      ownCreationClaim: opts?.ownCreationClaim,
+      requiredExternalParentHost: opts?.requiredExternalParentHost,
+      commit: () => {
+        const result = this.store.deleteTask(taskId, this.deleteStoreOptions);
+        this.retireDeletedEntries(result.affected);
+        return result;
+      },
     });
-    if (busyTask) {
-      release();
-      throw new TaskBusyError(busyTask, this.store.getTaskPath(busyTask));
-    }
-    try {
-      const result = this.store.deleteTask(taskId);
-      for (const entry of result.affected) {
-        this.retireExecution(entry.id, entry.agentId, entry.agentSessionId);
-        this.releaseTaskRuntime(entry.id, entry.mode, entry.externalParent);
-      }
-      return result;
-    } finally {
-      release();
-    }
   }
 
   /** Drop in-memory state owned by a task that no longer exists. */
@@ -3381,12 +3377,9 @@ export class TaskManager implements ObligationHost {
     this.store.broadcastDeliveryStatus(
       this.store.failedDeliveryIdsForRecipient(id, "target_deleted"),
     );
-    if (externalParent) this.deletedExternalParents.set(id, externalParent);
-    try {
-      this.obligations.purgeTask(id);
-    } finally {
-      this.deletedExternalParents.delete(id);
-    }
+    if (externalParent)
+      this.closeExternalAccountIfOpen(id, externalParent.remoteTaskId);
+    this.obligations.purgeTask(id);
     this.compactingTasks.delete(id);
     this.rotatingTasks.delete(id);
     const pendingSubmission = this.pendingPromptSubmissions.get(id);
@@ -3996,11 +3989,16 @@ export class TaskManager implements ObligationHost {
    */
   archiveTask(taskId: string): ArchiveTaskResult | undefined {
     const result = this.store.archiveTask(taskId);
-    if (result?.status !== "archived") return result;
-    if (result.parentId !== null) {
+    if (result?.status === "archived" && result.parentId !== null)
       this.obligations.dropEdge(result.parentId, taskId);
-    }
     return result;
+  }
+
+  unarchiveTask(taskId: string) {
+    const res = this.store.unarchiveTask(taskId, this.deleteStoreOptions);
+    if (res.status === "unarchived" && res.externalParent)
+      this.closeExternalAccountIfOpen(taskId, res.externalParent.remoteTaskId);
+    return res;
   }
 
   /** True when `promptId` is still the task's live agent turn. */
@@ -4182,18 +4180,13 @@ export class TaskManager implements ObligationHost {
   emitObligationNotice(notice: ObligationNotice): void {
     if (!this.store.getTask(notice.sourceTaskId)) {
       const liveLink = this.store.getExternalParentLink(notice.targetTaskId);
-      const deleted = this.deletedExternalParents.get(notice.targetTaskId);
       const remoteHost =
         liveLink?.remote_task_id === notice.sourceTaskId
           ? liveLink.remote_host
-          : deleted?.remoteTaskId === notice.sourceTaskId
-            ? deleted.remoteHost
-            : null;
+          : null;
       if (!remoteHost) return;
       const targetLabel =
-        deleted?.title ??
-        this.store.getTaskIncludingDeleted(notice.targetTaskId)?.title ??
-        "";
+        this.store.getTaskIncludingDeleted(notice.targetTaskId)?.title ?? "";
       try {
         this.store.enqueueOutbox({
           remoteRole: "parent",

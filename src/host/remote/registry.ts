@@ -2,6 +2,7 @@ import type { HostConfig } from "../../config.ts";
 import type {
   RemoteTaskCreateInput,
   RemoteTaskCreateTransport,
+  RemoteTaskDeleteAttempt,
   TaskListItem,
   TaskCreateResult,
   TaskQueryInput,
@@ -217,6 +218,18 @@ export class HostRegistry implements RemoteTaskCreateTransport {
       input,
       beforeSend,
     );
+  }
+
+  async deleteRemote(
+    host: string,
+    taskId: string,
+    beforeSend?: () => boolean | void,
+  ): Promise<RemoteTaskDeleteAttempt> {
+    const connection = this.connections.get(host);
+    if (!connection) {
+      return { kind: "unknown", reason: `Host "${host}" is not configured` };
+    }
+    return connection.deleteTask(taskId, beforeSend);
   }
 
   async queryRemote(

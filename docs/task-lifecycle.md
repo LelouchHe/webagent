@@ -57,6 +57,11 @@ the SQL mechanics, and the debt state machine live in their own documents (see
 
 ## Archived Trees
 
+For cross-host trees, [remote delete](architecture/multi-host.md#remote-delete)
+finishes remote children before committing locally. Archiving a hub parent
+keeps its remote child links and accepted inbound deliveries; unarchiving a
+task with an external parent [detaches that link](architecture/multi-host.md#when-a-remote-child-leaves).
+
 An **archived tree** is a live, parentless, non-Root task and its whole
 subtree. There is no `archived_at`, no table, and no state flag: a task is
 archived exactly when it is live, `parent_id IS NULL`, and not Root. Any

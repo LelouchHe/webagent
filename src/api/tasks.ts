@@ -143,6 +143,18 @@ export type TaskRemoteCancelErrorDetail =
   | { kind: "rejected"; status: number; reason: string }
   | { kind: "unknown"; reason: string };
 
+export type RemoteTaskDeleteAttempt =
+  | { kind: "deleted" }
+  | { kind: "skipped" }
+  | { kind: "rejected"; status: number; reason: string }
+  | { kind: "unknown"; reason: string };
+
+export type RemoteTaskDeleter = (
+  host: string,
+  taskId: string,
+  beforeSend?: () => boolean | void,
+) => Promise<RemoteTaskDeleteAttempt>;
+
 export class TaskRemoteCancelError extends Error {
   readonly host: string;
   readonly detail: TaskRemoteCancelErrorDetail;

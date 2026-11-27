@@ -244,4 +244,37 @@ export class RemoteRelationsStore {
       return true;
     })();
   }
+
+  deleteRemoteChildInTransaction(
+    remoteHost: string,
+    localParentTaskId: string,
+    remoteTaskId: string,
+  ): boolean {
+    const result = this.store.db
+      .prepare(
+        `DELETE FROM remote_tasks
+         WHERE remote_role = 'child'
+           AND remote_host = ?
+           AND local_task_id = ?
+           AND remote_task_id = ?`,
+      )
+      .run(remoteHost, localParentTaskId, remoteTaskId);
+    return result.changes > 0;
+  }
+
+  deleteExternalParentLinkInTransaction(localTaskId: string): boolean {
+    const result = this.store.db
+      .prepare(
+        `DELETE FROM remote_tasks
+         WHERE local_task_id = ? AND remote_role = 'parent'`,
+      )
+      .run(localTaskId);
+    return result.changes > 0;
+  }
+
+  deleteRemoteRelationsForLocalTaskInTransaction(localTaskId: string): void {
+    this.store.db
+      .prepare("DELETE FROM remote_tasks WHERE local_task_id = ?")
+      .run(localTaskId);
+  }
 }
