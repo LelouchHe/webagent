@@ -44,6 +44,7 @@ import {
   type IdempotentCollaborationMessageInput,
   type IdempotentCollaborationMessageResult,
 } from "./store/collaboration-messages.ts";
+import { OpsStore } from "./store/ops.ts";
 
 /** Namespace WebAgent reserves for the per-task empty execution slot. */
 const EMPTY_EXECUTION_PREFIX = "no-execution:";
@@ -502,6 +503,7 @@ export class Store {
   private readonly linkApply: LinkApplyStore;
   private readonly taskLifecycle: TaskLifecycleStore;
   private readonly collaborationMessages: CollaborationMessagesStore;
+  readonly ops: OpsStore;
   private readonly deliveryStatusObservers: Array<
     (change: CollaborationDeliveryStatusChange) => void
   > = [];
@@ -614,6 +616,7 @@ export class Store {
       this.linkOutbox,
     );
     this.collaborationMessages = new CollaborationMessagesStore(internal);
+    this.ops = new OpsStore(this.db);
     try {
       this.db.pragma("journal_mode = WAL");
       this.db.pragma("foreign_keys = ON");
@@ -1197,6 +1200,20 @@ export class Store {
         value TEXT NOT NULL,
         updated_at INTEGER NOT NULL DEFAULT 0
       );
+    `);
+
+    // ops — bounded-TTL deduplication store for HTTP write idempotency.
+    // Independent of task lifecycle (no foreign keys); expired only by TTL.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS ops (
+        key TEXT PRIMARY KEY,
+        fingerprint TEXT NOT NULL,
+        status INTEGER,
+        headers TEXT,
+        body BLOB,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_ops_created_at ON ops(created_at);
     `);
   }
 

@@ -36,6 +36,7 @@ or counters rather than instants (`ttl_hours`, `share_snapshot_seq`,
   - [shares](#shares)
   - [owner_prefs](#owner_prefs)
   - [workspace](#workspace)
+  - [ops](#ops)
 - [Indexes](#indexes)
 - [Cascade & Lifecycle](#cascade--lifecycle)
 - [Pre-1.0 reset policy](#pre-10-reset-policy)
@@ -438,6 +439,24 @@ predates this table and is refused at startup (see
 | `id` | INTEGER PRIMARY KEY | Always `1` (`CHECK (id = 1)`): there is exactly one row |
 | `root_task_id` | TEXT NOT NULL | The Root's task id. No foreign key: a fresh database names its Root before the row is inserted |
 
+### `ops`
+
+Bounded-TTL (24h) deduplication table for the HTTP write idempotency adapter
+(`src/store/ops.ts`, `src/http/ops-adapter.ts`). Independent of task lifecycle
+(no foreign keys, untouched by task deletion or Root exit) so replays still
+return the original response (including Root exit `replacedBy`). Expired rows
+are swept synchronously on startup before listening and on the server's hourly
+maintenance timer (skipping live in-flight keys).
+
+| Column | Type | Notes |
+|---|---|---|
+| `key` | TEXT PRIMARY KEY | `opIdentity(OPS_NAMESPACE, caller, opId)` where `caller` is `host:<name>` or `token:<name>` |
+| `fingerprint` | TEXT NOT NULL | SHA-256 hex digest of `method + "\0" + url + "\0" + rawBodyBytes` |
+| `status` | INTEGER | Final HTTP status code; `NULL` while `pending` |
+| `headers` | TEXT | JSON-encoded application response headers (excluding hop-by-hop headers); `NULL` while `pending` |
+| `body` | BLOB | Raw response payload bytes (`Buffer`); `NULL` while `pending` |
+| `created_at` | INTEGER NOT NULL | Unix milliseconds; rows expire at `now - created_at >= 24h` |
+
 ---
 
 ## Indexes
@@ -459,6 +478,7 @@ predates this table and is refused at startup (see
 | `idx_attachments_task` | `attachments` | `(task_id)` | Per-task listing + GC sweep |
 | `idx_agent_sessions_agent_task` | `agent_sessions` | `(agent_key, task_id) WHERE task_id IS NOT NULL` | Storage guard: at most one binding per (agent, visible WebAgent Task) (partial UNIQUE). The global one-binding-per-task rule is enforced in the application, not here |
 | `idx_tasks_parent` | `tasks` | `(parent_id)` | Root/child Task relationship and future family queries |
+| `idx_ops_created_at` | `ops` | `(created_at)` | TTL sweep over expired HTTP `ops` rows |
 
 ---
 
