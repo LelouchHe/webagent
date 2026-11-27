@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **REST task reads no longer infer warm or flush side effects.** `GET /api/v1/tasks/:id` and `/snapshot` warm only with `warm=1`; `GET /api/v1/tasks/:id/events` flushes only with `flush=1`. Update external integrations that relied on implicit warming, buffer persistence, event-sequence advances, or detail-read model canonicalization. The browser sends the flags itself where they are consumed, so its visible behavior is unchanged.
 - **Remove the `read` token scope.** Delete any `read`-scope tokens from `auth.json` before upgrading; the supported scopes are now `admin`, `api`, and `host`, and unknown stored scopes are rejected during startup.
+- **Permission responses, cancel, prompt, and message ingress no longer promise same-op replay.** The `client_ops` result cache has been removed (existing databases keep any orphan `client_ops` table untouched at boot). In particular, `POST /api/v1/messages` now ignores `X-Client-Op-Id` and creates a new message with a new id on repeated requests (use `dedup_key` on `to: "user"` messages to replace an earlier pending row); prompt still accepts `X-Client-Op-Id` for browser echo correlation but returns `409` when busy and starts a new turn once idle. Deterministic `POST /api/v1/tasks` creation now uses a fixed UUID namespace so replays survive Root exit.
 
 ## [0.13.1] - 2026-11-17
 

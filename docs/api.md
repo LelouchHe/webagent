@@ -284,13 +284,13 @@ the initiator's `task_created` row and link. Stored facts and rendered prose
 keep `agent` and `host` as separate fields.
 
 For a `host`-scoped request carrying `X-Client-Op-Id`, the owner derives the
-task id deterministically via `opIdentity(ownerRootId, "host:" + tokenName, opId)`
+task id deterministically via `opIdentity(TASK_CREATE_NAMESPACE, "host:" + tokenName, opId)`
 (RFC 4122 UUIDv5). Local requests with `X-Client-Op-Id` derive their task id via
-`opIdentity(rootId, "token:" + tokenName, opId)` (or `"agent:" + parentId` for
-MCP `task_create`). Replaying the same `X-Client-Op-Id` compares only immutable
-creation facts (parent / external-parent link and agent) and returns the task's
-current state in `201` without creating a second task; mismatched immutable
-facts return `409` (`create_op_conflict`); and a soft-deleted task returns `404`
+`opIdentity(TASK_CREATE_NAMESPACE, "token:" + tokenName, opId)` (or `"agent:" + parentId` for
+MCP `task_create`). Replaying the same `X-Client-Op-Id` compares the task's
+current parent / external-parent link and current agent binding and returns the
+task's current state in `201` without creating a second task; a mismatch returns
+`409` (`create_op_conflict`); and a soft-deleted task returns `404`
 (`target_deleted`).
 
 The hub routes remote creation through `shared/sync/request` with a single
@@ -1560,12 +1560,13 @@ When no work remains, the endpoint is idempotent:
 { "ok": true, "status": "idle" }
 ```
 
-For a user caller, a live local task runs locally (with `X-Client-Op-Id`
-replay). If no local task exists, the hub routes the request synchronously to a
-linked remote child whose hub parent is live (without `client_ops`).
+For a user caller, a live local task runs locally (ignoring `X-Client-Op-Id`;
+retrying cancels current work or returns `idle` when no work remains). If no
+local task exists, the hub routes the request synchronously to a linked remote
+child whose hub parent is live.
 
 For a `host`-scoped caller, this route is owner-local only (never forwarded) and
-never reads or writes `client_ops`. It validates the strict JSON body first
+ignores `X-Client-Op-Id`. It validates the strict JSON body first
 (empty / `{}` / `{ "kind": "user" }`, or
 `{ "kind": "agent", "reason": "...", "sourceLabel": "..." }`), then verifies
 that the task exists and its external-parent link matches the authenticated host

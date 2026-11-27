@@ -23,29 +23,24 @@ time. An entry without a "closing condition" is a wish, not an issue.
   unsupported. *Closing:* introduce protocol versioning at 1.0 if needed.
 - **A hard-deleted remote child can be recreated if a create retry lands after
   deletion.** Remote `POST /api/v1/tasks` derives its task id from
-  `opIdentity(ownerRootId, callerLinkName, opId)`. A soft-deleted (shared) task
-  still exists in `tasks` and returns `404 target_deleted` on replay, but a
-  hard-deleted task removes the row so a late retry inside the hub's retry
-  window would insert it again (requires create response loss, immediate hard
-  delete, and retry within the same window). *Closing:* accepted edge case; do
-  not add a tombstone table for it.
-- **`client_ops` is a result cache rather than structural idempotency.**
-  `POST /api/v1/messages` writes under the synthetic task id `__ingress__`;
-  `pruneClientOps` has no production caller, so rows go only when their task is
-  deleted and `__ingress__` rows are never removed (as of
-  2026-11-25, dogfood hub held 515 rows: 245 `__ingress__` and 398 referencing
-  task ids no longer in `tasks`); and results are saved in a separate commit
-  after execution, making replay non-atomic. REST collaboration messages no
-  longer use it. *Closing:* move its four remaining users (ingress, prompt,
-  permission response, local cancel) to structural idempotency and delete
-  `client_ops` in plan v7 step 5.
-- **Task create derives its id from the current Root id.** Local and host
-  create use `opIdentity(rootTaskId, …)`; Root exit rotates the Root id, so a
-  create retried across a Root exit with the same op id derives a different id
-  and, if the request is still admissible (for example its parent still
-  exists), creates a new Task instead of replaying.
-  Collaboration messages already use a fixed namespace. *Closing:* move create
-  to a fixed namespace in a later step-5 slice.
+  `opIdentity(TASK_CREATE_NAMESPACE, callerLinkName, opId)`. A soft-deleted
+  (shared) task still exists in `tasks` and returns `404 target_deleted` on
+  replay, but a hard-deleted task removes the row so a late retry inside the
+  hub's retry window would insert it again (requires create response loss,
+  immediate hard delete, and retry within the same window). *Closing:* accepted
+  edge case; do not add a tombstone table for it.
+- **Permission responses, cancel, prompt, and message ingress do not promise
+  same-op replay.** Repeating a request with the same `X-Client-Op-Id` can
+  re-execute against live state (cancel may stop a newer turn, prompt after
+  idle starts a new turn, ingress creates a second message, and permission
+  returns `404` once answered). None of these routes currently has a caller
+  that automatically retries with the same op id. *Closing:* when a caller
+  begins automatically retrying these routes on unknown outcome (expected in
+  plan v7 step 6 when the browser adopts `shared/sync` requests).
+- **Existing databases retain an orphan `client_ops` table.** Fresh databases
+  do not create `client_ops`, and startup does not `DROP` it on older
+  databases; operators may drop it manually while stopped. *Closing:* pre-1.0
+  schema reset or manual cleanup.
 - **A browser retry uses whatever token is current.** The `@` send keeps one op
   id across retries, but each attempt reads the stored token; if another tab
   signs in under a different token name between attempts, the retry derives a

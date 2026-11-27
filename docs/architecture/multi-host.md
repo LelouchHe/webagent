@@ -74,13 +74,13 @@ Idempotency is built into the fact the operation writes, not into a result
 cache. A created Task's id is derived from the op id:
 
 ```text
- taskId = opIdentity(owner Root id, caller scope, opId)      UUIDv5, computed by the owner
+ taskId = opIdentity(TASK_CREATE_NAMESPACE, caller scope, opId)   UUIDv5, computed by the owner
  caller scope = host:<token name> | token:<token name> | agent:<parent Task id>
 ```
 
 ```text
  hub                                              owner
-  |-- POST /tasks  X-Client-Op-Id: K ------------>|  id = opIdentity(root, host:hubA, K)
+  |-- POST /tasks  X-Client-Op-Id: K ------------>|  id = opIdentity(TASK_CREATE_NAMESPACE, host:hubA, K)
   |      x  response lost (unknown)               |  writes Task id + parent row (one tx)
   |-- POST /tasks  X-Client-Op-Id: K (retry) ----->|  Task id exists, same parent edge + agent
   |<----------------------- 201, same Task id ----|  nothing written; current Task returned
@@ -138,9 +138,9 @@ the earlier attempt did not commit.
 
 Replay recovers the acceptance only. If the process stops after the commit but
 before the source activity update, source SSE, or drain, replay does not redo
-them; the queued delivery waits for an ordinary drain. The four routes that
-still use the `client_ops` result cache (ingress, prompt, permission response,
-local cancel) move to construction in the same plan step.
+them; the queued delivery waits for an ordinary drain. Permission responses,
+cancel, prompt, and message ingress do not promise same-op replay (see
+[Known issues](../known-issues.md)).
 
 ## Link transport
 
@@ -681,8 +681,8 @@ local or remote.
 ```
 
 On the owner, `POST /api/v1/tasks/:id/cancel` is in host scope and runs an
-owner-local branch that never forwards to another host and never reads or writes
-`client_ops`. The owner parses and validates the strict request body first (a
+owner-local branch that never forwards to another host and ignores
+`X-Client-Op-Id`. The owner parses and validates the strict request body first (a
 user cancel with no source, or an agent cancel carrying `reason` and a bounded
 `sourceLabel` snapshot), then verifies that the target exists and its
 external-parent link matches the authenticated host token name, returning `404`

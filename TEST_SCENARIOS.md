@@ -132,9 +132,21 @@ spot gaps, and decide what still needs to be added without reading every spec.
     target hard delete, Root exit (archived tree), and simulated restart,
     source/target/verbatim-body mismatch returns `409` before target checks,
     caller scoping by token name, `401`/`403` before replay, zero replay side
-    effects (SSE/lastActive/drain) and zero `client_ops` reads/writes, missing
+    effects (SSE/lastActive/drain), missing
     header creates distinct facts without echoing `clientOpId`, and empty/>128
     header returns `400`
+- `test/contract-07-idempotency.test.ts`
+  - fresh DB omits `client_ops`; legacy DBs retain an orphan `client_ops` table
+    and sentinel rows untouched and unread at boot across permission, cancel,
+    prompt, and ingress routes
+  - same-op resend behavior after `client_ops` removal: permission (`404`,
+    answered once), cancel (`202 cancelling` → settled → `200 idle`), prompt
+    (`409` while busy, raw `clientOpId` preserved on stored event and SSE,
+    new turn after idle), and ingress (distinct ids for direct `to:task` and
+    unbound `to:user`, replacement with a new id and old-row deletion on
+    matching `dedup_key`)
+  - survivor-based local (archived parent) and host (external parent link)
+    create replay across Root exit using `TASK_CREATE_NAMESPACE`
 - `test/hosts-routes.test.ts` and `test/events.test.ts`
   - an owner task list includes its external parent as an unknown remote entry
     without a host/title, without an added SQL read
@@ -845,7 +857,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - ordinary creation of the Root id is rejected; prefix-shaped ids are ordinary tasks
   - delete, tombstone reap, and empty-task GC refuse the Root even when its tombstone flag is corrupted
   - `getParentTask` accepts the global Root for another agent's task
-  - reset sentinels cover events, client_ops, attachments, compact summaries, previews, and descendants; Root keeps an ownership binding holding its own `no-execution:<id>` slot and reports the retired execution
+  - reset sentinels cover events, attachments, compact summaries, previews, and descendants; Root keeps an ownership binding holding its own `no-execution:<id>` slot and reports the retired execution
   - `replaceRoot` inserts a new Root (new id; same directory, title, model, and agent as an empty slot; no history), moves the `workspace` pointer durably, and deletes the old tree in one transaction; a failure while deleting the old tree (after the in-memory pointer moved) leaves the old Root, its tree, its binding, and both the in-memory and stored pointer as they were; a caller naming a Root that is no longer the Root is refused
   - a shared Root is tombstoned and still replaced, and is reapable once no longer the Root
   - binding write authority: a foreign attach is refused with no fact emitted, detach removes the binding, the same session id from two agents is two different executions, one outermost commit emits one fact per task, and a rolled-back batch is discarded rather than leaked into the next commit

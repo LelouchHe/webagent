@@ -174,9 +174,9 @@ curl -s -X POST http://localhost:6800/api/v1/messages \
   }'
 ```
 
-### 4. Idempotent retries
+### 4. Retries and deduplication
 
-Pass `X-Client-Op-Id: <uuid>`; repeated requests return the same message id (response is cached under the reserved `__ingress__` task key).
+`POST /api/v1/messages` ignores `X-Client-Op-Id`; repeating a request creates a new message with a new random id. For unbound `to: "user"` messages that should overwrite an earlier pending copy instead of stacking, pass a `dedup_key` (see above) — a repeat with the same `(to, dedup_key)` deletes the old pending row and inserts a new one with a fresh id.
 
 ---
 

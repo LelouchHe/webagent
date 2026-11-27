@@ -32,7 +32,6 @@ or counters rather than instants (`ttl_hours`, `share_snapshot_seq`,
   - [messages](#messages)
   - [message_projections](#message_projections)
   - [deliveries](#deliveries)
-  - [client_ops](#client_ops)
   - [recent_paths](#recent_paths)
   - [shares](#shares)
   - [owner_prefs](#owner_prefs)
@@ -361,34 +360,6 @@ present.
 
 Index `idx_deliveries_source_entry` enforces that link-entry uniqueness.
 
-### `client_ops`
-
-Idempotency cache for mutating REST calls (M2 of client-server-split). Lets a
-client safely retry after SSE/network reconnect — same `(task_id,
-client_op_id)` returns the cached response instead of re-executing the side
-effect.
-
-This is a result cache, not idempotency by construction, and it is being
-retired: task create and REST collaboration messages derive their ids from the
-`X-Client-Op-Id` op id instead
-(see [multi-host: Idempotent operations](architecture/multi-host.md#idempotent-operations)),
-and link pushes use the envelope's entry id as the delivery id; none of them
-touch this table. `/api/v1/messages` stores under the synthetic key
-`__ingress__`, there is no age-based pruning in production (rows go only when
-their task is deleted), and the result is saved
-after the side effect, not in its transaction. Plan step 5 moves the remaining
-routes to construction and drops the table (see Known issues).
-
-| Column | Type | Notes |
-|---|---|---|
-| `task_id` | TEXT NOT NULL | Part of compound PK |
-| `client_op_id` | TEXT NOT NULL | Client-generated UUID for the op |
-| `result_json` | TEXT NOT NULL | Serialized response body |
-| `created_at` | INTEGER NOT NULL DEFAULT 0 | Unix milliseconds |
-
-PK: `(task_id, client_op_id)`. `pruneClientOps` in `store.ts` can delete rows
-by age but has no production caller; task deletion removes that task's rows.
-
 ### `recent_paths`
 
 LRU of working directories used by `+` creation and `/clear` path pickers.
@@ -556,13 +527,13 @@ is handled the same way: the schema guard tolerates it and startup drops it
 
 ## Timestamp normalization
 
-Nine tables hold ten timestamp columns. Eight of them (`tasks.created_at`,
+Eight tables hold nine timestamp columns. Seven of them (`tasks.created_at`,
 `tasks.last_active_at`, `agent_sessions.created_at`, `events.created_at`,
-`push_subscriptions.created_at`, `client_ops.created_at`,
-`attachments.created_at`, `recent_paths.last_used_at`) were bare UTC strings in
-older databases, in two shapes: `%Y-%m-%d %H:%M:%S` and
-`%Y-%m-%d %H:%M:%S.%f`, neither with a timezone marker. The other two
-(`shares.created_at`, `owner_prefs.updated_at`) were already INTEGER but
+`push_subscriptions.created_at`, `attachments.created_at`,
+`recent_paths.last_used_at`) were bare UTC strings in older databases, in two
+shapes: `%Y-%m-%d %H:%M:%S` and `%Y-%m-%d %H:%M:%S.%f`, neither with a timezone
+marker. The other two (`shares.created_at`, `owner_prefs.updated_at`) were
+already INTEGER but
 defaulted to `CAST(strftime('%s','now') AS INTEGER) * 1000` (seconds aligned).
 
 At startup, `migrateTimestampsToMillis()` rebuilds each table whose target

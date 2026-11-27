@@ -300,8 +300,8 @@ keeps its normal contrast.
 collaboration row. A user-initiated cancel writes neither row.
 
 For a linked remote child, `task_cancel` issues a synchronous
-`POST /api/v1/tasks/:id/cancel` to the owner (in host scope, without
-`client_ops`) and checks the caller's execution generation both before and after
+`POST /api/v1/tasks/:id/cancel` to the owner (in host scope) and checks the
+caller's execution generation both before and after
 the round trip. The owner derives `sourceTaskId` from the matched external
 parent link and writes the `target` row using the hub's title snapshot as
 `sourceLabel`; the hub writes the `source` row once the call succeeds. Timeouts,

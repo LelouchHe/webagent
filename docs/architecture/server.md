@@ -286,10 +286,12 @@ Activating push on a device and troubleshooting are in
   Task create and REST collaboration messages derive the id of the fact they
   write from the op id and replay from that fact
   ([Multi-host: Idempotent operations](./multi-host.md#idempotent-operations)).
-  Four REST routes still replay a cached result from `client_ops`, keyed by
-  `(task_id, client_op_id)`: permission responses, cancel, prompt, and message
-  ingress. Task delete uses the op id only to correlate its HTTP response and
-  broadcast. MCP callers supply no op id; `task_create` generates one and
+  Prompt keeps lenient `X-Client-Op-Id` parsing to correlate its `user_message`
+  event and SSE echo with the browser's optimistic message, and task delete uses
+  it to correlate its HTTP response and broadcast, without replaying cached
+  results. Permission responses, cancel, and message ingress ignore the header
+  and do not promise same-op replay. MCP callers supply no op id; `task_create`
+  generates one and
   passes it to the shared create path.
 - **Errors** — REST answers with an HTTP status and a JSON `{ error }` body;
   MCP answers with tool-error text written for the calling agent
