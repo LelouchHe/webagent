@@ -21,6 +21,7 @@ import {
   HostConnection,
   REMOTE_STATUS_TIMEOUT_MS,
   type HostTaskCancelRequest,
+  type HostTaskDeleteAttempt,
 } from "./connection.ts";
 import type {
   HostRuntimeState,
@@ -217,6 +218,17 @@ export class HostRegistry implements RemoteTaskCreateTransport {
       input,
       beforeSend,
     );
+  }
+
+  async deleteRemote(
+    host: string,
+    taskId: string,
+  ): Promise<HostTaskDeleteAttempt> {
+    const connection = this.connections.get(host);
+    if (!connection) {
+      return { kind: "unknown", reason: `Host "${host}" is not configured` };
+    }
+    return connection.deleteTask(taskId);
   }
 
   async queryRemote(

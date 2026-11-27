@@ -394,7 +394,11 @@ export default scenario<State>({
       {
         name: "s2-deleted-r1-notifies-p-once-with-target-deleted",
         action: async (client) => {
+          const link = client.forwarder("link");
           const removableId = readTaskId(state.ownerDb, "Removable Child");
+          // Hold the owner -> hub feed so the hub's in-flight send goes out
+          // before child_left removes the link on hub.
+          link.disconnect("watch");
           const deleted = await client
             .instance("owner")
             .rest("DELETE", `/api/v1/tasks/${removableId}`);
@@ -403,6 +407,11 @@ export default scenario<State>({
             .rest("POST", `/api/v1/tasks/${state.parentId}/prompt`, {
               text: "dispatch deleted child",
             });
+          await waitForRows(
+            state.hubDb,
+            `SELECT 1 FROM deliveries WHERE recipient_task_id = '${removableId}'`,
+          );
+          link.connect("watch");
           await waitForRows(
             state.hubDb,
             `SELECT 1 FROM events WHERE task_id = '${state.parentId}' AND type = 'task_outcome_notice' AND data LIKE '%target_deleted%'`,
@@ -462,10 +471,12 @@ export default scenario<State>({
       {
         name: "s5-deleted-parent-report-fails-without-blocking-live-parent",
         action: async (client) => {
+          const link = client.forwarder("link");
           const p2ChildId = readTaskId(state.ownerDb, "Parent Two Child");
-          const deletedParent = await client
-            .instance("hub")
-            .rest("DELETE", `/api/v1/tasks/${state.parentTwoId}`);
+          // Hold owner -> hub feed while R2 queues a report, let R2 finish so
+          // hub's synchronous delete succeeds, then resume feed to observe the
+          // queued report failing with target_deleted without blocking P1.
+          link.disconnect("watch");
           await client
             .instance("owner")
             .rest("POST", `/api/v1/tasks/${p2ChildId}/prompt`, {
@@ -473,8 +484,17 @@ export default scenario<State>({
             });
           await waitForRows(
             state.ownerDb,
-            `SELECT 1 FROM events WHERE task_id = '${p2ChildId}' AND type = 'task_outcome_notice'`,
+            `SELECT 1 FROM events WHERE task_id = '${p2ChildId}' AND type = 'prompt_done'`,
           );
+          const deletedParent = await client
+            .instance("hub")
+            .rest("DELETE", `/api/v1/tasks/${state.parentTwoId}`);
+          link.connect("watch");
+          await waitForRows(
+            state.hubDb,
+            `SELECT 1 FROM deliveries WHERE recipient_task_id = '${state.parentTwoId}' AND status = 'failed' AND failure_reason = 'target_deleted'`,
+          );
+          await waitSettled(state);
           await client
             .instance("hub")
             .rest("POST", `/api/v1/tasks/${state.parentId}/prompt`, {
@@ -491,12 +511,13 @@ export default scenario<State>({
               state.hubDb,
               `SELECT COUNT(*) AS count FROM tasks WHERE id = '${state.parentTwoId}'`,
             ),
-            ownerChildNotices: readRows(
+            deletedChildStillGone: readRows(
               state.ownerDb,
-              `SELECT json_extract(data, '$.reason') AS reason,
-                      json_extract(data, '$.message') AS message
-               FROM events WHERE task_id = '${p2ChildId}' AND type = 'task_outcome_notice'
-               ORDER BY seq`,
+              `SELECT COUNT(*) AS count FROM tasks WHERE id = '${p2ChildId}'`,
+            ),
+            failedDeletedParentDelivery: readRows(
+              state.hubDb,
+              `SELECT status, failure_reason FROM deliveries WHERE recipient_task_id = '${state.parentTwoId}'`,
             ),
           };
         },
@@ -524,7 +545,7 @@ export default scenario<State>({
             });
           await waitForRows(
             state.ownerDb,
-            `SELECT 1 FROM events WHERE task_id = '${childId}' AND type = 'assistant_message' AND data LIKE '%Account armed and idle.%'`,
+            `SELECT 1 FROM events WHERE task_id = '${childId}' AND type = 'prompt_done' AND seq > (SELECT seq FROM events WHERE task_id = '${childId}' AND type = 'assistant_message' AND data LIKE '%Account armed and idle.%' ORDER BY seq DESC LIMIT 1)`,
           );
           await client
             .instance("owner")

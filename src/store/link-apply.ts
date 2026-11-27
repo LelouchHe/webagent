@@ -7,6 +7,7 @@ import {
   type LinkMessageData,
   type LinkNoticeData,
   type LinkReceiptData,
+  type LinkRelationData,
   LinkProtocolError,
 } from "../shared/link-envelope.ts";
 import type {
@@ -287,7 +288,7 @@ export class LinkApplyStore {
       if (remoteRole !== "child") {
         throw new LinkProtocolError("relation_not_allowed_on_push");
       }
-      return emptyLinkApplyEffects();
+      return this.applyLinkRelationInTransaction(remoteHost, envelope.data);
     }
     return this.applyLinkDeliveryInTransaction(
       remoteRole,
@@ -319,6 +320,42 @@ export class LinkApplyStore {
       targetLabel: notice.targetLabel,
     });
     if (drainTaskId) effects.drainTaskIds.push(drainTaskId);
+    return effects;
+  }
+
+  private applyLinkRelationInTransaction(
+    remoteHost: string,
+    relation: LinkRelationData,
+  ): LinkApplyEffects {
+    const effects = emptyLinkApplyEffects();
+    const existing = this.remoteRelations.getRemoteChild(
+      remoteHost,
+      relation.childTaskId,
+    );
+    if (existing?.local_task_id !== relation.parentTaskId) {
+      return effects;
+    }
+    const recordedTitle = this.remoteRelations.getRemoteChildTitle(
+      relation.parentTaskId,
+      relation.childTaskId,
+    );
+    this.remoteRelations.deleteRemoteChildInTransaction(
+      remoteHost,
+      relation.parentTaskId,
+      relation.childTaskId,
+    );
+    if (relation.accountOpen && this.store.getTask(relation.parentTaskId)) {
+      const targetLabel = recordedTitle ?? relation.childTaskId.slice(0, 8);
+      const drainTaskId = this.writeOutcomeNoticeInTransaction({
+        sourceTaskId: relation.parentTaskId,
+        targetTaskId: relation.childTaskId,
+        reason: "target_removed",
+        message:
+          "The target left this edge (deleted or archived); the account is gone.",
+        targetLabel,
+      });
+      if (drainTaskId) effects.drainTaskIds.push(drainTaskId);
+    }
     return effects;
   }
 

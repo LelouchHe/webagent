@@ -12,6 +12,10 @@ import { HTTP_STATUS } from "../http-status.ts";
 import { AgentUnavailableError } from "../agent-registry.ts";
 import type { Store, TaskRow } from "../store.ts";
 import {
+  TaskDeleteStateChangedError,
+  TaskRemoteDeleteError,
+} from "../task-delete.ts";
+import {
   AgentNotReadyError,
   TaskBusyError,
   TaskNotFoundError,
@@ -291,41 +295,124 @@ async function handleExitRootDelete(
   });
 }
 
-export async function handleDeleteTaskRoute(
+function sendDeleteError(
   ctx: DeleteTaskRouteContext,
-): Promise<void> {
-  const { res, taskId, clientOpId, store, tasks, sseManager, json } = ctx;
-  const task = store.getTask(taskId);
-  if (!task) {
-    json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
-    return;
-  }
-  if (tasks && tasks.getGateBusyKind(taskId) !== null) {
-    const busyPath = store.getTaskPath(taskId) ?? taskId;
-    json(res, HTTP_STATUS.CONFLICT, {
-      error: `Cancel active work in ${busyPath} before deleting this task`,
-    });
-    return;
-  }
-  if (tasks) {
-    const busyDescendant = store
-      .getDescendantTaskIds(taskId)
-      .find((descendantId) => tasks.getGateBusyKind(descendantId) !== null);
-    if (busyDescendant) {
-      const busyPath = store.getTaskPath(busyDescendant) ?? busyDescendant;
-      json(res, HTTP_STATUS.CONFLICT, {
-        error: `Cancel active work in ${busyPath} before deleting this task`,
+  err: unknown,
+  isHostScope: boolean,
+): void {
+  const { res, taskId, store, json } = ctx;
+  const message =
+    err instanceof TaskBusyError
+      ? `Cancel active work in ${store.getTaskPath(err.taskId) ?? err.taskId} before deleting this task`
+      : err instanceof Error
+        ? err.message
+        : String(err);
+  if (isHostScope) {
+    if (err instanceof TaskNotFoundError) {
+      json(res, HTTP_STATUS.NOT_FOUND, {
+        error: "Task not found",
+        code: "not_found",
+        failedTaskId: taskId,
       });
       return;
     }
+    if (err instanceof TaskBusyError) {
+      json(res, HTTP_STATUS.CONFLICT, {
+        error: message,
+        code: "task_busy",
+        failedTaskId: err.taskId,
+      });
+      return;
+    }
+    if (
+      err instanceof TaskRemoteDeleteError ||
+      err instanceof TaskDeleteStateChangedError
+    ) {
+      json(res, HTTP_STATUS.CONFLICT, {
+        error: message,
+        code: err.code,
+        failedTaskId: err.failedTaskId,
+      });
+      return;
+    }
+    json(res, HTTP_STATUS.BAD_REQUEST, {
+      error: message,
+      code: "delete_failed",
+      failedTaskId: taskId,
+    });
+    return;
+  }
+
+  if (err instanceof TaskRemoteDeleteError) {
+    const status =
+      err.outcome === "unknown"
+        ? HTTP_STATUS.BAD_GATEWAY
+        : HTTP_STATUS.CONFLICT;
+    json(res, status, {
+      error: message,
+      code: err.code,
+      host: err.host,
+      failedTaskId: err.failedTaskId,
+      ...(err.remoteStatus !== undefined
+        ? { remoteStatus: err.remoteStatus }
+        : {}),
+      outcome: err.outcome,
+      deletedRemoteTasks: err.deletedRemoteTasks,
+    });
+    return;
+  }
+  if (err instanceof TaskDeleteStateChangedError) {
+    json(res, HTTP_STATUS.CONFLICT, {
+      error: message,
+      code: err.code,
+      failedTaskId: err.failedTaskId,
+      deletedRemoteTasks: err.deletedRemoteTasks,
+    });
+    return;
+  }
+  const status =
+    err instanceof TaskNotFoundError
+      ? HTTP_STATUS.NOT_FOUND
+      : err instanceof TaskBusyError
+        ? HTTP_STATUS.CONFLICT
+        : err instanceof AgentUnavailableError
+          ? HTTP_STATUS.SERVICE_UNAVAILABLE
+          : HTTP_STATUS.BAD_REQUEST;
+  json(res, status, { error: message });
+}
+
+export async function handleDeleteTaskRoute(
+  ctx: DeleteTaskRouteContext,
+): Promise<void> {
+  const { res, taskId, principal, clientOpId, store, tasks, sseManager, json } =
+    ctx;
+  const isHostScope = principal?.scope === "host";
+  const task = store.getTask(taskId);
+  if (isHostScope) {
+    const externalParent = store.getExternalParentLink(taskId);
+    if (!task || externalParent?.remote_host !== principal.name) {
+      json(res, HTTP_STATUS.NOT_FOUND, {
+        error: "Task not found",
+        code: "not_found",
+        failedTaskId: taskId,
+      });
+      return;
+    }
+  } else if (!task) {
+    json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
+    return;
   }
   try {
-    if (taskId === store.rootTaskId) {
+    if (!isHostScope && taskId === store.rootTaskId) {
       await handleExitRootDelete(ctx);
       return;
     }
     const affectedStore = tasks
-      ? await tasks.deleteTask(undefined, taskId)
+      ? await tasks.deleteTask(undefined, taskId, {
+          ...(isHostScope
+            ? { requiredExternalParentHost: principal.name }
+            : {}),
+        })
       : store.deleteTask(taskId);
     for (const entry of affectedStore.affected) {
       sseManager.broadcast({
@@ -342,16 +429,6 @@ export async function handleDeleteTaskRoute(
       ...(clientOpId ? { clientOpId } : {}),
     });
   } catch (err) {
-    const status =
-      err instanceof TaskNotFoundError
-        ? HTTP_STATUS.NOT_FOUND
-        : err instanceof TaskBusyError
-          ? HTTP_STATUS.CONFLICT
-          : err instanceof AgentUnavailableError
-            ? HTTP_STATUS.SERVICE_UNAVAILABLE
-            : HTTP_STATUS.BAD_REQUEST;
-    json(res, status, {
-      error: err instanceof Error ? err.message : String(err),
-    });
+    sendDeleteError(ctx, err, isHostScope);
   }
 }

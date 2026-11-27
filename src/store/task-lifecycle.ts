@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import type { ExecutionBinding } from "../execution-authority.ts";
 import { formatFieldBlock } from "../shared/field-block.ts";
+import type { LinkRelationData } from "../shared/link-envelope.ts";
 import type {
   ArchiveSystemMessage,
   ArchiveTaskResult,
@@ -7,13 +9,30 @@ import type {
   TaskDelete,
   UnarchiveTaskResult,
 } from "../store.ts";
-import type { StoreInternal } from "./internal.ts";
+import { stringifyLinkData, type StoreInternal } from "./internal.ts";
+import type { LinkOutboxStore } from "./link-outbox.ts";
+import type { RemoteRelationsStore } from "./remote-relations.ts";
+
+export interface TaskDeleteStoreOptions {
+  hasOpenExternalAccount?: (
+    taskId: string,
+    externalParentTaskId: string,
+  ) => boolean;
+}
 
 export class TaskLifecycleStore {
   private readonly store: StoreInternal;
+  private readonly remoteRelations: RemoteRelationsStore;
+  private readonly linkOutbox: LinkOutboxStore;
 
-  constructor(store: StoreInternal) {
+  constructor(
+    store: StoreInternal,
+    remoteRelations: RemoteRelationsStore,
+    linkOutbox: LinkOutboxStore,
+  ) {
     this.store = store;
+    this.remoteRelations = remoteRelations;
+    this.linkOutbox = linkOutbox;
   }
 
   /**
@@ -290,17 +309,23 @@ export class TaskLifecycleStore {
     );
   }
 
-  deleteTask(id: string): {
+  deleteTask(
+    id: string,
+    options?: TaskDeleteStoreOptions,
+  ): {
     mode: "hard" | "soft";
     affected: TaskDelete[];
   } {
     if (this.store.isRootTaskId(id)) {
       throw new Error("Root task cannot be deleted");
     }
-    return this.store.writeBindings(() => this.deleteTaskInScope(id));
+    return this.store.writeBindings(() => this.deleteTaskInScope(id, options));
   }
 
-  deleteTaskInScope(id: string): {
+  deleteTaskInScope(
+    id: string,
+    options?: TaskDeleteStoreOptions,
+  ): {
     mode: "hard" | "soft";
     affected: TaskDelete[];
   } {
@@ -310,7 +335,7 @@ export class TaskLifecycleStore {
     const affected: TaskDelete[] = [];
     const children = this.store.listChildren(id);
     for (const childId of children) {
-      affected.push(...this.deleteTask(childId).affected);
+      affected.push(...this.deleteTaskInScope(childId, options).affected);
     }
     const binding = this.store.getCurrentExecutionBinding(id);
     const beforeBinding: ExecutionBinding | null = binding
@@ -340,23 +365,6 @@ export class TaskLifecycleStore {
         }
       | undefined;
     const activeShareCount = taskDeleteInfo?.active_shares ?? 0;
-    this.store.db.prepare("DELETE FROM client_ops WHERE task_id = ?").run(id);
-    if (activeShareCount > 0) {
-      this.store.db
-        .prepare("UPDATE tasks SET deleted_at = ? WHERE id = ?")
-        .run(Date.now(), id);
-      this.store.db
-        .prepare("DELETE FROM agent_sessions WHERE task_id = ?")
-        .run(id);
-      this.store.collectBindingChange(id, beforeBinding);
-      affected.unshift({
-        id,
-        mode: "soft",
-        agentSessionId: binding?.agent_session_id ?? null,
-        agentId: binding?.agent_key ?? null,
-      });
-      return { mode: "soft", affected };
-    }
     const externalParent: DeletedExternalParent | undefined =
       taskDeleteInfo?.remote_host && taskDeleteInfo.remote_task_id
         ? {
@@ -365,8 +373,103 @@ export class TaskLifecycleStore {
             title: taskDeleteInfo.title,
           }
         : undefined;
+    const hadOpenExternalAccount =
+      externalParent !== undefined &&
+      options?.hasOpenExternalAccount?.(id, externalParent.remoteTaskId) ===
+        true;
+    this.store.db.prepare("DELETE FROM client_ops WHERE task_id = ?").run(id);
+    if (activeShareCount > 0) {
+      return this.softDeleteTaskInScope({
+        id,
+        binding,
+        beforeBinding,
+        externalParent,
+        hadOpenExternalAccount,
+        affected,
+      });
+    }
+    return this.hardDeleteTaskInScope({
+      id,
+      binding,
+      beforeBinding,
+      externalParent,
+      hadOpenExternalAccount,
+      affected,
+    });
+  }
+
+  private softDeleteTaskInScope(input: {
+    id: string;
+    binding: ReturnType<StoreInternal["getCurrentExecutionBinding"]>;
+    beforeBinding: ExecutionBinding | null;
+    externalParent: DeletedExternalParent | undefined;
+    hadOpenExternalAccount: boolean;
+    affected: TaskDelete[];
+  }): { mode: "soft"; affected: TaskDelete[] } {
+    const {
+      id,
+      binding,
+      beforeBinding,
+      externalParent,
+      hadOpenExternalAccount,
+      affected,
+    } = input;
+    this.store.db
+      .prepare("UPDATE tasks SET deleted_at = ? WHERE id = ?")
+      .run(Date.now(), id);
+    this.store.db
+      .prepare("DELETE FROM agent_sessions WHERE task_id = ?")
+      .run(id);
+    this.remoteRelations.deleteRemoteRelationsForLocalTaskInTransaction(id);
+    if (externalParent) {
+      this.enqueueChildLeftInTransaction(
+        externalParent,
+        id,
+        hadOpenExternalAccount,
+      );
+    }
+    this.store.collectBindingChange(id, beforeBinding);
+    affected.unshift({
+      id,
+      mode: "soft",
+      agentSessionId: binding?.agent_session_id ?? null,
+      agentId: binding?.agent_key ?? null,
+      ...(externalParent ? { externalParent } : {}),
+    });
+    return { mode: "soft", affected };
+  }
+
+  private hardDeleteTaskInScope(input: {
+    id: string;
+    binding: ReturnType<StoreInternal["getCurrentExecutionBinding"]>;
+    beforeBinding: ExecutionBinding | null;
+    externalParent: DeletedExternalParent | undefined;
+    hadOpenExternalAccount: boolean;
+    affected: TaskDelete[];
+  }): { mode: "hard"; affected: TaskDelete[] } {
+    const {
+      id,
+      binding,
+      beforeBinding,
+      externalParent,
+      hadOpenExternalAccount,
+      affected,
+    } = input;
     this.store.reparentChildrenToRoot(id);
-    this.store.failOutstandingDeliveriesForDeletedTask(id);
+    const failedDeliveryIds =
+      this.store.failOutstandingDeliveriesForDeletedTask(id);
+    if (externalParent) {
+      const edgeFailed = this.anyFailedDeliveryOnExternalParentEdge(
+        failedDeliveryIds,
+        id,
+        externalParent,
+      );
+      this.enqueueChildLeftInTransaction(
+        externalParent,
+        id,
+        hadOpenExternalAccount && !edgeFailed,
+      );
+    }
     this.store.db.prepare("DELETE FROM events WHERE task_id = ?").run(id);
     this.store.db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
     this.store.collectBindingChange(id, beforeBinding);
@@ -378,5 +481,55 @@ export class TaskLifecycleStore {
       ...(externalParent ? { externalParent } : {}),
     });
     return { mode: "hard", affected };
+  }
+
+  private anyFailedDeliveryOnExternalParentEdge(
+    deliveryIds: readonly string[],
+    recipientTaskId: string,
+    externalParent: DeletedExternalParent,
+  ): boolean {
+    if (deliveryIds.length === 0) return false;
+    const placeholders = deliveryIds.map(() => "?").join(", ");
+    return (
+      this.store.db
+        .prepare(
+          `SELECT 1 FROM deliveries d
+           JOIN messages m ON m.id = d.message_id
+           WHERE d.id IN (${placeholders})
+             AND d.recipient_task_id = ?
+             AND d.source_remote_role = 'parent'
+             AND d.source_remote_host = ?
+             AND m.source_task_id = ?
+           LIMIT 1`,
+        )
+        .get(
+          ...deliveryIds,
+          recipientTaskId,
+          externalParent.remoteHost,
+          externalParent.remoteTaskId,
+        ) !== undefined
+    );
+  }
+
+  private enqueueChildLeftInTransaction(
+    externalParent: DeletedExternalParent,
+    childTaskId: string,
+    accountOpen: boolean,
+  ): void {
+    const data: LinkRelationData = {
+      kind: "child_left",
+      parentTaskId: externalParent.remoteTaskId,
+      childTaskId,
+      accountOpen,
+    };
+    this.linkOutbox.enqueueOutboxInTransaction({
+      entryId: randomUUID(),
+      remoteRole: "parent",
+      remoteHost: externalParent.remoteHost,
+      category: "relation",
+      dataJson: stringifyLinkData(data),
+      deliveryId: null,
+      createdAt: Date.now(),
+    });
   }
 }

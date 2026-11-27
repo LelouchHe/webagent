@@ -100,6 +100,27 @@ const TaskCancelResponseSchema = z.object({
   status: z.enum(["idle", "cancelling", "cancelled", "superseded"]),
 });
 
+const TaskDeleteResponseSchema = z.object({
+  taskId: z.string().min(1),
+});
+
+const RemoteDeleteRejectionSchema = z.object({
+  error: z.string().min(1),
+  code: z.string().min(1).optional(),
+  failedTaskId: z.string().min(1).optional(),
+});
+
+export type HostTaskDeleteAttempt =
+  | { kind: "deleted" }
+  | {
+      kind: "rejected";
+      status: number;
+      reason: string;
+      code?: string;
+      failedTaskId?: string;
+    }
+  | { kind: "unknown"; reason: string };
+
 export type RemoteTaskStatus = z.infer<typeof RemoteTaskStatusSchema>;
 
 export type HostTaskCancelRequest =
@@ -155,7 +176,7 @@ export type HostTaskCreateAttempt =
   | { kind: "not_sent"; reason: string };
 
 export interface HostHttpRequest {
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "DELETE";
   path: string;
   body?: unknown;
   token?: string;
@@ -392,6 +413,60 @@ export class HostConnection {
       });
     }
     return parsed.data.status;
+  }
+
+  async deleteTask(taskId: string): Promise<HostTaskDeleteAttempt> {
+    let token: string;
+    try {
+      token = await this.resolveToken();
+    } catch {
+      return { kind: "unknown", reason: "Host credential is unavailable" };
+    }
+    const outcome = await sendSyncRequest({
+      opId: null,
+      request: {
+        method: "DELETE",
+        path: `/api/v1/tasks/${encodeURIComponent(taskId)}`,
+        token,
+        redirect: "error",
+      },
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      transport: this.requestTransport,
+      timer: this.timer,
+    });
+    if (outcome.kind === "unknown") {
+      return { kind: "unknown", reason: errorMessage(outcome.error) };
+    }
+    if (outcome.kind === "rejected") {
+      const parsed = RemoteDeleteRejectionSchema.safeParse(outcome.body);
+      return {
+        kind: "rejected",
+        status: outcome.status,
+        reason: parsed.success
+          ? parsed.data.error
+          : responseError(outcome.body, outcome.status),
+        ...(parsed.success && parsed.data.code
+          ? { code: parsed.data.code }
+          : {}),
+        ...(parsed.success && parsed.data.failedTaskId
+          ? { failedTaskId: parsed.data.failedTaskId }
+          : {}),
+      };
+    }
+    if (outcome.status !== HTTP_STATUS.OK) {
+      return {
+        kind: "unknown",
+        reason: `Unexpected HTTP ${outcome.status}`,
+      };
+    }
+    const parsed = TaskDeleteResponseSchema.safeParse(outcome.body);
+    if (!parsed.success || parsed.data.taskId !== taskId) {
+      return {
+        kind: "unknown",
+        reason: "Remote returned an invalid task-delete response",
+      };
+    }
+    return { kind: "deleted" };
   }
 
   async getJson(path: string): Promise<unknown> {

@@ -38,6 +38,7 @@ import { LinkApplyStore } from "./store/link-apply.ts";
 import { LinkOutboxStore } from "./store/link-outbox.ts";
 import { RemoteRelationsStore } from "./store/remote-relations.ts";
 import { TaskLifecycleStore } from "./store/task-lifecycle.ts";
+import type { TaskDeleteStoreOptions } from "./store/task-lifecycle.ts";
 
 /** Namespace WebAgent reserves for the per-task empty execution slot. */
 const EMPTY_EXECUTION_PREFIX = "no-execution:";
@@ -602,7 +603,11 @@ export class Store {
       this.linkOutbox,
       this.remoteRelations,
     );
-    this.taskLifecycle = new TaskLifecycleStore(internal);
+    this.taskLifecycle = new TaskLifecycleStore(
+      internal,
+      this.remoteRelations,
+      this.linkOutbox,
+    );
     try {
       this.db.pragma("journal_mode = WAL");
       this.db.pragma("foreign_keys = ON");
@@ -1900,10 +1905,7 @@ export class Store {
    * destructive, so it never retargets: if another exit already replaced that
    * Root, this refuses instead of deleting the Root that exit just created.
    */
-  replaceRoot(expectedRootId: string): {
-    rootTaskId: string;
-    affected: TaskDelete[];
-  } {
+  replaceRoot(expectedRootId: string, options?: TaskDeleteStoreOptions) {
     const oldId = this.rootTaskId;
     if (oldId !== expectedRootId) {
       throw new Error(`Root ${expectedRootId} was already replaced`);
@@ -1942,7 +1944,7 @@ export class Store {
           .prepare("UPDATE workspace SET root_task_id = ? WHERE id = 1")
           .run(newId);
         this.rootId = newId;
-        return this.taskLifecycle.deleteTaskInScope(oldId).affected;
+        return this.taskLifecycle.deleteTaskInScope(oldId, options).affected;
       });
       return { rootTaskId: newId, affected };
     } catch (error) {
@@ -1961,11 +1963,11 @@ export class Store {
    * naming the parent it came from. Children stay attached to it, so they need
    * no rows of their own.
    */
-  archiveTask(id: string): ArchiveTaskResult | undefined {
+  archiveTask(id: string) {
     return this.taskLifecycle.archiveTask(id);
   }
 
-  unarchiveTask(id: string): UnarchiveTaskResult {
+  unarchiveTask(id: string) {
     return this.taskLifecycle.unarchiveTask(id);
   }
 
@@ -1982,11 +1984,8 @@ export class Store {
    * execution bound at deletion time, so callers can retire executions,
    * clean up in-memory state, and broadcast `task_deleted` per id.
    */
-  deleteTask(id: string): {
-    mode: "hard" | "soft";
-    affected: TaskDelete[];
-  } {
-    return this.taskLifecycle.deleteTask(id);
+  deleteTask(id: string, options?: TaskDeleteStoreOptions) {
+    return this.taskLifecycle.deleteTask(id, options);
   }
 
   /**
