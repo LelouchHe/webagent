@@ -668,6 +668,19 @@ For a non-Root task, the response is `200`:
 { "taskId": "abc-123", "parentId": "4f0c8a52-3b1e-4d7a-9c2e-8b5d1f6a0e37" }
 ```
 
+**Remote children and host-scoped deletes.** When the deleted subtree has remote
+children, each remote child is deleted synchronously on its owner before the
+local commit (without holding SQLite transactions or tree locks across network
+waits). Only a validated `200` confirms a remote child; `4xx` rejections return
+`409` (`outcome: "rejected"`) and unknown network/timeout/`5xx` outcomes return
+`502` (`outcome: "unknown"`), preserving the local target and reporting any
+previously confirmed remote deletions. Confirmed `200` responses do not delete
+the hub's child link early; the owner's ordered `child_left` feed entry removes
+it. Host-scoped callers (`scope: "host"`) are authorized only for a local task
+whose external parent link matches the authenticated token name (`404`
+otherwise) and receive typed `4xx` rejection bodies (`{ error, code, failedTaskId? }`)
+when local or downstream deletion is rejected.
+
 The `parentId` is the parent of the requested task, not of every cascaded
 descendant. The optional `clientOpId` echoes the request's
 `X-Client-Op-Id` header so the initiating client can correlate the HTTP

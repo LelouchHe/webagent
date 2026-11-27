@@ -104,15 +104,25 @@ time. An entry without a "closing condition" is a wish, not an issue.
   terminates the process, and otherwise it leaves the pump idle until a
   subsequent wake. *Closing:* the adapter catches
   head-read errors and schedules a pump retry.
-- **Remote browser routing and remaining lifecycle commands are local-only.**
-  Rename, archive, and delete do not yet cross hosts, and the browser does not
-  address remote Task entries. *Closing:* implement the later host lifecycle
-  slices with matching authorization and restart semantics.
-- **An owner-side delete does not reach the hub proactively.** The hub observes
-  a deleted remote child on the next `task_list` / REST status read (404 →
-  `unreachable: true`) or when a dispatched message returns a `target_deleted`
-  receipt. *Closing:* the remote archive/delete rules step decides what each
-  side does with its link and forwards the deletion.
+- **Remote rename and browser task routing are not yet cross-host.** Rename is
+  still local-only and the browser does not yet address remote Task entries.
+  *Closing:* implement cross-host naming (E7) and browser routing slices.
+- **An offline owner blocks deleting its hub parent.** Deleting a hub task (or
+  exiting Root) synchronously deletes each remote child first; while an owner is
+  offline or unreachable, the delete fails and preserves the parent (analogous
+  to a busy local descendant blocking parent delete). *Closing:* future host
+  removal flow.
+- **A timed-out synchronous remote command may complete after the caller reports
+  an unknown result.** When a synchronous remote cancel or delete times out or
+  loses its response, the owner may still commit after the caller reports an
+  unknown outcome; no background retry or compensation runs. *Closing:* accepted
+  limit of synchronous network calls.
+- **Create-vs-delete/unarchive link-registration window.** If an owner deletes
+  or unarchives a newly created remote child after owner commit but before the
+  hub records the child link, the owner's `child_left` is a no-op on the hub and
+  the hub then records a stale child link; similarly, deleting a hub parent
+  while a remote create is in flight can miss the new child. *Closing:*
+  lifecycle-safe link creation.
 
 ## Permission and turn lifecycle
 

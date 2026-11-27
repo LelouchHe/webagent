@@ -683,12 +683,12 @@ Two rules follow from it:
 | # | Difference | Status |
 | --- | --- | --- |
 | E1 | A hub message not handed off within timeout T while no watch is online fails ("handoff not confirmed"); a persistently failing but online link does not time out. A remote child whose status read fails or whose watch is down shows as unreachable, distinct from finished. | Approved |
-| E2 | Results arrive with transport delay: receipts, reports, and notices travel through the peer's queue. | Approved |
+| E2 | Results and relation facts arrive with transport delay: receipts, reports, notices, and `child_left` entries travel through the peer's queue. | Approved |
 | E3 | A waiting P with any remote child counts as having a possible wake source. | Approved |
 | E5 | Remote reads return egress-rewritten data; text search reads the full history. | Approved |
 | E6 | Remote create does not start ACP; without `cwd` the owner's default applies, an explicit `cwd` is resolved by the owner. | Approved |
 | E7 | An external source or target shows the title recorded on the entry or link, or an id prefix; it does not follow later renames. | Temporary, closes with the cross-host naming convention |
-| E8 | Deleting P on the hub does not delete R1 on the owner. | Temporary, closes with synchronous remote delete |
+| E8 | Deleting P is a synchronous children-first command: if a remote child cannot be deleted, the delete fails and preserves P; it is not all-or-nothing, and remote children already confirmed deleted are not restored. | Approved |
 | E9 | R1's `task_list` has no entry for its external parent P, and reading P is refused; R1 may still `task_send` to P. | Approved |
 | E10 | Remote create requires an explicit agent and does not accept model or thinking overrides. | Approved |
 
@@ -706,7 +706,8 @@ Two rules follow from it:
 | Offline handoff timeout T | Yes, hub pusher (`limits.remote_delivery_timeout`, default 10 min) |
 | Restart and reconnect | Yes, from durable cursors; no full catch-up |
 | Remote cancel | Yes, synchronous request (agent `task_cancel` and user REST) |
-| Remote rename/archive/delete | No |
+| Remote delete, unarchive, and archive boundary | Yes, synchronous children-first DELETE (including Root exit and recursion), owner `relation(child_left)` feed entries on delete/unarchive, hub archive preserves live remote child edges and accepted queued inbound rows |
+| Remote rename | No |
 | Browser task routing | No |
 | Server-side search | No |
 
