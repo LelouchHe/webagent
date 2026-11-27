@@ -422,7 +422,7 @@
                   "method": "run",
                   "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
                   "args": [
-                    "546f5984-46e9-52d7-9827-8d650de63ac0",
+                    "9232ac44-e4e4-5a50-8e9a-b35107e387f4",
                     "/",
                     "agent",
                     "MCP remote child",
@@ -437,8 +437,8 @@
                   "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
                   "args": [
                     "owner-only",
-                    "no-execution:546f5984-46e9-52d7-9827-8d650de63ac0",
-                    "546f5984-46e9-52d7-9827-8d650de63ac0",
+                    "no-execution:9232ac44-e4e4-5a50-8e9a-b35107e387f4",
+                    "9232ac44-e4e4-5a50-8e9a-b35107e387f4",
                     1789333200000
                   ]
                 },
@@ -447,7 +447,7 @@
                   "method": "run",
                   "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', ?)",
                   "args": [
-                    "546f5984-46e9-52d7-9827-8d650de63ac0",
+                    "9232ac44-e4e4-5a50-8e9a-b35107e387f4",
                     "00000000-0000-4000-8001-000000000001",
                     "hub-connection"
                   ]
@@ -457,10 +457,10 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "546f5984-46e9-52d7-9827-8d650de63ac0",
+                    "9232ac44-e4e4-5a50-8e9a-b35107e387f4",
                     1,
                     "system_message",
-                    "{\"kind\":\"task_created\",\"taskId\":\"546f5984-46e9-52d7-9827-8d650de63ac0\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 546f5984-46e9-52d7-9827-8d650de63ac0\\nagent: owner-only\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "{\"kind\":\"task_created\",\"taskId\":\"9232ac44-e4e4-5a50-8e9a-b35107e387f4\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 9232ac44-e4e4-5a50-8e9a-b35107e387f4\\nagent: owner-only\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
                     "system",
                     1789333200000
                   ]
@@ -503,11 +503,11 @@
                   "kind": "task_created",
                   "messageId": "00000000-0000-4000-8001-000000000007",
                   "sourceTaskId": "00000000-0000-4000-8001-000000000001",
-                  "targetTaskId": "546f5984-46e9-52d7-9827-8d650de63ac0",
+                  "targetTaskId": "9232ac44-e4e4-5a50-8e9a-b35107e387f4",
                   "taskTitle": "MCP remote child",
                   "role": "source",
                   "title": "Created task @\"MCP remote child\"",
-                  "body": "Task ID: 546f5984-46e9-52d7-9827-8d650de63ac0\nagent: owner-only\nhost: owner\ncwd: /\nmodel: inherited\nthinking: inherited"
+                  "body": "Task ID: 9232ac44-e4e4-5a50-8e9a-b35107e387f4\nagent: owner-only\nhost: owner\ncwd: /\nmodel: inherited\nthinking: inherited"
                 },
                 {
                   "type": "state_patch",
@@ -614,7 +614,7 @@
                       "content": [
                         {
                           "type": "text",
-                          "text": "{\"taskId\":\"546f5984-46e9-52d7-9827-8d650de63ac0\"}"
+                          "text": "{\"taskId\":\"9232ac44-e4e4-5a50-8e9a-b35107e387f4\"}"
                         }
                       ]
                     },
@@ -687,7 +687,7 @@
                   "sql": "INSERT INTO remote_tasks\n           (local_task_id, remote_task_id, remote_role, remote_host)\n           VALUES (?, ?, 'child', ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
-                    "546f5984-46e9-52d7-9827-8d650de63ac0",
+                    "9232ac44-e4e4-5a50-8e9a-b35107e387f4",
                     "owner"
                   ]
                 },
@@ -699,7 +699,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     3,
                     "system_message",
-                    "{\"kind\":\"task_created\",\"taskId\":\"546f5984-46e9-52d7-9827-8d650de63ac0\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 546f5984-46e9-52d7-9827-8d650de63ac0\\nagent: owner-only\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "{\"kind\":\"task_created\",\"taskId\":\"9232ac44-e4e4-5a50-8e9a-b35107e387f4\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 9232ac44-e4e4-5a50-8e9a-b35107e387f4\\nagent: owner-only\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
                     "agent",
                     1789333200000
                   ]
@@ -737,7 +737,7 @@
             "source": "auto"
           },
           {
-            "id": "546f5984-46e9-52d7-9827-8d650de63ac0",
+            "id": "9232ac44-e4e4-5a50-8e9a-b35107e387f4",
             "parent_id": null,
             "source": "agent"
           }
@@ -757,7 +757,7 @@
             "remote_host": "hub-connection"
           },
           {
-            "local_task_id": "546f5984-46e9-52d7-9827-8d650de63ac0",
+            "local_task_id": "9232ac44-e4e4-5a50-8e9a-b35107e387f4",
             "remote_task_id": "00000000-0000-4000-8001-000000000001",
             "remote_role": "parent",
             "remote_host": "hub-connection"
@@ -772,7 +772,7 @@
           },
           {
             "local_task_id": "00000000-0000-4000-8001-000000000001",
-            "remote_task_id": "546f5984-46e9-52d7-9827-8d650de63ac0",
+            "remote_task_id": "9232ac44-e4e4-5a50-8e9a-b35107e387f4",
             "remote_role": "child",
             "remote_host": "owner"
           }
@@ -784,9 +784,9 @@
             "agent_session_id": "no-execution:00000000-0000-4000-8000-000000000002"
           },
           {
-            "task_id": "546f5984-46e9-52d7-9827-8d650de63ac0",
+            "task_id": "9232ac44-e4e4-5a50-8e9a-b35107e387f4",
             "agent_key": "owner-only",
-            "agent_session_id": "no-execution:546f5984-46e9-52d7-9827-8d650de63ac0"
+            "agent_session_id": "no-execution:9232ac44-e4e4-5a50-8e9a-b35107e387f4"
           }
         ],
         "ownerAnchors": [
@@ -796,7 +796,7 @@
             "kind": "task_created"
           },
           {
-            "task_id": "546f5984-46e9-52d7-9827-8d650de63ac0",
+            "task_id": "9232ac44-e4e4-5a50-8e9a-b35107e387f4",
             "type": "system_message",
             "kind": "task_created"
           }
@@ -832,7 +832,7 @@
                 }
               ]
             ],
-            "reads": 47
+            "reads": 46
           }
         },
         {
@@ -864,7 +864,7 @@
                 }
               ]
             ],
-            "reads": 55
+            "reads": 54
           }
         }
       ]
@@ -906,7 +906,7 @@
             "last_active_at": 1789333200000
           },
           {
-            "id": "546f5984-46e9-52d7-9827-8d650de63ac0",
+            "id": "9232ac44-e4e4-5a50-8e9a-b35107e387f4",
             "cwd": "/",
             "title": "MCP remote child",
             "workflow_status": "idle",
@@ -930,8 +930,8 @@
           },
           {
             "agent_key": "owner-only",
-            "agent_session_id": "no-execution:546f5984-46e9-52d7-9827-8d650de63ac0",
-            "task_id": "546f5984-46e9-52d7-9827-8d650de63ac0",
+            "agent_session_id": "no-execution:9232ac44-e4e4-5a50-8e9a-b35107e387f4",
+            "task_id": "9232ac44-e4e4-5a50-8e9a-b35107e387f4",
             "created_at": 1789333200000
           }
         ],
@@ -947,10 +947,10 @@
           },
           {
             "id": 2,
-            "task_id": "546f5984-46e9-52d7-9827-8d650de63ac0",
+            "task_id": "9232ac44-e4e4-5a50-8e9a-b35107e387f4",
             "seq": 1,
             "type": "system_message",
-            "data": "{\"kind\":\"task_created\",\"taskId\":\"546f5984-46e9-52d7-9827-8d650de63ac0\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 546f5984-46e9-52d7-9827-8d650de63ac0\\nagent: owner-only\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+            "data": "{\"kind\":\"task_created\",\"taskId\":\"9232ac44-e4e4-5a50-8e9a-b35107e387f4\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 9232ac44-e4e4-5a50-8e9a-b35107e387f4\\nagent: owner-only\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
             "created_at": 1789333200000,
             "from_ref": "system"
           }
@@ -958,7 +958,6 @@
         "messages": [],
         "message_projections": [],
         "deliveries": [],
-        "client_ops": [],
         "recent_paths": []
       }
     },
@@ -1014,7 +1013,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 3,
             "type": "system_message",
-            "data": "{\"kind\":\"task_created\",\"taskId\":\"546f5984-46e9-52d7-9827-8d650de63ac0\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 546f5984-46e9-52d7-9827-8d650de63ac0\\nagent: owner-only\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+            "data": "{\"kind\":\"task_created\",\"taskId\":\"9232ac44-e4e4-5a50-8e9a-b35107e387f4\",\"taskTitle\":\"MCP remote child\",\"agentId\":\"owner-only\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"MCP remote child\\\"\",\"body\":\"Task ID: 9232ac44-e4e4-5a50-8e9a-b35107e387f4\\nagent: owner-only\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
             "created_at": 1789333200000,
             "from_ref": "agent"
           },
@@ -1040,7 +1039,6 @@
         "messages": [],
         "message_projections": [],
         "deliveries": [],
-        "client_ops": [],
         "recent_paths": [
           {
             "cwd": "/",

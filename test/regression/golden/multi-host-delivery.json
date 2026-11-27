@@ -424,107 +424,7 @@
                   "method": "run",
                   "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
                   "args": [
-                    "28f757e0-b819-5499-999e-f97b708b43b6",
-                    "/",
-                    "agent",
-                    "Parent Two Child",
-                    "idle",
-                    1789333200000,
-                    1789333200000
-                  ]
-                },
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
-                  "args": [
-                    "mock",
-                    "no-execution:28f757e0-b819-5499-999e-f97b708b43b6",
-                    "28f757e0-b819-5499-999e-f97b708b43b6",
-                    1789333200000
-                  ]
-                },
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', ?)",
-                  "args": [
-                    "28f757e0-b819-5499-999e-f97b708b43b6",
-                    "00000000-0000-4000-8001-000000000004",
-                    "hub-connection"
-                  ]
-                },
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "28f757e0-b819-5499-999e-f97b708b43b6",
-                    1,
-                    "system_message",
-                    "{\"kind\":\"task_created\",\"taskId\":\"28f757e0-b819-5499-999e-f97b708b43b6\",\"taskTitle\":\"Parent Two Child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Parent Two Child\\\"\",\"body\":\"Task ID: 28f757e0-b819-5499-999e-f97b708b43b6\\nagent: mock\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
-                    "system",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
-                  "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    "/",
-                    "agent",
-                    "Delivery Child",
-                    "idle",
-                    1789333200000,
-                    1789333200000
-                  ]
-                },
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
-                  "args": [
-                    "mock",
-                    "no-execution:68982ec8-1159-5422-9468-8588310c17c6",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    1789333200000
-                  ]
-                },
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', ?)",
-                  "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    "00000000-0000-4000-8001-000000000001",
-                    "hub-connection"
-                  ]
-                },
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    1,
-                    "system_message",
-                    "{\"kind\":\"task_created\",\"taskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"taskTitle\":\"Delivery Child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Delivery Child\\\"\",\"body\":\"Task ID: 68982ec8-1159-5422-9468-8588310c17c6\\nagent: mock\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
-                    "system",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
-                  "args": [
-                    "86389345-a747-575c-98be-f12482093157",
+                    "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
                     "/",
                     "agent",
                     "Removable Child",
@@ -539,8 +439,8 @@
                   "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
                   "args": [
                     "mock",
-                    "no-execution:86389345-a747-575c-98be-f12482093157",
-                    "86389345-a747-575c-98be-f12482093157",
+                    "no-execution:43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
+                    "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
                     1789333200000
                   ]
                 },
@@ -549,7 +449,7 @@
                   "method": "run",
                   "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', ?)",
                   "args": [
-                    "86389345-a747-575c-98be-f12482093157",
+                    "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
                     "00000000-0000-4000-8001-000000000001",
                     "hub-connection"
                   ]
@@ -559,10 +459,110 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "86389345-a747-575c-98be-f12482093157",
+                    "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
                     1,
                     "system_message",
-                    "{\"kind\":\"task_created\",\"taskId\":\"86389345-a747-575c-98be-f12482093157\",\"taskTitle\":\"Removable Child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Removable Child\\\"\",\"body\":\"Task ID: 86389345-a747-575c-98be-f12482093157\\nagent: mock\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "{\"kind\":\"task_created\",\"taskId\":\"43007fd3-fd4b-515c-9c0d-f7a510d4cf5b\",\"taskTitle\":\"Removable Child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Removable Child\\\"\",\"body\":\"Task ID: 43007fd3-fd4b-515c-9c0d-f7a510d4cf5b\\nagent: mock\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "system",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
+                  "args": [
+                    "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
+                    "/",
+                    "agent",
+                    "Parent Two Child",
+                    "idle",
+                    1789333200000,
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "mock",
+                    "no-execution:4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
+                    "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', ?)",
+                  "args": [
+                    "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
+                    "00000000-0000-4000-8001-000000000004",
+                    "hub-connection"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
+                    1,
+                    "system_message",
+                    "{\"kind\":\"task_created\",\"taskId\":\"4838dfa0-46fb-5a2e-bb5a-1498befd7d04\",\"taskTitle\":\"Parent Two Child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Parent Two Child\\\"\",\"body\":\"Task ID: 4838dfa0-46fb-5a2e-bb5a-1498befd7d04\\nagent: mock\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "system",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, NULL, ?, ?, ?, ?)",
+                  "args": [
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+                    "/",
+                    "agent",
+                    "Delivery Child",
+                    "idle",
+                    1789333200000,
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO agent_sessions (agent_key, agent_session_id, task_id, created_at) VALUES (?, ?, ?, ?)",
+                  "args": [
+                    "mock",
+                    "no-execution:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+                    1789333200000
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO remote_tasks\n             (local_task_id, remote_task_id, remote_role, remote_host)\n             VALUES (?, ?, 'parent', ?)",
+                  "args": [
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+                    "00000000-0000-4000-8001-000000000001",
+                    "hub-connection"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+                    1,
+                    "system_message",
+                    "{\"kind\":\"task_created\",\"taskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"taskTitle\":\"Delivery Child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Delivery Child\\\"\",\"body\":\"Task ID: f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\\nagent: mock\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
                     "system",
                     1789333200000
                   ]
@@ -605,11 +605,11 @@
                   "kind": "task_created",
                   "messageId": "00000000-0000-4000-8001-000000000008",
                   "sourceTaskId": "00000000-0000-4000-8001-000000000001",
-                  "targetTaskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "targetTaskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "taskTitle": "Delivery Child",
                   "role": "source",
                   "title": "Created task @\"Delivery Child\"",
-                  "body": "Task ID: 68982ec8-1159-5422-9468-8588310c17c6\nagent: mock\nhost: owner\ncwd: /\nmodel: inherited\nthinking: inherited"
+                  "body": "Task ID: f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\nagent: mock\nhost: owner\ncwd: /\nmodel: inherited\nthinking: inherited"
                 },
                 {
                   "type": "system_message",
@@ -617,11 +617,11 @@
                   "kind": "task_created",
                   "messageId": "00000000-0000-4000-8001-00000000000a",
                   "sourceTaskId": "00000000-0000-4000-8001-000000000001",
-                  "targetTaskId": "86389345-a747-575c-98be-f12482093157",
+                  "targetTaskId": "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
                   "taskTitle": "Removable Child",
                   "role": "source",
                   "title": "Created task @\"Removable Child\"",
-                  "body": "Task ID: 86389345-a747-575c-98be-f12482093157\nagent: mock\nhost: owner\ncwd: /\nmodel: inherited\nthinking: inherited"
+                  "body": "Task ID: 43007fd3-fd4b-515c-9c0d-f7a510d4cf5b\nagent: mock\nhost: owner\ncwd: /\nmodel: inherited\nthinking: inherited"
                 },
                 {
                   "type": "state_patch",
@@ -702,11 +702,11 @@
                   "kind": "task_created",
                   "messageId": "00000000-0000-4000-8001-00000000000d",
                   "sourceTaskId": "00000000-0000-4000-8001-000000000004",
-                  "targetTaskId": "28f757e0-b819-5499-999e-f97b708b43b6",
+                  "targetTaskId": "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                   "taskTitle": "Parent Two Child",
                   "role": "source",
                   "title": "Created task @\"Parent Two Child\"",
-                  "body": "Task ID: 28f757e0-b819-5499-999e-f97b708b43b6\nagent: mock\nhost: owner\ncwd: /\nmodel: inherited\nthinking: inherited"
+                  "body": "Task ID: 4838dfa0-46fb-5a2e-bb5a-1498befd7d04\nagent: mock\nhost: owner\ncwd: /\nmodel: inherited\nthinking: inherited"
                 },
                 {
                   "type": "state_patch",
@@ -813,7 +813,7 @@
                       "content": [
                         {
                           "type": "text",
-                          "text": "{\"taskId\":\"68982ec8-1159-5422-9468-8588310c17c6\"}"
+                          "text": "{\"taskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\"}"
                         }
                       ]
                     },
@@ -836,7 +836,7 @@
                       "content": [
                         {
                           "type": "text",
-                          "text": "{\"taskId\":\"86389345-a747-575c-98be-f12482093157\"}"
+                          "text": "{\"taskId\":\"43007fd3-fd4b-515c-9c0d-f7a510d4cf5b\"}"
                         }
                       ]
                     },
@@ -900,7 +900,7 @@
                       "content": [
                         {
                           "type": "text",
-                          "text": "{\"taskId\":\"28f757e0-b819-5499-999e-f97b708b43b6\"}"
+                          "text": "{\"taskId\":\"4838dfa0-46fb-5a2e-bb5a-1498befd7d04\"}"
                         }
                       ]
                     },
@@ -1026,32 +1026,7 @@
                   "sql": "INSERT INTO remote_tasks\n           (local_task_id, remote_task_id, remote_role, remote_host)\n           VALUES (?, ?, 'child', ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000001",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    "owner"
-                  ]
-                },
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-000000000001",
-                    3,
-                    "system_message",
-                    "{\"kind\":\"task_created\",\"taskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"taskTitle\":\"Delivery Child\",\"agentId\":\"mock\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Delivery Child\\\"\",\"body\":\"Task ID: 68982ec8-1159-5422-9468-8588310c17c6\\nagent: mock\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
-                    "agent",
-                    1789333200000
-                  ]
-                }
-              ],
-              [
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "INSERT INTO remote_tasks\n           (local_task_id, remote_task_id, remote_role, remote_host)\n           VALUES (?, ?, 'child', ?)",
-                  "args": [
-                    "00000000-0000-4000-8001-000000000001",
-                    "86389345-a747-575c-98be-f12482093157",
+                    "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
                     "owner"
                   ]
                 },
@@ -1063,7 +1038,32 @@
                     "00000000-0000-4000-8001-000000000001",
                     4,
                     "system_message",
-                    "{\"kind\":\"task_created\",\"taskId\":\"86389345-a747-575c-98be-f12482093157\",\"taskTitle\":\"Removable Child\",\"agentId\":\"mock\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Removable Child\\\"\",\"body\":\"Task ID: 86389345-a747-575c-98be-f12482093157\\nagent: mock\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "{\"kind\":\"task_created\",\"taskId\":\"43007fd3-fd4b-515c-9c0d-f7a510d4cf5b\",\"taskTitle\":\"Removable Child\",\"agentId\":\"mock\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Removable Child\\\"\",\"body\":\"Task ID: 43007fd3-fd4b-515c-9c0d-f7a510d4cf5b\\nagent: mock\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "agent",
+                    1789333200000
+                  ]
+                }
+              ],
+              [
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO remote_tasks\n           (local_task_id, remote_task_id, remote_role, remote_host)\n           VALUES (?, ?, 'child', ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+                    "owner"
+                  ]
+                },
+                {
+                  "kind": "write",
+                  "method": "run",
+                  "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                  "args": [
+                    "00000000-0000-4000-8001-000000000001",
+                    3,
+                    "system_message",
+                    "{\"kind\":\"task_created\",\"taskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"taskTitle\":\"Delivery Child\",\"agentId\":\"mock\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Delivery Child\\\"\",\"body\":\"Task ID: f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\\nagent: mock\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
                     "agent",
                     1789333200000
                   ]
@@ -1076,7 +1076,7 @@
                   "sql": "INSERT INTO remote_tasks\n           (local_task_id, remote_task_id, remote_role, remote_host)\n           VALUES (?, ?, 'child', ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000004",
-                    "28f757e0-b819-5499-999e-f97b708b43b6",
+                    "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                     "owner"
                   ]
                 },
@@ -1088,7 +1088,7 @@
                     "00000000-0000-4000-8001-000000000004",
                     2,
                     "system_message",
-                    "{\"kind\":\"task_created\",\"taskId\":\"28f757e0-b819-5499-999e-f97b708b43b6\",\"taskTitle\":\"Parent Two Child\",\"agentId\":\"mock\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Parent Two Child\\\"\",\"body\":\"Task ID: 28f757e0-b819-5499-999e-f97b708b43b6\\nagent: mock\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+                    "{\"kind\":\"task_created\",\"taskId\":\"4838dfa0-46fb-5a2e-bb5a-1498befd7d04\",\"taskTitle\":\"Parent Two Child\",\"agentId\":\"mock\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Parent Two Child\\\"\",\"body\":\"Task ID: 4838dfa0-46fb-5a2e-bb5a-1498befd7d04\\nagent: mock\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
                     "agent",
                     1789333200000
                   ]
@@ -1144,11 +1144,11 @@
           "name": "owner",
           "sse": [
             {
-              "taskId": "86389345-a747-575c-98be-f12482093157",
+              "taskId": "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
               "events": [
                 {
                   "type": "task_deleted",
-                  "taskId": "86389345-a747-575c-98be-f12482093157",
+                  "taskId": "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
                   "agentId": "mock",
                   "parentId": null
                 }
@@ -1163,13 +1163,7 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "DELETE FROM shares WHERE task_id = ? AND shared_at IS NULL",
-                  "args": ["86389345-a747-575c-98be-f12482093157"]
-                },
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "DELETE FROM client_ops WHERE task_id = ?",
-                  "args": ["86389345-a747-575c-98be-f12482093157"]
+                  "args": ["43007fd3-fd4b-515c-9c0d-f7a510d4cf5b"]
                 },
                 {
                   "kind": "write",
@@ -1181,7 +1175,7 @@
                     "hub-connection",
                     0,
                     "relation",
-                    "{\"kind\":\"child_left\",\"parentTaskId\":\"00000000-0000-4000-8001-000000000001\",\"childTaskId\":\"86389345-a747-575c-98be-f12482093157\",\"accountOpen\":false}",
+                    "{\"kind\":\"child_left\",\"parentTaskId\":\"00000000-0000-4000-8001-000000000001\",\"childTaskId\":\"43007fd3-fd4b-515c-9c0d-f7a510d4cf5b\",\"accountOpen\":false}",
                     null,
                     1789333200000
                   ]
@@ -1190,13 +1184,13 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "DELETE FROM events WHERE task_id = ?",
-                  "args": ["86389345-a747-575c-98be-f12482093157"]
+                  "args": ["43007fd3-fd4b-515c-9c0d-f7a510d4cf5b"]
                 },
                 {
                   "kind": "write",
                   "method": "run",
                   "sql": "DELETE FROM tasks WHERE id = ?",
-                  "args": ["86389345-a747-575c-98be-f12482093157"]
+                  "args": ["43007fd3-fd4b-515c-9c0d-f7a510d4cf5b"]
                 }
               ],
               [
@@ -1207,7 +1201,7 @@
                   "args": [
                     "00000000-0000-4000-8001-00000000000f",
                     "00000000-0000-4000-8001-000000000001",
-                    "86389345-a747-575c-98be-f12482093157",
+                    "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
                     "agent",
                     "hello deleted child",
                     1789333200000
@@ -1220,8 +1214,8 @@
                   "args": [
                     "00000000-0000-4000-8001-00000000000f",
                     "00000000-0000-4000-8001-00000000000f",
-                    "86389345-a747-575c-98be-f12482093157",
-                    "00000000-0000-4000-8001-00000000000f:86389345-a747-575c-98be-f12482093157",
+                    "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
+                    "00000000-0000-4000-8001-00000000000f:43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
                     "failed",
                     1789333200000,
                     null,
@@ -1288,7 +1282,7 @@
                   "messageId": "00000000-0000-4000-8001-00000000000f",
                   "sourceTaskId": "00000000-0000-4000-8001-000000000001",
                   "sourceLabel": "root",
-                  "targetTaskId": "86389345-a747-575c-98be-f12482093157",
+                  "targetTaskId": "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
                   "targetLabel": "Removable Child",
                   "role": "source",
                   "title": "@root sent @\"Removable Child\"",
@@ -1373,7 +1367,7 @@
                   "targetLabel": "root",
                   "role": "target",
                   "title": "Task handoff notice",
-                  "body": "target: Removable Child (86389345-a747-575c-98be-f12482093157)\nmessage: A message to the target was not delivered (target_deleted)."
+                  "body": "target: Removable Child (43007fd3-fd4b-515c-9c0d-f7a510d4cf5b)\nmessage: A message to the target was not delivered (target_deleted)."
                 },
                 {
                   "type": "state_patch",
@@ -1470,7 +1464,7 @@
                   "sessionId": "00000000-0000-4000-8001-000000000001",
                   "tool": "task_send",
                   "arguments": {
-                    "target": "86389345-a747-575c-98be-f12482093157",
+                    "target": "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
                     "body": "hello deleted child"
                   },
                   "status": 200,
@@ -1491,7 +1485,7 @@
                   "kind": "acp",
                   "method": "session/prompt",
                   "sessionId": "00000000-0000-4000-8001-000000000001",
-                  "text": "Runtime message:\n---8<---\ntarget: Removable Child (86389345-a747-575c-98be-f12482093157)\nmessage: A message to the target was not delivered (target_deleted).\n---8<---"
+                  "text": "Runtime message:\n---8<---\ntarget: Removable Child (43007fd3-fd4b-515c-9c0d-f7a510d4cf5b)\nmessage: A message to the target was not delivered (target_deleted).\n---8<---"
                 }
               ]
             }
@@ -1514,7 +1508,7 @@
                   "args": [
                     "owner",
                     "00000000-0000-4000-8001-000000000001",
-                    "86389345-a747-575c-98be-f12482093157"
+                    "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b"
                   ]
                 },
                 {
@@ -1548,7 +1542,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     12,
                     "system_message",
-                    "{\"kind\":\"task_outcome_notice\",\"messageId\":\"00000000-0000-4000-8001-000000000011\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"Task handoff notice\",\"body\":\"target: Removable Child (86389345-a747-575c-98be-f12482093157)\\nmessage: A message to the target was not delivered (target_deleted).\"}",
+                    "{\"kind\":\"task_outcome_notice\",\"messageId\":\"00000000-0000-4000-8001-000000000011\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"Task handoff notice\",\"body\":\"target: Removable Child (43007fd3-fd4b-515c-9c0d-f7a510d4cf5b)\\nmessage: A message to the target was not delivered (target_deleted).\"}",
                     "msg:00000000-0000-4000-8001-000000000011",
                     1789333200000
                   ]
@@ -1563,7 +1557,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     13,
                     "collaboration_prompt",
-                    "{\"messageIds\":[\"00000000-0000-4000-8001-000000000011\"],\"text\":\"Runtime message:\\n---8<---\\ntarget: Removable Child (86389345-a747-575c-98be-f12482093157)\\nmessage: A message to the target was not delivered (target_deleted).\\n---8<---\",\"truncated\":false,\"rawSize\":166}",
+                    "{\"messageIds\":[\"00000000-0000-4000-8001-000000000011\"],\"text\":\"Runtime message:\\n---8<---\\ntarget: Removable Child (43007fd3-fd4b-515c-9c0d-f7a510d4cf5b)\\nmessage: A message to the target was not delivered (target_deleted).\\n---8<---\",\"truncated\":false,\"rawSize\":166}",
                     "system",
                     1789333200000
                   ]
@@ -1637,7 +1631,7 @@
                   "args": [
                     "00000000-0000-4000-8001-00000000000f",
                     "00000000-0000-4000-8001-000000000001",
-                    "86389345-a747-575c-98be-f12482093157",
+                    "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
                     "agent",
                     "hello deleted child",
                     1789333200000
@@ -1661,8 +1655,8 @@
                   "args": [
                     "00000000-0000-4000-8001-000000000010",
                     "00000000-0000-4000-8001-00000000000f",
-                    "86389345-a747-575c-98be-f12482093157",
-                    "00000000-0000-4000-8001-00000000000f:86389345-a747-575c-98be-f12482093157",
+                    "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
+                    "00000000-0000-4000-8001-00000000000f:43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
                     "queued",
                     1789333200000,
                     null,
@@ -1683,7 +1677,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     8,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000000f\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"86389345-a747-575c-98be-f12482093157\",\"targetLabel\":\"Removable Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Removable Child\\\"\",\"body\":\"hello deleted child\",\"deliveryStatus\":\"queued\"}",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000000f\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"43007fd3-fd4b-515c-9c0d-f7a510d4cf5b\",\"targetLabel\":\"Removable Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Removable Child\\\"\",\"body\":\"hello deleted child\",\"deliveryStatus\":\"queued\"}",
                     "msg:00000000-0000-4000-8001-00000000000f",
                     1789333200000
                   ]
@@ -1698,7 +1692,7 @@
                     "owner",
                     0,
                     "message",
-                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"86389345-a747-575c-98be-f12482093157\",\"sourceLabel\":\"root\",\"body\":\"hello deleted child\"}",
+                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"43007fd3-fd4b-515c-9c0d-f7a510d4cf5b\",\"sourceLabel\":\"root\",\"body\":\"hello deleted child\"}",
                     "00000000-0000-4000-8001-000000000010",
                     1789333200000
                   ]
@@ -1744,7 +1738,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     11,
                     "task_outcome_notice",
-                    "{\"messageId\":\"00000000-0000-4000-8001-000000000011\",\"reason\":\"target_removed\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"86389345-a747-575c-98be-f12482093157\",\"message\":\"A message to the target was not delivered (target_deleted).\"}",
+                    "{\"messageId\":\"00000000-0000-4000-8001-000000000011\",\"reason\":\"target_removed\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"43007fd3-fd4b-515c-9c0d-f7a510d4cf5b\",\"message\":\"A message to the target was not delivered (target_deleted).\"}",
                     "system",
                     1789333200000
                   ]
@@ -1755,10 +1749,10 @@
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000011",
-                    "86389345-a747-575c-98be-f12482093157",
+                    "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
                     "00000000-0000-4000-8001-000000000001",
                     "system",
-                    "target: Removable Child (86389345-a747-575c-98be-f12482093157)\nmessage: A message to the target was not delivered (target_deleted).",
+                    "target: Removable Child (43007fd3-fd4b-515c-9c0d-f7a510d4cf5b)\nmessage: A message to the target was not delivered (target_deleted).",
                     1789333200000
                   ]
                 },
@@ -1881,11 +1875,11 @@
               ]
             },
             {
-              "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+              "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
               "events": [
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 1,
                   "patch": {
                     "runtime": {
@@ -1900,12 +1894,12 @@
                 },
                 {
                   "type": "system_message",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "kind": "collaboration",
                   "messageId": "00000000-0000-4000-8001-000000000014",
                   "sourceTaskId": "00000000-0000-4000-8001-000000000001",
                   "sourceLabel": "root",
-                  "targetTaskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "targetTaskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "targetLabel": "Delivery Child",
                   "role": "target",
                   "title": "@root sent @\"Delivery Child\"",
@@ -1913,10 +1907,10 @@
                 },
                 {
                   "type": "system_message",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "kind": "collaboration",
                   "messageId": "00000000-0000-4000-8000-000000000007",
-                  "sourceTaskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "sourceTaskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "sourceLabel": "Delivery Child",
                   "targetTaskId": "00000000-0000-4000-8001-000000000001",
                   "targetLabel": "root",
@@ -1927,7 +1921,7 @@
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 2,
                   "patch": {
                     "runtime": {
@@ -1940,12 +1934,12 @@
                 },
                 {
                   "type": "message_chunk",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "text": "Sent ordinary message."
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 3,
                   "patch": {
                     "runtime": {
@@ -1955,7 +1949,7 @@
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 4,
                   "patch": {
                     "runtime": {
@@ -1968,20 +1962,20 @@
                 },
                 {
                   "type": "prompt_done",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "stopReason": "end_turn",
                   "promptId": "prompt-1"
                 },
                 {
                   "type": "collaboration_delivery",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "messageId": "00000000-0000-4000-8000-000000000007",
                   "status": "delivered",
                   "deliveredAt": "2026-09-13T21:00:00.000Z"
                 },
                 {
                   "type": "collaboration_delivery",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "messageId": "00000000-0000-4000-8000-000000000009",
                   "status": "delivered",
                   "deliveredAt": "2026-09-13T21:00:00.000Z"
@@ -2144,10 +2138,10 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     2,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000014\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetLabel\":\"Delivery Child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"send ordinary message to parent\"}",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000014\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetLabel\":\"Delivery Child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"send ordinary message to parent\"}",
                     "msg:00000000-0000-4000-8001-000000000014",
                     1789333200000
                   ]
@@ -2159,7 +2153,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     3,
                     "collaboration_prompt",
                     "{\"messageIds\":[\"00000000-0000-4000-8001-000000000014\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8001-000000000001):\\n---8<---\\nsend ordinary message to parent\\n---8<---\",\"truncated\":false,\"rawSize\":109}",
@@ -2174,7 +2168,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     6,
                     "assistant_message",
                     "{\"text\":\"Sent ordinary message.\"}",
@@ -2189,7 +2183,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     7,
                     "prompt_done",
                     "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
@@ -2205,7 +2199,7 @@
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000007",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "00000000-0000-4000-8001-000000000001",
                     "agent",
                     "ordinary hello from child",
@@ -2218,7 +2212,7 @@
                   "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000007",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "source",
                     1789333200000
                   ]
@@ -2249,10 +2243,10 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     4,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"sourceLabel\":\"Delivery Child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Delivery Child\\\" sent @root\",\"body\":\"ordinary hello from child\",\"deliveryStatus\":\"queued\"}",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"sourceLabel\":\"Delivery Child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Delivery Child\\\" sent @root\",\"body\":\"ordinary hello from child\",\"deliveryStatus\":\"queued\"}",
                     "msg:00000000-0000-4000-8000-000000000007",
                     1789333200000
                   ]
@@ -2267,7 +2261,7 @@
                     "hub-connection",
                     3,
                     "message",
-                    "{\"sourceTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"Delivery Child\",\"body\":\"ordinary hello from child\"}",
+                    "{\"sourceTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"Delivery Child\",\"body\":\"ordinary hello from child\"}",
                     "00000000-0000-4000-8000-000000000008",
                     1789333200000
                   ]
@@ -2281,7 +2275,7 @@
                   "args": [
                     "00000000-0000-4000-8001-000000000014",
                     "00000000-0000-4000-8001-000000000001",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "agent",
                     "send ordinary message to parent",
                     1789333200000
@@ -2293,7 +2287,7 @@
                   "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000014",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "target",
                     1789333200000
                   ]
@@ -2305,8 +2299,8 @@
                   "args": [
                     "00000000-0000-4000-8001-000000000014",
                     "00000000-0000-4000-8001-000000000014",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    "00000000-0000-4000-8001-000000000014:68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+                    "00000000-0000-4000-8001-000000000014:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "queued",
                     1789333200000,
                     null,
@@ -2388,13 +2382,13 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET cwd = ? WHERE id = ?",
-                  "args": ["/", "68982ec8-1159-5422-9468-8588310c17c6"]
+                  "args": ["/", "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"]
                 },
                 {
                   "kind": "write",
                   "method": "run",
                   "sql": "DELETE FROM agent_sessions WHERE task_id = ?",
-                  "args": ["68982ec8-1159-5422-9468-8588310c17c6"]
+                  "args": ["f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"]
                 },
                 {
                   "kind": "write",
@@ -2403,7 +2397,7 @@
                   "args": [
                     "mock",
                     "00000000-0000-4000-8000-000000000001",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     1789333200000
                   ]
                 }
@@ -2413,7 +2407,7 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-                  "args": ["agent", "68982ec8-1159-5422-9468-8588310c17c6"]
+                  "args": ["agent", "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"]
                 }
               ],
               [
@@ -2421,7 +2415,7 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET model = ? WHERE id = ?",
-                  "args": ["mock-model", "68982ec8-1159-5422-9468-8588310c17c6"]
+                  "args": ["mock-model", "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"]
                 }
               ],
               [
@@ -2429,7 +2423,7 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-                  "args": ["medium", "68982ec8-1159-5422-9468-8588310c17c6"]
+                  "args": ["medium", "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"]
                 }
               ],
               [
@@ -2437,17 +2431,17 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-                  "args": ["done", "68982ec8-1159-5422-9468-8588310c17c6"]
+                  "args": ["done", "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"]
                 },
                 {
                   "kind": "write",
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     5,
                     "task_update",
-                    "{\"status\":\"done\",\"body\":\"Ordinary message sent.\",\"reason\":\"settled\",\"sourceTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\"}",
+                    "{\"status\":\"done\",\"body\":\"Ordinary message sent.\",\"reason\":\"settled\",\"sourceTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\"}",
                     "agent",
                     1789333200000
                   ]
@@ -2458,7 +2452,7 @@
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000009",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "00000000-0000-4000-8001-000000000001",
                     "agent",
                     "Task status: done\nOrdinary message sent.",
@@ -2471,7 +2465,7 @@
                   "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000009",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "source",
                     1789333200000
                   ]
@@ -2507,7 +2501,7 @@
                     "hub-connection",
                     4,
                     "report",
-                    "{\"sourceTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"Delivery Child\",\"body\":\"Task status: done\\nOrdinary message sent.\"}",
+                    "{\"sourceTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"Delivery Child\",\"body\":\"Task status: done\\nOrdinary message sent.\"}",
                     "00000000-0000-4000-8000-00000000000a",
                     1789333200000
                   ]
@@ -2518,7 +2512,7 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-                  "args": ["running", "68982ec8-1159-5422-9468-8588310c17c6"]
+                  "args": ["running", "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"]
                 }
               ]
             ],
@@ -2559,7 +2553,7 @@
                   "messageId": "00000000-0000-4000-8001-000000000014",
                   "sourceTaskId": "00000000-0000-4000-8001-000000000001",
                   "sourceLabel": "root",
-                  "targetTaskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "targetTaskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "targetLabel": "Delivery Child",
                   "role": "source",
                   "title": "@root sent @\"Delivery Child\"",
@@ -2640,7 +2634,7 @@
                   "taskId": "00000000-0000-4000-8001-000000000001",
                   "kind": "collaboration",
                   "messageId": "00000000-0000-4000-8000-000000000007",
-                  "sourceTaskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "sourceTaskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "sourceLabel": "Delivery Child",
                   "targetTaskId": "00000000-0000-4000-8001-000000000001",
                   "targetLabel": "root",
@@ -2715,7 +2709,7 @@
                   "taskId": "00000000-0000-4000-8001-000000000001",
                   "kind": "collaboration",
                   "messageId": "00000000-0000-4000-8000-000000000009",
-                  "sourceTaskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "sourceTaskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "sourceLabel": "Delivery Child",
                   "targetTaskId": "00000000-0000-4000-8001-000000000001",
                   "targetLabel": "root",
@@ -2773,18 +2767,18 @@
               ]
             },
             {
-              "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+              "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
               "events": [
                 {
                   "type": "collaboration_delivery",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "messageId": "00000000-0000-4000-8000-000000000007",
                   "status": "delivered",
                   "deliveredAt": "2026-09-13T21:00:00.000Z"
                 },
                 {
                   "type": "collaboration_delivery",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "messageId": "00000000-0000-4000-8000-000000000009",
                   "status": "delivered",
                   "deliveredAt": "2026-09-13T21:00:00.000Z"
@@ -2837,7 +2831,7 @@
                   "sessionId": "00000000-0000-4000-8001-000000000001",
                   "tool": "task_send",
                   "arguments": {
-                    "target": "68982ec8-1159-5422-9468-8588310c17c6",
+                    "target": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "body": "send ordinary message to parent"
                   },
                   "status": 200,
@@ -2858,13 +2852,13 @@
                   "kind": "acp",
                   "method": "session/prompt",
                   "sessionId": "00000000-0000-4000-8001-000000000001",
-                  "text": "From \"Delivery Child\" (task id 68982ec8-1159-5422-9468-8588310c17c6):\n---8<---\nordinary hello from child\n---8<---"
+                  "text": "From \"Delivery Child\" (task id f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee):\n---8<---\nordinary hello from child\n---8<---"
                 },
                 {
                   "kind": "acp",
                   "method": "session/prompt",
                   "sessionId": "00000000-0000-4000-8001-000000000001",
-                  "text": "From \"Delivery Child\" (task id 68982ec8-1159-5422-9468-8588310c17c6):\n---8<---\nTask status: done\nOrdinary message sent.\n---8<---"
+                  "text": "From \"Delivery Child\" (task id f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee):\n---8<---\nTask status: done\nOrdinary message sent.\n---8<---"
                 }
               ]
             }
@@ -2949,7 +2943,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     20,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"sourceLabel\":\"Delivery Child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Delivery Child\\\" sent @root\",\"body\":\"ordinary hello from child\"}",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"sourceLabel\":\"Delivery Child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Delivery Child\\\" sent @root\",\"body\":\"ordinary hello from child\"}",
                     "msg:00000000-0000-4000-8000-000000000007",
                     1789333200000
                   ]
@@ -2964,7 +2958,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     21,
                     "collaboration_prompt",
-                    "{\"messageIds\":[\"00000000-0000-4000-8000-000000000007\"],\"text\":\"From \\\"Delivery Child\\\" (task id 68982ec8-1159-5422-9468-8588310c17c6):\\n---8<---\\nordinary hello from child\\n---8<---\",\"truncated\":false,\"rawSize\":113}",
+                    "{\"messageIds\":[\"00000000-0000-4000-8000-000000000007\"],\"text\":\"From \\\"Delivery Child\\\" (task id f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee):\\n---8<---\\nordinary hello from child\\n---8<---\",\"truncated\":false,\"rawSize\":113}",
                     "system",
                     1789333200000
                   ]
@@ -3009,7 +3003,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     24,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000009\",\"sourceTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"sourceLabel\":\"Delivery Child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Delivery Child\\\" sent @root\",\"body\":\"Task status: done\\nOrdinary message sent.\"}",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000009\",\"sourceTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"sourceLabel\":\"Delivery Child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Delivery Child\\\" sent @root\",\"body\":\"Task status: done\\nOrdinary message sent.\"}",
                     "msg:00000000-0000-4000-8000-000000000009",
                     1789333200000
                   ]
@@ -3024,7 +3018,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     25,
                     "collaboration_prompt",
-                    "{\"messageIds\":[\"00000000-0000-4000-8000-000000000009\"],\"text\":\"From \\\"Delivery Child\\\" (task id 68982ec8-1159-5422-9468-8588310c17c6):\\n---8<---\\nTask status: done\\nOrdinary message sent.\\n---8<---\",\"truncated\":false,\"rawSize\":128}",
+                    "{\"messageIds\":[\"00000000-0000-4000-8000-000000000009\"],\"text\":\"From \\\"Delivery Child\\\" (task id f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee):\\n---8<---\\nTask status: done\\nOrdinary message sent.\\n---8<---\",\"truncated\":false,\"rawSize\":128}",
                     "system",
                     1789333200000
                   ]
@@ -3067,7 +3061,7 @@
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000007",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "00000000-0000-4000-8001-000000000001",
                     "agent",
                     "ordinary hello from child",
@@ -3120,7 +3114,7 @@
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000009",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "00000000-0000-4000-8001-000000000001",
                     "agent",
                     "Task status: done\nOrdinary message sent.",
@@ -3174,7 +3168,7 @@
                   "args": [
                     "00000000-0000-4000-8001-000000000014",
                     "00000000-0000-4000-8001-000000000001",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "agent",
                     "send ordinary message to parent",
                     1789333200000
@@ -3198,8 +3192,8 @@
                   "args": [
                     "00000000-0000-4000-8001-000000000015",
                     "00000000-0000-4000-8001-000000000014",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    "00000000-0000-4000-8001-000000000014:68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+                    "00000000-0000-4000-8001-000000000014:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "queued",
                     1789333200000,
                     null,
@@ -3220,7 +3214,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     17,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000014\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetLabel\":\"Delivery Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"send ordinary message to parent\",\"deliveryStatus\":\"queued\"}",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000014\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetLabel\":\"Delivery Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"send ordinary message to parent\",\"deliveryStatus\":\"queued\"}",
                     "msg:00000000-0000-4000-8001-000000000014",
                     1789333200000
                   ]
@@ -3235,7 +3229,7 @@
                     "owner",
                     1,
                     "message",
-                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"sourceLabel\":\"root\",\"body\":\"send ordinary message to parent\"}",
+                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"sourceLabel\":\"root\",\"body\":\"send ordinary message to parent\"}",
                     "00000000-0000-4000-8001-000000000015",
                     1789333200000
                   ]
@@ -3408,11 +3402,11 @@
               ]
             },
             {
-              "taskId": "28f757e0-b819-5499-999e-f97b708b43b6",
+              "taskId": "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
               "events": [
                 {
                   "type": "state_patch",
-                  "taskId": "28f757e0-b819-5499-999e-f97b708b43b6",
+                  "taskId": "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                   "seq": 1,
                   "patch": {
                     "runtime": {
@@ -3427,13 +3421,13 @@
                 },
                 {
                   "type": "user_message",
-                  "taskId": "28f757e0-b819-5499-999e-f97b708b43b6",
+                  "taskId": "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                   "text": "report to deleted parent",
                   "clientOpId": "00000000-0000-4000-8000-00000000000b"
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "28f757e0-b819-5499-999e-f97b708b43b6",
+                  "taskId": "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                   "seq": 2,
                   "patch": {
                     "runtime": {
@@ -3446,12 +3440,12 @@
                 },
                 {
                   "type": "message_chunk",
-                  "taskId": "28f757e0-b819-5499-999e-f97b708b43b6",
+                  "taskId": "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                   "text": "Reported to deleted parent."
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "28f757e0-b819-5499-999e-f97b708b43b6",
+                  "taskId": "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                   "seq": 3,
                   "patch": {
                     "runtime": {
@@ -3461,7 +3455,7 @@
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "28f757e0-b819-5499-999e-f97b708b43b6",
+                  "taskId": "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                   "seq": 4,
                   "patch": {
                     "runtime": {
@@ -3474,19 +3468,19 @@
                 },
                 {
                   "type": "prompt_done",
-                  "taskId": "28f757e0-b819-5499-999e-f97b708b43b6",
+                  "taskId": "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                   "stopReason": "end_turn",
                   "promptId": "prompt-2"
                 },
                 {
                   "type": "task_deleted",
-                  "taskId": "28f757e0-b819-5499-999e-f97b708b43b6",
+                  "taskId": "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                   "agentId": "mock",
                   "parentId": null
                 },
                 {
                   "type": "collaboration_delivery",
-                  "taskId": "28f757e0-b819-5499-999e-f97b708b43b6",
+                  "taskId": "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                   "messageId": "00000000-0000-4000-8000-00000000000c",
                   "status": "failed",
                   "failureReason": "target_deleted"
@@ -3494,11 +3488,11 @@
               ]
             },
             {
-              "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+              "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
               "events": [
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 5,
                   "patch": {
                     "runtime": {
@@ -3513,12 +3507,12 @@
                 },
                 {
                   "type": "system_message",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "kind": "collaboration",
                   "messageId": "00000000-0000-4000-8001-00000000001a",
                   "sourceTaskId": "00000000-0000-4000-8001-000000000001",
                   "sourceLabel": "root",
-                  "targetTaskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "targetTaskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "targetLabel": "Delivery Child",
                   "role": "target",
                   "title": "@root sent @\"Delivery Child\"",
@@ -3526,7 +3520,7 @@
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 6,
                   "patch": {
                     "runtime": {
@@ -3539,12 +3533,12 @@
                 },
                 {
                   "type": "message_chunk",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "text": "Reported to live parent."
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 7,
                   "patch": {
                     "runtime": {
@@ -3554,7 +3548,7 @@
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 8,
                   "patch": {
                     "runtime": {
@@ -3567,13 +3561,13 @@
                 },
                 {
                   "type": "prompt_done",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "stopReason": "end_turn",
                   "promptId": "prompt-3"
                 },
                 {
                   "type": "collaboration_delivery",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "messageId": "00000000-0000-4000-8000-000000000010",
                   "status": "delivered",
                   "deliveredAt": "2026-09-13T21:00:00.000Z"
@@ -3722,13 +3716,7 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "DELETE FROM shares WHERE task_id = ? AND shared_at IS NULL",
-                  "args": ["28f757e0-b819-5499-999e-f97b708b43b6"]
-                },
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "DELETE FROM client_ops WHERE task_id = ?",
-                  "args": ["28f757e0-b819-5499-999e-f97b708b43b6"]
+                  "args": ["4838dfa0-46fb-5a2e-bb5a-1498befd7d04"]
                 },
                 {
                   "kind": "write",
@@ -3740,7 +3728,7 @@
                     "hub-connection",
                     6,
                     "relation",
-                    "{\"kind\":\"child_left\",\"parentTaskId\":\"00000000-0000-4000-8001-000000000004\",\"childTaskId\":\"28f757e0-b819-5499-999e-f97b708b43b6\",\"accountOpen\":false}",
+                    "{\"kind\":\"child_left\",\"parentTaskId\":\"00000000-0000-4000-8001-000000000004\",\"childTaskId\":\"4838dfa0-46fb-5a2e-bb5a-1498befd7d04\",\"accountOpen\":false}",
                     null,
                     1789333200000
                   ]
@@ -3749,13 +3737,13 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "DELETE FROM events WHERE task_id = ?",
-                  "args": ["28f757e0-b819-5499-999e-f97b708b43b6"]
+                  "args": ["4838dfa0-46fb-5a2e-bb5a-1498befd7d04"]
                 },
                 {
                   "kind": "write",
                   "method": "run",
                   "sql": "DELETE FROM tasks WHERE id = ?",
-                  "args": ["28f757e0-b819-5499-999e-f97b708b43b6"]
+                  "args": ["4838dfa0-46fb-5a2e-bb5a-1498befd7d04"]
                 }
               ],
               [
@@ -3764,7 +3752,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "28f757e0-b819-5499-999e-f97b708b43b6",
+                    "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                     2,
                     "user_message",
                     "{\"text\":\"report to deleted parent\",\"clientOpId\":\"00000000-0000-4000-8000-00000000000b\"}",
@@ -3779,7 +3767,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "28f757e0-b819-5499-999e-f97b708b43b6",
+                    "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                     4,
                     "assistant_message",
                     "{\"text\":\"Reported to deleted parent.\"}",
@@ -3794,7 +3782,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "28f757e0-b819-5499-999e-f97b708b43b6",
+                    "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                     5,
                     "prompt_done",
                     "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-2\"}",
@@ -3809,7 +3797,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     11,
                     "assistant_message",
                     "{\"text\":\"Reported to live parent.\"}",
@@ -3824,7 +3812,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     12,
                     "prompt_done",
                     "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-3\"}",
@@ -3839,10 +3827,10 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     8,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000001a\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetLabel\":\"Delivery Child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"report to live parent\"}",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000001a\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetLabel\":\"Delivery Child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"report to live parent\"}",
                     "msg:00000000-0000-4000-8001-00000000001a",
                     1789333200000
                   ]
@@ -3854,7 +3842,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     9,
                     "collaboration_prompt",
                     "{\"messageIds\":[\"00000000-0000-4000-8001-00000000001a\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8001-000000000001):\\n---8<---\\nreport to live parent\\n---8<---\",\"truncated\":false,\"rawSize\":99}",
@@ -3871,7 +3859,7 @@
                   "args": [
                     "00000000-0000-4000-8001-00000000001a",
                     "00000000-0000-4000-8001-000000000001",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "agent",
                     "report to live parent",
                     1789333200000
@@ -3883,7 +3871,7 @@
                   "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-00000000001a",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "target",
                     1789333200000
                   ]
@@ -3895,8 +3883,8 @@
                   "args": [
                     "00000000-0000-4000-8001-00000000001a",
                     "00000000-0000-4000-8001-00000000001a",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    "00000000-0000-4000-8001-00000000001a:68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+                    "00000000-0000-4000-8001-00000000001a:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "queued",
                     1789333200000,
                     null,
@@ -3987,13 +3975,13 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET cwd = ? WHERE id = ?",
-                  "args": ["/", "28f757e0-b819-5499-999e-f97b708b43b6"]
+                  "args": ["/", "4838dfa0-46fb-5a2e-bb5a-1498befd7d04"]
                 },
                 {
                   "kind": "write",
                   "method": "run",
                   "sql": "DELETE FROM agent_sessions WHERE task_id = ?",
-                  "args": ["28f757e0-b819-5499-999e-f97b708b43b6"]
+                  "args": ["4838dfa0-46fb-5a2e-bb5a-1498befd7d04"]
                 },
                 {
                   "kind": "write",
@@ -4002,7 +3990,7 @@
                   "args": [
                     "mock",
                     "00000000-0000-4000-8000-000000000002",
-                    "28f757e0-b819-5499-999e-f97b708b43b6",
+                    "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                     1789333200000
                   ]
                 }
@@ -4014,7 +4002,7 @@
                   "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
                   "args": [
                     1789333200000,
-                    "28f757e0-b819-5499-999e-f97b708b43b6"
+                    "4838dfa0-46fb-5a2e-bb5a-1498befd7d04"
                   ]
                 }
               ],
@@ -4023,7 +4011,7 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-                  "args": ["agent", "28f757e0-b819-5499-999e-f97b708b43b6"]
+                  "args": ["agent", "4838dfa0-46fb-5a2e-bb5a-1498befd7d04"]
                 }
               ],
               [
@@ -4031,7 +4019,7 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET model = ? WHERE id = ?",
-                  "args": ["mock-model", "28f757e0-b819-5499-999e-f97b708b43b6"]
+                  "args": ["mock-model", "4838dfa0-46fb-5a2e-bb5a-1498befd7d04"]
                 }
               ],
               [
@@ -4039,7 +4027,7 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-                  "args": ["medium", "28f757e0-b819-5499-999e-f97b708b43b6"]
+                  "args": ["medium", "4838dfa0-46fb-5a2e-bb5a-1498befd7d04"]
                 }
               ],
               [
@@ -4047,17 +4035,17 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-                  "args": ["done", "28f757e0-b819-5499-999e-f97b708b43b6"]
+                  "args": ["done", "4838dfa0-46fb-5a2e-bb5a-1498befd7d04"]
                 },
                 {
                   "kind": "write",
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "28f757e0-b819-5499-999e-f97b708b43b6",
+                    "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                     3,
                     "task_update",
-                    "{\"status\":\"done\",\"body\":\"Late report for deleted parent.\",\"reason\":\"fallback\",\"sourceTaskId\":\"28f757e0-b819-5499-999e-f97b708b43b6\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000004\"}",
+                    "{\"status\":\"done\",\"body\":\"Late report for deleted parent.\",\"reason\":\"fallback\",\"sourceTaskId\":\"4838dfa0-46fb-5a2e-bb5a-1498befd7d04\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000004\"}",
                     "agent",
                     1789333200000
                   ]
@@ -4068,7 +4056,7 @@
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-00000000000c",
-                    "28f757e0-b819-5499-999e-f97b708b43b6",
+                    "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                     "00000000-0000-4000-8001-000000000004",
                     "agent",
                     "Task status: done\nLate report for deleted parent.",
@@ -4081,7 +4069,7 @@
                   "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-00000000000c",
-                    "28f757e0-b819-5499-999e-f97b708b43b6",
+                    "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                     "source",
                     1789333200000
                   ]
@@ -4117,7 +4105,7 @@
                     "hub-connection",
                     5,
                     "report",
-                    "{\"sourceTaskId\":\"28f757e0-b819-5499-999e-f97b708b43b6\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000004\",\"sourceLabel\":\"Parent Two Child\",\"body\":\"Task status: done\\nLate report for deleted parent.\"}",
+                    "{\"sourceTaskId\":\"4838dfa0-46fb-5a2e-bb5a-1498befd7d04\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000004\",\"sourceLabel\":\"Parent Two Child\",\"body\":\"Task status: done\\nLate report for deleted parent.\"}",
                     "00000000-0000-4000-8000-00000000000d",
                     1789333200000
                   ]
@@ -4128,17 +4116,17 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-                  "args": ["done", "68982ec8-1159-5422-9468-8588310c17c6"]
+                  "args": ["done", "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"]
                 },
                 {
                   "kind": "write",
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     10,
                     "task_update",
-                    "{\"status\":\"done\",\"body\":\"Live parent still receives reports.\",\"reason\":\"settled\",\"sourceTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\"}",
+                    "{\"status\":\"done\",\"body\":\"Live parent still receives reports.\",\"reason\":\"settled\",\"sourceTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\"}",
                     "agent",
                     1789333200000
                   ]
@@ -4149,7 +4137,7 @@
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000010",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "00000000-0000-4000-8001-000000000001",
                     "agent",
                     "Task status: done\nLive parent still receives reports.",
@@ -4162,7 +4150,7 @@
                   "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000010",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "source",
                     1789333200000
                   ]
@@ -4198,7 +4186,7 @@
                     "hub-connection",
                     8,
                     "report",
-                    "{\"sourceTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"Delivery Child\",\"body\":\"Task status: done\\nLive parent still receives reports.\"}",
+                    "{\"sourceTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"Delivery Child\",\"body\":\"Task status: done\\nLive parent still receives reports.\"}",
                     "00000000-0000-4000-8000-000000000011",
                     1789333200000
                   ]
@@ -4209,7 +4197,7 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-                  "args": ["running", "68982ec8-1159-5422-9468-8588310c17c6"]
+                  "args": ["running", "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"]
                 }
               ]
             ],
@@ -4250,7 +4238,7 @@
                   "messageId": "00000000-0000-4000-8001-00000000001a",
                   "sourceTaskId": "00000000-0000-4000-8001-000000000001",
                   "sourceLabel": "root",
-                  "targetTaskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "targetTaskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "targetLabel": "Delivery Child",
                   "role": "source",
                   "title": "@root sent @\"Delivery Child\"",
@@ -4331,7 +4319,7 @@
                   "taskId": "00000000-0000-4000-8001-000000000001",
                   "kind": "collaboration",
                   "messageId": "00000000-0000-4000-8000-000000000010",
-                  "sourceTaskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "sourceTaskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "sourceLabel": "Delivery Child",
                   "targetTaskId": "00000000-0000-4000-8001-000000000001",
                   "targetLabel": "root",
@@ -4400,11 +4388,11 @@
               ]
             },
             {
-              "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+              "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
               "events": [
                 {
                   "type": "collaboration_delivery",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "messageId": "00000000-0000-4000-8000-000000000010",
                   "status": "delivered",
                   "deliveredAt": "2026-09-13T21:00:00.000Z"
@@ -4457,7 +4445,7 @@
                   "sessionId": "00000000-0000-4000-8001-000000000001",
                   "tool": "task_send",
                   "arguments": {
-                    "target": "68982ec8-1159-5422-9468-8588310c17c6",
+                    "target": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "body": "report to live parent"
                   },
                   "status": 200,
@@ -4478,7 +4466,7 @@
                   "kind": "acp",
                   "method": "session/prompt",
                   "sessionId": "00000000-0000-4000-8001-000000000001",
-                  "text": "From \"Delivery Child\" (task id 68982ec8-1159-5422-9468-8588310c17c6):\n---8<---\nTask status: done\nLive parent still receives reports.\n---8<---"
+                  "text": "From \"Delivery Child\" (task id f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee):\n---8<---\nTask status: done\nLive parent still receives reports.\n---8<---"
                 }
               ]
             }
@@ -4514,12 +4502,6 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "DELETE FROM shares WHERE task_id = ? AND shared_at IS NULL",
-                  "args": ["00000000-0000-4000-8001-000000000004"]
-                },
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "DELETE FROM client_ops WHERE task_id = ?",
                   "args": ["00000000-0000-4000-8001-000000000004"]
                 },
                 {
@@ -4589,7 +4571,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     32,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000010\",\"sourceTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"sourceLabel\":\"Delivery Child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Delivery Child\\\" sent @root\",\"body\":\"Task status: done\\nLive parent still receives reports.\"}",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000010\",\"sourceTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"sourceLabel\":\"Delivery Child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Delivery Child\\\" sent @root\",\"body\":\"Task status: done\\nLive parent still receives reports.\"}",
                     "msg:00000000-0000-4000-8000-000000000010",
                     1789333200000
                   ]
@@ -4604,7 +4586,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     33,
                     "collaboration_prompt",
-                    "{\"messageIds\":[\"00000000-0000-4000-8000-000000000010\"],\"text\":\"From \\\"Delivery Child\\\" (task id 68982ec8-1159-5422-9468-8588310c17c6):\\n---8<---\\nTask status: done\\nLive parent still receives reports.\\n---8<---\",\"truncated\":false,\"rawSize\":141}",
+                    "{\"messageIds\":[\"00000000-0000-4000-8000-000000000010\"],\"text\":\"From \\\"Delivery Child\\\" (task id f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee):\\n---8<---\\nTask status: done\\nLive parent still receives reports.\\n---8<---\",\"truncated\":false,\"rawSize\":141}",
                     "system",
                     1789333200000
                   ]
@@ -4647,7 +4629,7 @@
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-00000000000c",
-                    "28f757e0-b819-5499-999e-f97b708b43b6",
+                    "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
                     "00000000-0000-4000-8001-000000000004",
                     "agent",
                     "Task status: done\nLate report for deleted parent.",
@@ -4704,7 +4686,7 @@
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000010",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "00000000-0000-4000-8001-000000000001",
                     "agent",
                     "Task status: done\nLive parent still receives reports.",
@@ -4758,7 +4740,7 @@
                   "args": [
                     "00000000-0000-4000-8001-00000000001a",
                     "00000000-0000-4000-8001-000000000001",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "agent",
                     "report to live parent",
                     1789333200000
@@ -4782,8 +4764,8 @@
                   "args": [
                     "00000000-0000-4000-8001-00000000001b",
                     "00000000-0000-4000-8001-00000000001a",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    "00000000-0000-4000-8001-00000000001a:68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+                    "00000000-0000-4000-8001-00000000001a:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "queued",
                     1789333200000,
                     null,
@@ -4804,7 +4786,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     29,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000001a\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetLabel\":\"Delivery Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"report to live parent\",\"deliveryStatus\":\"queued\"}",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000001a\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetLabel\":\"Delivery Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"report to live parent\",\"deliveryStatus\":\"queued\"}",
                     "msg:00000000-0000-4000-8001-00000000001a",
                     1789333200000
                   ]
@@ -4819,7 +4801,7 @@
                     "owner",
                     5,
                     "message",
-                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"sourceLabel\":\"root\",\"body\":\"report to live parent\"}",
+                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"sourceLabel\":\"root\",\"body\":\"report to live parent\"}",
                     "00000000-0000-4000-8001-00000000001b",
                     1789333200000
                   ]
@@ -4961,11 +4943,11 @@
               ]
             },
             {
-              "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+              "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
               "events": [
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 9,
                   "patch": {
                     "runtime": {
@@ -4980,12 +4962,12 @@
                 },
                 {
                   "type": "system_message",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "kind": "collaboration",
                   "messageId": "00000000-0000-4000-8001-00000000001e",
                   "sourceTaskId": "00000000-0000-4000-8001-000000000001",
                   "sourceLabel": "root",
-                  "targetTaskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "targetTaskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "targetLabel": "Delivery Child",
                   "role": "target",
                   "title": "@root sent @\"Delivery Child\"",
@@ -4993,7 +4975,7 @@
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 10,
                   "patch": {
                     "runtime": {
@@ -5006,12 +4988,12 @@
                 },
                 {
                   "type": "message_chunk",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "text": "Ignored turn."
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 11,
                   "patch": {
                     "runtime": {
@@ -5021,7 +5003,7 @@
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 12,
                   "patch": {
                     "runtime": {
@@ -5034,13 +5016,13 @@
                 },
                 {
                   "type": "prompt_done",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "stopReason": "end_turn",
                   "promptId": "prompt-4"
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 13,
                   "patch": {
                     "runtime": {
@@ -5055,10 +5037,10 @@
                 },
                 {
                   "type": "system_message",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "kind": "handoff_reminder",
                   "messageId": "00000000-0000-4000-8000-000000000013",
-                  "targetTaskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "targetTaskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "targetLabel": "Delivery Child",
                   "role": "target",
                   "title": "Task handoff required",
@@ -5066,7 +5048,7 @@
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 14,
                   "patch": {
                     "runtime": {
@@ -5079,12 +5061,12 @@
                 },
                 {
                   "type": "message_chunk",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "text": "Owner child saw notice."
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 15,
                   "patch": {
                     "runtime": {
@@ -5094,7 +5076,7 @@
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 16,
                   "patch": {
                     "runtime": {
@@ -5107,13 +5089,13 @@
                 },
                 {
                   "type": "prompt_done",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "stopReason": "end_turn",
                   "promptId": "prompt-5"
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 17,
                   "patch": {
                     "runtime": {
@@ -5128,12 +5110,12 @@
                 },
                 {
                   "type": "system_message",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "kind": "collaboration",
                   "messageId": "00000000-0000-4000-8001-000000000023",
                   "sourceTaskId": "00000000-0000-4000-8001-000000000001",
                   "sourceLabel": "root",
-                  "targetTaskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "targetTaskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "targetLabel": "Delivery Child",
                   "role": "target",
                   "title": "@root sent @\"Delivery Child\"",
@@ -5141,7 +5123,7 @@
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 18,
                   "patch": {
                     "runtime": {
@@ -5154,12 +5136,12 @@
                 },
                 {
                   "type": "message_chunk",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "text": "Account armed and idle."
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 19,
                   "patch": {
                     "runtime": {
@@ -5169,7 +5151,7 @@
                 },
                 {
                   "type": "state_patch",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "seq": 20,
                   "patch": {
                     "runtime": {
@@ -5182,13 +5164,13 @@
                 },
                 {
                   "type": "prompt_done",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "stopReason": "end_turn",
                   "promptId": "prompt-6"
                 },
                 {
                   "type": "task_deleted",
-                  "taskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "taskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "agentId": "mock",
                   "parentId": null
                 }
@@ -5279,13 +5261,7 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "DELETE FROM shares WHERE task_id = ? AND shared_at IS NULL",
-                  "args": ["68982ec8-1159-5422-9468-8588310c17c6"]
-                },
-                {
-                  "kind": "write",
-                  "method": "run",
-                  "sql": "DELETE FROM client_ops WHERE task_id = ?",
-                  "args": ["68982ec8-1159-5422-9468-8588310c17c6"]
+                  "args": ["f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"]
                 },
                 {
                   "kind": "write",
@@ -5297,7 +5273,7 @@
                     "hub-connection",
                     12,
                     "relation",
-                    "{\"kind\":\"child_left\",\"parentTaskId\":\"00000000-0000-4000-8001-000000000001\",\"childTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"accountOpen\":true}",
+                    "{\"kind\":\"child_left\",\"parentTaskId\":\"00000000-0000-4000-8001-000000000001\",\"childTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"accountOpen\":true}",
                     null,
                     1789333200000
                   ]
@@ -5306,13 +5282,13 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "DELETE FROM events WHERE task_id = ?",
-                  "args": ["68982ec8-1159-5422-9468-8588310c17c6"]
+                  "args": ["f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"]
                 },
                 {
                   "kind": "write",
                   "method": "run",
                   "sql": "DELETE FROM tasks WHERE id = ?",
-                  "args": ["68982ec8-1159-5422-9468-8588310c17c6"]
+                  "args": ["f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"]
                 }
               ],
               [
@@ -5321,10 +5297,10 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     13,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000001e\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetLabel\":\"Delivery Child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"ignore without updating\"}",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000001e\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetLabel\":\"Delivery Child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"ignore without updating\"}",
                     "msg:00000000-0000-4000-8001-00000000001e",
                     1789333200000
                   ]
@@ -5336,7 +5312,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     14,
                     "collaboration_prompt",
                     "{\"messageIds\":[\"00000000-0000-4000-8001-00000000001e\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8001-000000000001):\\n---8<---\\nignore without updating\\n---8<---\",\"truncated\":false,\"rawSize\":101}",
@@ -5351,10 +5327,10 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     15,
                     "handoff_reminder",
-                    "{\"messageId\":\"00000000-0000-4000-8000-000000000013\",\"reason\":\"closing_reminder\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"body\":\"## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\"}",
+                    "{\"messageId\":\"00000000-0000-4000-8000-000000000013\",\"reason\":\"closing_reminder\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"body\":\"## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\"}",
                     "system",
                     1789333200000
                   ]
@@ -5366,7 +5342,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     16,
                     "assistant_message",
                     "{\"text\":\"Ignored turn.\"}",
@@ -5381,7 +5357,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     17,
                     "prompt_done",
                     "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-4\"}",
@@ -5396,10 +5372,10 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     18,
                     "system_message",
-                    "{\"kind\":\"handoff_reminder\",\"messageId\":\"00000000-0000-4000-8000-000000000013\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetLabel\":\"Delivery Child\",\"role\":\"target\",\"title\":\"Task handoff required\",\"body\":\"## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\"}",
+                    "{\"kind\":\"handoff_reminder\",\"messageId\":\"00000000-0000-4000-8000-000000000013\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetLabel\":\"Delivery Child\",\"role\":\"target\",\"title\":\"Task handoff required\",\"body\":\"## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\"}",
                     "msg:00000000-0000-4000-8000-000000000013",
                     1789333200000
                   ]
@@ -5411,7 +5387,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     19,
                     "collaboration_prompt",
                     "{\"messageIds\":[\"00000000-0000-4000-8000-000000000013\"],\"text\":\"Runtime message:\\n---8<---\\n## Task Handoff Required\\n\\nThis is a runtime-injected closing turn: report what this turn established\\nand end it.\\n\\nDo not begin new work as part of this closing turn.\\n\\nReport what this turn established, then call exactly one of:\\n- `task_update(done, ...)` with the completion report.\\n- `task_update(blocked, ...)` and explain what is missing.\\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\\n  background work will wake you; waiting on a person or an external event\\n  is `blocked`.\\n\\nIf the user cancelled this turn, say so plainly in that report instead of\\nresuming the cancelled work. Do not start new work, and do not end this turn\\nwith a prose answer only.\\n---8<---\",\"truncated\":false,\"rawSize\":718}",
@@ -5426,7 +5402,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     20,
                     "assistant_message",
                     "{\"text\":\"Owner child saw notice.\"}",
@@ -5441,7 +5417,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     21,
                     "prompt_done",
                     "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-5\"}",
@@ -5456,10 +5432,10 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     22,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000023\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetLabel\":\"Delivery Child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"hold open account for delete\"}",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000023\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetLabel\":\"Delivery Child\",\"role\":\"target\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"hold open account for delete\"}",
                     "msg:00000000-0000-4000-8001-000000000023",
                     1789333200000
                   ]
@@ -5471,7 +5447,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     23,
                     "collaboration_prompt",
                     "{\"messageIds\":[\"00000000-0000-4000-8001-000000000023\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8001-000000000001):\\n---8<---\\nhold open account for delete\\n---8<---\",\"truncated\":false,\"rawSize\":106}",
@@ -5486,7 +5462,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     25,
                     "assistant_message",
                     "{\"text\":\"Account armed and idle.\"}",
@@ -5501,7 +5477,7 @@
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     26,
                     "prompt_done",
                     "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-6\"}",
@@ -5518,7 +5494,7 @@
                   "args": [
                     "00000000-0000-4000-8000-000000000013",
                     "00000000-0000-4000-8001-000000000001",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "system",
                     "## Task Handoff Required\n\nThis is a runtime-injected closing turn: report what this turn established\nand end it.\n\nDo not begin new work as part of this closing turn.\n\nReport what this turn established, then call exactly one of:\n- `task_update(done, ...)` with the completion report.\n- `task_update(blocked, ...)` and explain what is missing.\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\n  background work will wake you; waiting on a person or an external event\n  is `blocked`.\n\nIf the user cancelled this turn, say so plainly in that report instead of\nresuming the cancelled work. Do not start new work, and do not end this turn\nwith a prose answer only.",
                     1789333200000
@@ -5530,7 +5506,7 @@
                   "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8000-000000000013",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "target",
                     1789333200000
                   ]
@@ -5542,8 +5518,8 @@
                   "args": [
                     "00000000-0000-4000-8000-000000000014",
                     "00000000-0000-4000-8000-000000000013",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    "00000000-0000-4000-8000-000000000013:68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+                    "00000000-0000-4000-8000-000000000013:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "queued",
                     1789333200000,
                     null,
@@ -5565,7 +5541,7 @@
                   "args": [
                     "00000000-0000-4000-8001-00000000001e",
                     "00000000-0000-4000-8001-000000000001",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "agent",
                     "ignore without updating",
                     1789333200000
@@ -5577,7 +5553,7 @@
                   "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-00000000001e",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "target",
                     1789333200000
                   ]
@@ -5589,8 +5565,8 @@
                   "args": [
                     "00000000-0000-4000-8001-00000000001e",
                     "00000000-0000-4000-8001-00000000001e",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    "00000000-0000-4000-8001-00000000001e:68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+                    "00000000-0000-4000-8001-00000000001e:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "queued",
                     1789333200000,
                     null,
@@ -5612,7 +5588,7 @@
                   "args": [
                     "00000000-0000-4000-8001-000000000023",
                     "00000000-0000-4000-8001-000000000001",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "agent",
                     "hold open account for delete",
                     1789333200000
@@ -5624,7 +5600,7 @@
                   "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000023",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "target",
                     1789333200000
                   ]
@@ -5636,8 +5612,8 @@
                   "args": [
                     "00000000-0000-4000-8001-000000000023",
                     "00000000-0000-4000-8001-000000000023",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    "00000000-0000-4000-8001-000000000023:68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+                    "00000000-0000-4000-8001-000000000023:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "queued",
                     1789333200000,
                     null,
@@ -5662,7 +5638,7 @@
                     "hub-connection",
                     10,
                     "notice",
-                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"reason\":\"no_update\",\"message\":\"The target ended another turn without any task_update; the runtime stopped reminding.\",\"targetLabel\":\"Delivery Child\"}",
+                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"reason\":\"no_update\",\"message\":\"The target ended another turn without any task_update; the runtime stopped reminding.\",\"targetLabel\":\"Delivery Child\"}",
                     null,
                     1789333200000
                   ]
@@ -5739,7 +5715,7 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-                  "args": ["idle", "68982ec8-1159-5422-9468-8588310c17c6"]
+                  "args": ["idle", "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"]
                 }
               ],
               [
@@ -5747,7 +5723,7 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-                  "args": ["idle", "68982ec8-1159-5422-9468-8588310c17c6"]
+                  "args": ["idle", "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"]
                 }
               ],
               [
@@ -5755,7 +5731,7 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-                  "args": ["running", "68982ec8-1159-5422-9468-8588310c17c6"]
+                  "args": ["running", "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"]
                 }
               ],
               [
@@ -5763,7 +5739,7 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-                  "args": ["running", "68982ec8-1159-5422-9468-8588310c17c6"]
+                  "args": ["running", "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"]
                 }
               ],
               [
@@ -5771,7 +5747,7 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-                  "args": ["running", "68982ec8-1159-5422-9468-8588310c17c6"]
+                  "args": ["running", "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"]
                 }
               ],
               [
@@ -5779,17 +5755,17 @@
                   "kind": "write",
                   "method": "run",
                   "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-                  "args": ["waiting", "68982ec8-1159-5422-9468-8588310c17c6"]
+                  "args": ["waiting", "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"]
                 },
                 {
                   "kind": "write",
                   "method": "run",
                   "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     24,
                     "task_update",
-                    "{\"status\":\"waiting\",\"body\":\"Waiting while open account stays armed.\",\"reason\":\"waiting\",\"sourceTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetTaskId\":null}",
+                    "{\"status\":\"waiting\",\"body\":\"Waiting while open account stays armed.\",\"reason\":\"waiting\",\"sourceTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetTaskId\":null}",
                     "agent",
                     1789333200000
                   ]
@@ -5833,7 +5809,7 @@
                   "messageId": "00000000-0000-4000-8001-00000000001e",
                   "sourceTaskId": "00000000-0000-4000-8001-000000000001",
                   "sourceLabel": "root",
-                  "targetTaskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "targetTaskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "targetLabel": "Delivery Child",
                   "role": "source",
                   "title": "@root sent @\"Delivery Child\"",
@@ -5918,7 +5894,7 @@
                   "targetLabel": "root",
                   "role": "target",
                   "title": "Task handoff notice",
-                  "body": "target: Delivery Child (68982ec8-1159-5422-9468-8588310c17c6)\nmessage: The target ended another turn without any task_update; the runtime stopped reminding."
+                  "body": "target: Delivery Child (f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee)\nmessage: The target ended another turn without any task_update; the runtime stopped reminding."
                 },
                 {
                   "type": "state_patch",
@@ -5995,7 +5971,7 @@
                   "messageId": "00000000-0000-4000-8001-000000000023",
                   "sourceTaskId": "00000000-0000-4000-8001-000000000001",
                   "sourceLabel": "root",
-                  "targetTaskId": "68982ec8-1159-5422-9468-8588310c17c6",
+                  "targetTaskId": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                   "targetLabel": "Delivery Child",
                   "role": "source",
                   "title": "@root sent @\"Delivery Child\"",
@@ -6080,7 +6056,7 @@
                   "targetLabel": "root",
                   "role": "target",
                   "title": "Task handoff notice",
-                  "body": "target: Delivery Child (68982ec8-1159-5422-9468-8588310c17c6)\nmessage: The target left this edge (deleted or archived); the account is gone."
+                  "body": "target: Delivery Child (f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee)\nmessage: The target left this edge (deleted or archived); the account is gone."
                 },
                 {
                   "type": "state_patch",
@@ -6177,7 +6153,7 @@
                   "sessionId": "00000000-0000-4000-8001-000000000001",
                   "tool": "task_send",
                   "arguments": {
-                    "target": "68982ec8-1159-5422-9468-8588310c17c6",
+                    "target": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "body": "ignore without updating"
                   },
                   "status": 200,
@@ -6198,7 +6174,7 @@
                   "kind": "acp",
                   "method": "session/prompt",
                   "sessionId": "00000000-0000-4000-8001-000000000001",
-                  "text": "Runtime message:\n---8<---\ntarget: Delivery Child (68982ec8-1159-5422-9468-8588310c17c6)\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.\n---8<---"
+                  "text": "Runtime message:\n---8<---\ntarget: Delivery Child (f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee)\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.\n---8<---"
                 },
                 {
                   "kind": "acp",
@@ -6241,7 +6217,7 @@
                   "sessionId": "00000000-0000-4000-8001-000000000001",
                   "tool": "task_send",
                   "arguments": {
-                    "target": "68982ec8-1159-5422-9468-8588310c17c6",
+                    "target": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "body": "hold open account for delete"
                   },
                   "status": 200,
@@ -6262,7 +6238,7 @@
                   "kind": "acp",
                   "method": "session/prompt",
                   "sessionId": "00000000-0000-4000-8001-000000000001",
-                  "text": "Runtime message:\n---8<---\ntarget: Delivery Child (68982ec8-1159-5422-9468-8588310c17c6)\nmessage: The target left this edge (deleted or archived); the account is gone.\n---8<---"
+                  "text": "Runtime message:\n---8<---\ntarget: Delivery Child (f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee)\nmessage: The target left this edge (deleted or archived); the account is gone.\n---8<---"
                 }
               ]
             }
@@ -6293,7 +6269,7 @@
                   "args": [
                     "owner",
                     "00000000-0000-4000-8001-000000000001",
-                    "68982ec8-1159-5422-9468-8588310c17c6"
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee"
                   ]
                 },
                 {
@@ -6304,7 +6280,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     49,
                     "task_outcome_notice",
-                    "{\"messageId\":\"00000000-0000-4000-8001-000000000025\",\"reason\":\"target_removed\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"message\":\"The target left this edge (deleted or archived); the account is gone.\"}",
+                    "{\"messageId\":\"00000000-0000-4000-8001-000000000025\",\"reason\":\"target_removed\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"message\":\"The target left this edge (deleted or archived); the account is gone.\"}",
                     "system",
                     1789333200000
                   ]
@@ -6315,10 +6291,10 @@
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000025",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "00000000-0000-4000-8001-000000000001",
                     "system",
-                    "target: Delivery Child (68982ec8-1159-5422-9468-8588310c17c6)\nmessage: The target left this edge (deleted or archived); the account is gone.",
+                    "target: Delivery Child (f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee)\nmessage: The target left this edge (deleted or archived); the account is gone.",
                     1789333200000
                   ]
                 },
@@ -6415,7 +6391,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     40,
                     "task_outcome_notice",
-                    "{\"messageId\":\"00000000-0000-4000-8001-000000000020\",\"reason\":\"no_update\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"message\":\"The target ended another turn without any task_update; the runtime stopped reminding.\"}",
+                    "{\"messageId\":\"00000000-0000-4000-8001-000000000020\",\"reason\":\"no_update\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"message\":\"The target ended another turn without any task_update; the runtime stopped reminding.\"}",
                     "system",
                     1789333200000
                   ]
@@ -6426,10 +6402,10 @@
                   "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
                   "args": [
                     "00000000-0000-4000-8001-000000000020",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "00000000-0000-4000-8001-000000000001",
                     "system",
-                    "target: Delivery Child (68982ec8-1159-5422-9468-8588310c17c6)\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.",
+                    "target: Delivery Child (f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee)\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.",
                     1789333200000
                   ]
                 },
@@ -6481,7 +6457,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     41,
                     "system_message",
-                    "{\"kind\":\"task_outcome_notice\",\"messageId\":\"00000000-0000-4000-8001-000000000020\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"Task handoff notice\",\"body\":\"target: Delivery Child (68982ec8-1159-5422-9468-8588310c17c6)\\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.\"}",
+                    "{\"kind\":\"task_outcome_notice\",\"messageId\":\"00000000-0000-4000-8001-000000000020\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"Task handoff notice\",\"body\":\"target: Delivery Child (f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee)\\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.\"}",
                     "msg:00000000-0000-4000-8001-000000000020",
                     1789333200000
                   ]
@@ -6496,7 +6472,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     42,
                     "collaboration_prompt",
-                    "{\"messageIds\":[\"00000000-0000-4000-8001-000000000020\"],\"text\":\"Runtime message:\\n---8<---\\ntarget: Delivery Child (68982ec8-1159-5422-9468-8588310c17c6)\\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.\\n---8<---\",\"truncated\":false,\"rawSize\":191}",
+                    "{\"messageIds\":[\"00000000-0000-4000-8001-000000000020\"],\"text\":\"Runtime message:\\n---8<---\\ntarget: Delivery Child (f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee)\\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.\\n---8<---\",\"truncated\":false,\"rawSize\":191}",
                     "system",
                     1789333200000
                   ]
@@ -6586,7 +6562,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     50,
                     "system_message",
-                    "{\"kind\":\"task_outcome_notice\",\"messageId\":\"00000000-0000-4000-8001-000000000025\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"Task handoff notice\",\"body\":\"target: Delivery Child (68982ec8-1159-5422-9468-8588310c17c6)\\nmessage: The target left this edge (deleted or archived); the account is gone.\"}",
+                    "{\"kind\":\"task_outcome_notice\",\"messageId\":\"00000000-0000-4000-8001-000000000025\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"Task handoff notice\",\"body\":\"target: Delivery Child (f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee)\\nmessage: The target left this edge (deleted or archived); the account is gone.\"}",
                     "msg:00000000-0000-4000-8001-000000000025",
                     1789333200000
                   ]
@@ -6601,7 +6577,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     51,
                     "collaboration_prompt",
-                    "{\"messageIds\":[\"00000000-0000-4000-8001-000000000025\"],\"text\":\"Runtime message:\\n---8<---\\ntarget: Delivery Child (68982ec8-1159-5422-9468-8588310c17c6)\\nmessage: The target left this edge (deleted or archived); the account is gone.\\n---8<---\",\"truncated\":false,\"rawSize\":175}",
+                    "{\"messageIds\":[\"00000000-0000-4000-8001-000000000025\"],\"text\":\"Runtime message:\\n---8<---\\ntarget: Delivery Child (f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee)\\nmessage: The target left this edge (deleted or archived); the account is gone.\\n---8<---\",\"truncated\":false,\"rawSize\":175}",
                     "system",
                     1789333200000
                   ]
@@ -6645,7 +6621,7 @@
                   "args": [
                     "00000000-0000-4000-8001-00000000001e",
                     "00000000-0000-4000-8001-000000000001",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "agent",
                     "ignore without updating",
                     1789333200000
@@ -6669,8 +6645,8 @@
                   "args": [
                     "00000000-0000-4000-8001-00000000001f",
                     "00000000-0000-4000-8001-00000000001e",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    "00000000-0000-4000-8001-00000000001e:68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+                    "00000000-0000-4000-8001-00000000001e:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "queued",
                     1789333200000,
                     null,
@@ -6691,7 +6667,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     37,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000001e\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetLabel\":\"Delivery Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"ignore without updating\",\"deliveryStatus\":\"queued\"}",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000001e\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetLabel\":\"Delivery Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"ignore without updating\",\"deliveryStatus\":\"queued\"}",
                     "msg:00000000-0000-4000-8001-00000000001e",
                     1789333200000
                   ]
@@ -6706,7 +6682,7 @@
                     "owner",
                     7,
                     "message",
-                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"sourceLabel\":\"root\",\"body\":\"ignore without updating\"}",
+                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"sourceLabel\":\"root\",\"body\":\"ignore without updating\"}",
                     "00000000-0000-4000-8001-00000000001f",
                     1789333200000
                   ]
@@ -6720,7 +6696,7 @@
                   "args": [
                     "00000000-0000-4000-8001-000000000023",
                     "00000000-0000-4000-8001-000000000001",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "agent",
                     "hold open account for delete",
                     1789333200000
@@ -6744,8 +6720,8 @@
                   "args": [
                     "00000000-0000-4000-8001-000000000024",
                     "00000000-0000-4000-8001-000000000023",
-                    "68982ec8-1159-5422-9468-8588310c17c6",
-                    "00000000-0000-4000-8001-000000000023:68982ec8-1159-5422-9468-8588310c17c6",
+                    "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+                    "00000000-0000-4000-8001-000000000023:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
                     "queued",
                     1789333200000,
                     null,
@@ -6766,7 +6742,7 @@
                     "00000000-0000-4000-8001-000000000001",
                     46,
                     "system_message",
-                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000023\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetLabel\":\"Delivery Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"hold open account for delete\",\"deliveryStatus\":\"queued\"}",
+                    "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000023\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetLabel\":\"Delivery Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"hold open account for delete\",\"deliveryStatus\":\"queued\"}",
                     "msg:00000000-0000-4000-8001-000000000023",
                     1789333200000
                   ]
@@ -6781,7 +6757,7 @@
                     "owner",
                     8,
                     "message",
-                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"sourceLabel\":\"root\",\"body\":\"hold open account for delete\"}",
+                    "{\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"sourceLabel\":\"root\",\"body\":\"hold open account for delete\"}",
                     "00000000-0000-4000-8001-000000000024",
                     1789333200000
                   ]
@@ -6951,7 +6927,7 @@
           {
             "id": "00000000-0000-4000-8001-00000000000f",
             "source_task_id": "00000000-0000-4000-8001-000000000001",
-            "direct_target_task_id": "86389345-a747-575c-98be-f12482093157",
+            "direct_target_task_id": "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
             "source_actor": "agent",
             "body": "hello deleted child",
             "created_at": 1789333200000
@@ -6959,14 +6935,14 @@
           {
             "id": "00000000-0000-4000-8001-000000000014",
             "source_task_id": "00000000-0000-4000-8001-000000000001",
-            "direct_target_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
+            "direct_target_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "source_actor": "agent",
             "body": "send ordinary message to parent",
             "created_at": 1789333200000
           },
           {
             "id": "00000000-0000-4000-8000-000000000007",
-            "source_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
+            "source_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
             "source_actor": "agent",
             "body": "ordinary hello from child",
@@ -6974,7 +6950,7 @@
           },
           {
             "id": "00000000-0000-4000-8000-000000000009",
-            "source_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
+            "source_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
             "source_actor": "agent",
             "body": "Task status: done\nOrdinary message sent.",
@@ -6982,7 +6958,7 @@
           },
           {
             "id": "00000000-0000-4000-8000-00000000000c",
-            "source_task_id": "28f757e0-b819-5499-999e-f97b708b43b6",
+            "source_task_id": "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
             "direct_target_task_id": "00000000-0000-4000-8001-000000000004",
             "source_actor": "agent",
             "body": "Task status: done\nLate report for deleted parent.",
@@ -6991,14 +6967,14 @@
           {
             "id": "00000000-0000-4000-8001-00000000001a",
             "source_task_id": "00000000-0000-4000-8001-000000000001",
-            "direct_target_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
+            "direct_target_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "source_actor": "agent",
             "body": "report to live parent",
             "created_at": 1789333200000
           },
           {
             "id": "00000000-0000-4000-8000-000000000010",
-            "source_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
+            "source_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
             "source_actor": "agent",
             "body": "Task status: done\nLive parent still receives reports.",
@@ -7007,7 +6983,7 @@
           {
             "id": "00000000-0000-4000-8001-00000000001e",
             "source_task_id": "00000000-0000-4000-8001-000000000001",
-            "direct_target_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
+            "direct_target_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "source_actor": "agent",
             "body": "ignore without updating",
             "created_at": 1789333200000
@@ -7015,7 +6991,7 @@
           {
             "id": "00000000-0000-4000-8000-000000000013",
             "source_task_id": "00000000-0000-4000-8001-000000000001",
-            "direct_target_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
+            "direct_target_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "source_actor": "system",
             "body": "## Task Handoff Required\n\nThis is a runtime-injected closing turn: report what this turn established\nand end it.\n\nDo not begin new work as part of this closing turn.\n\nReport what this turn established, then call exactly one of:\n- `task_update(done, ...)` with the completion report.\n- `task_update(blocked, ...)` and explain what is missing.\n- `task_update(waiting, ...)` only when a Task you dispatched or your own\n  background work will wake you; waiting on a person or an external event\n  is `blocked`.\n\nIf the user cancelled this turn, say so plainly in that report instead of\nresuming the cancelled work. Do not start new work, and do not end this turn\nwith a prose answer only.",
             "created_at": 1789333200000
@@ -7023,7 +6999,7 @@
           {
             "id": "00000000-0000-4000-8001-000000000023",
             "source_task_id": "00000000-0000-4000-8001-000000000001",
-            "direct_target_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
+            "direct_target_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "source_actor": "agent",
             "body": "hold open account for delete",
             "created_at": 1789333200000
@@ -7034,8 +7010,8 @@
           {
             "id": "00000000-0000-4000-8001-00000000000f",
             "message_id": "00000000-0000-4000-8001-00000000000f",
-            "recipient_task_id": "86389345-a747-575c-98be-f12482093157",
-            "idempotency_key": "00000000-0000-4000-8001-00000000000f:86389345-a747-575c-98be-f12482093157",
+            "recipient_task_id": "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
+            "idempotency_key": "00000000-0000-4000-8001-00000000000f:43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
             "status": "failed",
             "queued_at": 1789333200000,
             "delivered_at": null,
@@ -7050,8 +7026,8 @@
           {
             "id": "00000000-0000-4000-8001-000000000014",
             "message_id": "00000000-0000-4000-8001-000000000014",
-            "recipient_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
-            "idempotency_key": "00000000-0000-4000-8001-000000000014:68982ec8-1159-5422-9468-8588310c17c6",
+            "recipient_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+            "idempotency_key": "00000000-0000-4000-8001-000000000014:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -7114,8 +7090,8 @@
           {
             "id": "00000000-0000-4000-8001-00000000001a",
             "message_id": "00000000-0000-4000-8001-00000000001a",
-            "recipient_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
-            "idempotency_key": "00000000-0000-4000-8001-00000000001a:68982ec8-1159-5422-9468-8588310c17c6",
+            "recipient_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+            "idempotency_key": "00000000-0000-4000-8001-00000000001a:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -7146,8 +7122,8 @@
           {
             "id": "00000000-0000-4000-8001-00000000001e",
             "message_id": "00000000-0000-4000-8001-00000000001e",
-            "recipient_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
-            "idempotency_key": "00000000-0000-4000-8001-00000000001e:68982ec8-1159-5422-9468-8588310c17c6",
+            "recipient_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+            "idempotency_key": "00000000-0000-4000-8001-00000000001e:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -7162,8 +7138,8 @@
           {
             "id": "00000000-0000-4000-8000-000000000014",
             "message_id": "00000000-0000-4000-8000-000000000013",
-            "recipient_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
-            "idempotency_key": "00000000-0000-4000-8000-000000000013:68982ec8-1159-5422-9468-8588310c17c6",
+            "recipient_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+            "idempotency_key": "00000000-0000-4000-8000-000000000013:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -7178,8 +7154,8 @@
           {
             "id": "00000000-0000-4000-8001-000000000023",
             "message_id": "00000000-0000-4000-8001-000000000023",
-            "recipient_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
-            "idempotency_key": "00000000-0000-4000-8001-000000000023:68982ec8-1159-5422-9468-8588310c17c6",
+            "recipient_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+            "idempotency_key": "00000000-0000-4000-8001-000000000023:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -7192,7 +7168,6 @@
             "source_category": "message"
           }
         ],
-        "client_ops": [],
         "recent_paths": [
           {
             "cwd": "/",
@@ -7253,7 +7228,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 3,
             "type": "system_message",
-            "data": "{\"kind\":\"task_created\",\"taskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"taskTitle\":\"Delivery Child\",\"agentId\":\"mock\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Delivery Child\\\"\",\"body\":\"Task ID: 68982ec8-1159-5422-9468-8588310c17c6\\nagent: mock\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+            "data": "{\"kind\":\"task_created\",\"taskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"taskTitle\":\"Delivery Child\",\"agentId\":\"mock\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Delivery Child\\\"\",\"body\":\"Task ID: f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\\nagent: mock\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
             "created_at": 1789333200000,
             "from_ref": "agent"
           },
@@ -7262,7 +7237,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 4,
             "type": "system_message",
-            "data": "{\"kind\":\"task_created\",\"taskId\":\"86389345-a747-575c-98be-f12482093157\",\"taskTitle\":\"Removable Child\",\"agentId\":\"mock\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Removable Child\\\"\",\"body\":\"Task ID: 86389345-a747-575c-98be-f12482093157\\nagent: mock\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
+            "data": "{\"kind\":\"task_created\",\"taskId\":\"43007fd3-fd4b-515c-9c0d-f7a510d4cf5b\",\"taskTitle\":\"Removable Child\",\"agentId\":\"mock\",\"host\":\"owner\",\"cwd\":\"/\",\"model\":null,\"thinking\":null,\"title\":\"Created task @\\\"Removable Child\\\"\",\"body\":\"Task ID: 43007fd3-fd4b-515c-9c0d-f7a510d4cf5b\\nagent: mock\\nhost: owner\\ncwd: /\\nmodel: inherited\\nthinking: inherited\"}",
             "created_at": 1789333200000,
             "from_ref": "agent"
           },
@@ -7298,7 +7273,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 8,
             "type": "system_message",
-            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000000f\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"86389345-a747-575c-98be-f12482093157\",\"targetLabel\":\"Removable Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Removable Child\\\"\",\"body\":\"hello deleted child\",\"deliveryStatus\":\"queued\"}",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000000f\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"43007fd3-fd4b-515c-9c0d-f7a510d4cf5b\",\"targetLabel\":\"Removable Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Removable Child\\\"\",\"body\":\"hello deleted child\",\"deliveryStatus\":\"queued\"}",
             "created_at": 1789333200000,
             "from_ref": "msg:00000000-0000-4000-8001-00000000000f"
           },
@@ -7325,7 +7300,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 11,
             "type": "task_outcome_notice",
-            "data": "{\"messageId\":\"00000000-0000-4000-8001-000000000011\",\"reason\":\"target_removed\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"86389345-a747-575c-98be-f12482093157\",\"message\":\"A message to the target was not delivered (target_deleted).\"}",
+            "data": "{\"messageId\":\"00000000-0000-4000-8001-000000000011\",\"reason\":\"target_removed\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"43007fd3-fd4b-515c-9c0d-f7a510d4cf5b\",\"message\":\"A message to the target was not delivered (target_deleted).\"}",
             "created_at": 1789333200000,
             "from_ref": "system"
           },
@@ -7334,7 +7309,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 12,
             "type": "system_message",
-            "data": "{\"kind\":\"task_outcome_notice\",\"messageId\":\"00000000-0000-4000-8001-000000000011\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"Task handoff notice\",\"body\":\"target: Removable Child (86389345-a747-575c-98be-f12482093157)\\nmessage: A message to the target was not delivered (target_deleted).\"}",
+            "data": "{\"kind\":\"task_outcome_notice\",\"messageId\":\"00000000-0000-4000-8001-000000000011\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"Task handoff notice\",\"body\":\"target: Removable Child (43007fd3-fd4b-515c-9c0d-f7a510d4cf5b)\\nmessage: A message to the target was not delivered (target_deleted).\"}",
             "created_at": 1789333200000,
             "from_ref": "msg:00000000-0000-4000-8001-000000000011"
           },
@@ -7343,7 +7318,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 13,
             "type": "collaboration_prompt",
-            "data": "{\"messageIds\":[\"00000000-0000-4000-8001-000000000011\"],\"text\":\"Runtime message:\\n---8<---\\ntarget: Removable Child (86389345-a747-575c-98be-f12482093157)\\nmessage: A message to the target was not delivered (target_deleted).\\n---8<---\",\"truncated\":false,\"rawSize\":166}",
+            "data": "{\"messageIds\":[\"00000000-0000-4000-8001-000000000011\"],\"text\":\"Runtime message:\\n---8<---\\ntarget: Removable Child (43007fd3-fd4b-515c-9c0d-f7a510d4cf5b)\\nmessage: A message to the target was not delivered (target_deleted).\\n---8<---\",\"truncated\":false,\"rawSize\":166}",
             "created_at": 1789333200000,
             "from_ref": "system"
           },
@@ -7379,7 +7354,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 17,
             "type": "system_message",
-            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000014\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetLabel\":\"Delivery Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"send ordinary message to parent\",\"deliveryStatus\":\"queued\"}",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000014\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetLabel\":\"Delivery Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"send ordinary message to parent\",\"deliveryStatus\":\"queued\"}",
             "created_at": 1789333200000,
             "from_ref": "msg:00000000-0000-4000-8001-000000000014"
           },
@@ -7406,7 +7381,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 20,
             "type": "system_message",
-            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"sourceLabel\":\"Delivery Child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Delivery Child\\\" sent @root\",\"body\":\"ordinary hello from child\"}",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"sourceLabel\":\"Delivery Child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Delivery Child\\\" sent @root\",\"body\":\"ordinary hello from child\"}",
             "created_at": 1789333200000,
             "from_ref": "msg:00000000-0000-4000-8000-000000000007"
           },
@@ -7415,7 +7390,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 21,
             "type": "collaboration_prompt",
-            "data": "{\"messageIds\":[\"00000000-0000-4000-8000-000000000007\"],\"text\":\"From \\\"Delivery Child\\\" (task id 68982ec8-1159-5422-9468-8588310c17c6):\\n---8<---\\nordinary hello from child\\n---8<---\",\"truncated\":false,\"rawSize\":113}",
+            "data": "{\"messageIds\":[\"00000000-0000-4000-8000-000000000007\"],\"text\":\"From \\\"Delivery Child\\\" (task id f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee):\\n---8<---\\nordinary hello from child\\n---8<---\",\"truncated\":false,\"rawSize\":113}",
             "created_at": 1789333200000,
             "from_ref": "system"
           },
@@ -7442,7 +7417,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 24,
             "type": "system_message",
-            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000009\",\"sourceTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"sourceLabel\":\"Delivery Child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Delivery Child\\\" sent @root\",\"body\":\"Task status: done\\nOrdinary message sent.\"}",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000009\",\"sourceTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"sourceLabel\":\"Delivery Child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Delivery Child\\\" sent @root\",\"body\":\"Task status: done\\nOrdinary message sent.\"}",
             "created_at": 1789333200000,
             "from_ref": "msg:00000000-0000-4000-8000-000000000009"
           },
@@ -7451,7 +7426,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 25,
             "type": "collaboration_prompt",
-            "data": "{\"messageIds\":[\"00000000-0000-4000-8000-000000000009\"],\"text\":\"From \\\"Delivery Child\\\" (task id 68982ec8-1159-5422-9468-8588310c17c6):\\n---8<---\\nTask status: done\\nOrdinary message sent.\\n---8<---\",\"truncated\":false,\"rawSize\":128}",
+            "data": "{\"messageIds\":[\"00000000-0000-4000-8000-000000000009\"],\"text\":\"From \\\"Delivery Child\\\" (task id f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee):\\n---8<---\\nTask status: done\\nOrdinary message sent.\\n---8<---\",\"truncated\":false,\"rawSize\":128}",
             "created_at": 1789333200000,
             "from_ref": "system"
           },
@@ -7487,7 +7462,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 29,
             "type": "system_message",
-            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000001a\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetLabel\":\"Delivery Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"report to live parent\",\"deliveryStatus\":\"queued\"}",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000001a\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetLabel\":\"Delivery Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"report to live parent\",\"deliveryStatus\":\"queued\"}",
             "created_at": 1789333200000,
             "from_ref": "msg:00000000-0000-4000-8001-00000000001a"
           },
@@ -7514,7 +7489,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 32,
             "type": "system_message",
-            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000010\",\"sourceTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"sourceLabel\":\"Delivery Child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Delivery Child\\\" sent @root\",\"body\":\"Task status: done\\nLive parent still receives reports.\"}",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000010\",\"sourceTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"sourceLabel\":\"Delivery Child\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Delivery Child\\\" sent @root\",\"body\":\"Task status: done\\nLive parent still receives reports.\"}",
             "created_at": 1789333200000,
             "from_ref": "msg:00000000-0000-4000-8000-000000000010"
           },
@@ -7523,7 +7498,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 33,
             "type": "collaboration_prompt",
-            "data": "{\"messageIds\":[\"00000000-0000-4000-8000-000000000010\"],\"text\":\"From \\\"Delivery Child\\\" (task id 68982ec8-1159-5422-9468-8588310c17c6):\\n---8<---\\nTask status: done\\nLive parent still receives reports.\\n---8<---\",\"truncated\":false,\"rawSize\":141}",
+            "data": "{\"messageIds\":[\"00000000-0000-4000-8000-000000000010\"],\"text\":\"From \\\"Delivery Child\\\" (task id f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee):\\n---8<---\\nTask status: done\\nLive parent still receives reports.\\n---8<---\",\"truncated\":false,\"rawSize\":141}",
             "created_at": 1789333200000,
             "from_ref": "system"
           },
@@ -7559,7 +7534,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 37,
             "type": "system_message",
-            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000001e\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetLabel\":\"Delivery Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"ignore without updating\",\"deliveryStatus\":\"queued\"}",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-00000000001e\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetLabel\":\"Delivery Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"ignore without updating\",\"deliveryStatus\":\"queued\"}",
             "created_at": 1789333200000,
             "from_ref": "msg:00000000-0000-4000-8001-00000000001e"
           },
@@ -7586,7 +7561,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 40,
             "type": "task_outcome_notice",
-            "data": "{\"messageId\":\"00000000-0000-4000-8001-000000000020\",\"reason\":\"no_update\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"message\":\"The target ended another turn without any task_update; the runtime stopped reminding.\"}",
+            "data": "{\"messageId\":\"00000000-0000-4000-8001-000000000020\",\"reason\":\"no_update\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"message\":\"The target ended another turn without any task_update; the runtime stopped reminding.\"}",
             "created_at": 1789333200000,
             "from_ref": "system"
           },
@@ -7595,7 +7570,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 41,
             "type": "system_message",
-            "data": "{\"kind\":\"task_outcome_notice\",\"messageId\":\"00000000-0000-4000-8001-000000000020\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"Task handoff notice\",\"body\":\"target: Delivery Child (68982ec8-1159-5422-9468-8588310c17c6)\\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.\"}",
+            "data": "{\"kind\":\"task_outcome_notice\",\"messageId\":\"00000000-0000-4000-8001-000000000020\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"Task handoff notice\",\"body\":\"target: Delivery Child (f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee)\\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.\"}",
             "created_at": 1789333200000,
             "from_ref": "msg:00000000-0000-4000-8001-000000000020"
           },
@@ -7604,7 +7579,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 42,
             "type": "collaboration_prompt",
-            "data": "{\"messageIds\":[\"00000000-0000-4000-8001-000000000020\"],\"text\":\"Runtime message:\\n---8<---\\ntarget: Delivery Child (68982ec8-1159-5422-9468-8588310c17c6)\\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.\\n---8<---\",\"truncated\":false,\"rawSize\":191}",
+            "data": "{\"messageIds\":[\"00000000-0000-4000-8001-000000000020\"],\"text\":\"Runtime message:\\n---8<---\\ntarget: Delivery Child (f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee)\\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.\\n---8<---\",\"truncated\":false,\"rawSize\":191}",
             "created_at": 1789333200000,
             "from_ref": "system"
           },
@@ -7640,7 +7615,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 46,
             "type": "system_message",
-            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000023\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"targetLabel\":\"Delivery Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"hold open account for delete\",\"deliveryStatus\":\"queued\"}",
+            "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8001-000000000023\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"targetLabel\":\"Delivery Child\",\"role\":\"source\",\"title\":\"@root sent @\\\"Delivery Child\\\"\",\"body\":\"hold open account for delete\",\"deliveryStatus\":\"queued\"}",
             "created_at": 1789333200000,
             "from_ref": "msg:00000000-0000-4000-8001-000000000023"
           },
@@ -7667,7 +7642,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 49,
             "type": "task_outcome_notice",
-            "data": "{\"messageId\":\"00000000-0000-4000-8001-000000000025\",\"reason\":\"target_removed\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"68982ec8-1159-5422-9468-8588310c17c6\",\"message\":\"The target left this edge (deleted or archived); the account is gone.\"}",
+            "data": "{\"messageId\":\"00000000-0000-4000-8001-000000000025\",\"reason\":\"target_removed\",\"sourceTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetTaskId\":\"f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee\",\"message\":\"The target left this edge (deleted or archived); the account is gone.\"}",
             "created_at": 1789333200000,
             "from_ref": "system"
           },
@@ -7676,7 +7651,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 50,
             "type": "system_message",
-            "data": "{\"kind\":\"task_outcome_notice\",\"messageId\":\"00000000-0000-4000-8001-000000000025\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"Task handoff notice\",\"body\":\"target: Delivery Child (68982ec8-1159-5422-9468-8588310c17c6)\\nmessage: The target left this edge (deleted or archived); the account is gone.\"}",
+            "data": "{\"kind\":\"task_outcome_notice\",\"messageId\":\"00000000-0000-4000-8001-000000000025\",\"targetTaskId\":\"00000000-0000-4000-8001-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"Task handoff notice\",\"body\":\"target: Delivery Child (f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee)\\nmessage: The target left this edge (deleted or archived); the account is gone.\"}",
             "created_at": 1789333200000,
             "from_ref": "msg:00000000-0000-4000-8001-000000000025"
           },
@@ -7685,7 +7660,7 @@
             "task_id": "00000000-0000-4000-8001-000000000001",
             "seq": 51,
             "type": "collaboration_prompt",
-            "data": "{\"messageIds\":[\"00000000-0000-4000-8001-000000000025\"],\"text\":\"Runtime message:\\n---8<---\\ntarget: Delivery Child (68982ec8-1159-5422-9468-8588310c17c6)\\nmessage: The target left this edge (deleted or archived); the account is gone.\\n---8<---\",\"truncated\":false,\"rawSize\":175}",
+            "data": "{\"messageIds\":[\"00000000-0000-4000-8001-000000000025\"],\"text\":\"Runtime message:\\n---8<---\\ntarget: Delivery Child (f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee)\\nmessage: The target left this edge (deleted or archived); the account is gone.\\n---8<---\",\"truncated\":false,\"rawSize\":175}",
             "created_at": 1789333200000,
             "from_ref": "system"
           },
@@ -7712,30 +7687,30 @@
           {
             "id": "00000000-0000-4000-8001-00000000000f",
             "source_task_id": "00000000-0000-4000-8001-000000000001",
-            "direct_target_task_id": "86389345-a747-575c-98be-f12482093157",
+            "direct_target_task_id": "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
             "source_actor": "agent",
             "body": "hello deleted child",
             "created_at": 1789333200000
           },
           {
             "id": "00000000-0000-4000-8001-000000000011",
-            "source_task_id": "86389345-a747-575c-98be-f12482093157",
+            "source_task_id": "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
             "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
             "source_actor": "system",
-            "body": "target: Removable Child (86389345-a747-575c-98be-f12482093157)\nmessage: A message to the target was not delivered (target_deleted).",
+            "body": "target: Removable Child (43007fd3-fd4b-515c-9c0d-f7a510d4cf5b)\nmessage: A message to the target was not delivered (target_deleted).",
             "created_at": 1789333200000
           },
           {
             "id": "00000000-0000-4000-8001-000000000014",
             "source_task_id": "00000000-0000-4000-8001-000000000001",
-            "direct_target_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
+            "direct_target_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "source_actor": "agent",
             "body": "send ordinary message to parent",
             "created_at": 1789333200000
           },
           {
             "id": "00000000-0000-4000-8000-000000000007",
-            "source_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
+            "source_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
             "source_actor": "agent",
             "body": "ordinary hello from child",
@@ -7743,7 +7718,7 @@
           },
           {
             "id": "00000000-0000-4000-8000-000000000009",
-            "source_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
+            "source_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
             "source_actor": "agent",
             "body": "Task status: done\nOrdinary message sent.",
@@ -7751,7 +7726,7 @@
           },
           {
             "id": "00000000-0000-4000-8000-00000000000c",
-            "source_task_id": "28f757e0-b819-5499-999e-f97b708b43b6",
+            "source_task_id": "4838dfa0-46fb-5a2e-bb5a-1498befd7d04",
             "direct_target_task_id": "00000000-0000-4000-8001-000000000004",
             "source_actor": "agent",
             "body": "Task status: done\nLate report for deleted parent.",
@@ -7760,14 +7735,14 @@
           {
             "id": "00000000-0000-4000-8001-00000000001a",
             "source_task_id": "00000000-0000-4000-8001-000000000001",
-            "direct_target_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
+            "direct_target_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "source_actor": "agent",
             "body": "report to live parent",
             "created_at": 1789333200000
           },
           {
             "id": "00000000-0000-4000-8000-000000000010",
-            "source_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
+            "source_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
             "source_actor": "agent",
             "body": "Task status: done\nLive parent still receives reports.",
@@ -7776,33 +7751,33 @@
           {
             "id": "00000000-0000-4000-8001-00000000001e",
             "source_task_id": "00000000-0000-4000-8001-000000000001",
-            "direct_target_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
+            "direct_target_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "source_actor": "agent",
             "body": "ignore without updating",
             "created_at": 1789333200000
           },
           {
             "id": "00000000-0000-4000-8001-000000000020",
-            "source_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
+            "source_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
             "source_actor": "system",
-            "body": "target: Delivery Child (68982ec8-1159-5422-9468-8588310c17c6)\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.",
+            "body": "target: Delivery Child (f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee)\nmessage: The target ended another turn without any task_update; the runtime stopped reminding.",
             "created_at": 1789333200000
           },
           {
             "id": "00000000-0000-4000-8001-000000000023",
             "source_task_id": "00000000-0000-4000-8001-000000000001",
-            "direct_target_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
+            "direct_target_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "source_actor": "agent",
             "body": "hold open account for delete",
             "created_at": 1789333200000
           },
           {
             "id": "00000000-0000-4000-8001-000000000025",
-            "source_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
+            "source_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "direct_target_task_id": "00000000-0000-4000-8001-000000000001",
             "source_actor": "system",
-            "body": "target: Delivery Child (68982ec8-1159-5422-9468-8588310c17c6)\nmessage: The target left this edge (deleted or archived); the account is gone.",
+            "body": "target: Delivery Child (f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee)\nmessage: The target left this edge (deleted or archived); the account is gone.",
             "created_at": 1789333200000
           }
         ],
@@ -7878,8 +7853,8 @@
           {
             "id": "00000000-0000-4000-8001-000000000010",
             "message_id": "00000000-0000-4000-8001-00000000000f",
-            "recipient_task_id": "86389345-a747-575c-98be-f12482093157",
-            "idempotency_key": "00000000-0000-4000-8001-00000000000f:86389345-a747-575c-98be-f12482093157",
+            "recipient_task_id": "43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
+            "idempotency_key": "00000000-0000-4000-8001-00000000000f:43007fd3-fd4b-515c-9c0d-f7a510d4cf5b",
             "status": "failed",
             "queued_at": 1789333200000,
             "delivered_at": null,
@@ -7910,8 +7885,8 @@
           {
             "id": "00000000-0000-4000-8001-000000000015",
             "message_id": "00000000-0000-4000-8001-000000000014",
-            "recipient_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
-            "idempotency_key": "00000000-0000-4000-8001-000000000014:68982ec8-1159-5422-9468-8588310c17c6",
+            "recipient_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+            "idempotency_key": "00000000-0000-4000-8001-000000000014:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -7974,8 +7949,8 @@
           {
             "id": "00000000-0000-4000-8001-00000000001b",
             "message_id": "00000000-0000-4000-8001-00000000001a",
-            "recipient_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
-            "idempotency_key": "00000000-0000-4000-8001-00000000001a:68982ec8-1159-5422-9468-8588310c17c6",
+            "recipient_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+            "idempotency_key": "00000000-0000-4000-8001-00000000001a:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -8006,8 +7981,8 @@
           {
             "id": "00000000-0000-4000-8001-00000000001f",
             "message_id": "00000000-0000-4000-8001-00000000001e",
-            "recipient_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
-            "idempotency_key": "00000000-0000-4000-8001-00000000001e:68982ec8-1159-5422-9468-8588310c17c6",
+            "recipient_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+            "idempotency_key": "00000000-0000-4000-8001-00000000001e:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -8038,8 +8013,8 @@
           {
             "id": "00000000-0000-4000-8001-000000000024",
             "message_id": "00000000-0000-4000-8001-000000000023",
-            "recipient_task_id": "68982ec8-1159-5422-9468-8588310c17c6",
-            "idempotency_key": "00000000-0000-4000-8001-000000000023:68982ec8-1159-5422-9468-8588310c17c6",
+            "recipient_task_id": "f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
+            "idempotency_key": "00000000-0000-4000-8001-000000000023:f5ddc61d-ee01-5065-b4d7-fd24c7ca29ee",
             "status": "delivered",
             "queued_at": 1789333200000,
             "delivered_at": 1789333200000,
@@ -8068,7 +8043,6 @@
             "source_category": null
           }
         ],
-        "client_ops": [],
         "recent_paths": [
           {
             "cwd": "/",

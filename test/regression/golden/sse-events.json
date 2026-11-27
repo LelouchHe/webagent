@@ -368,7 +368,6 @@
     "messages": [],
     "message_projections": [],
     "deliveries": [],
-    "client_ops": [],
     "recent_paths": [
       {
         "cwd": "/",

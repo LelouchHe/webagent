@@ -4,7 +4,7 @@
       "name": "setup",
       "response": {
         "taskId": "00000000-0000-4000-8000-000000000001",
-        "childId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd"
+        "childId": "b52ad572-883c-5355-844d-50a394e78e63"
       },
       "sse": [
         {
@@ -151,11 +151,11 @@
               "kind": "task_created",
               "messageId": "00000000-0000-4000-8000-000000000006",
               "sourceTaskId": "00000000-0000-4000-8000-000000000001",
-              "targetTaskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "targetTaskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "taskTitle": "Regression review",
               "role": "source",
               "title": "Created task @\"Regression review\"",
-              "body": "Task ID: ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\nagent: mock\ncwd: /\nmodel: mock-model\nthinking: medium"
+              "body": "Task ID: b52ad572-883c-5355-844d-50a394e78e63\nagent: mock\ncwd: /\nmodel: mock-model\nthinking: medium"
             },
             {
               "type": "system_message",
@@ -164,7 +164,7 @@
               "messageId": "00000000-0000-4000-8000-000000000007",
               "sourceTaskId": "00000000-0000-4000-8000-000000000001",
               "sourceLabel": "root",
-              "targetTaskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "targetTaskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "targetLabel": "Regression review",
               "role": "source",
               "title": "@root sent @\"Regression review\"",
@@ -228,11 +228,11 @@
           ]
         },
         {
-          "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+          "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
           "events": [
             {
               "type": "available_commands_update",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "commands": [
                 {
                   "name": "context",
@@ -251,7 +251,7 @@
             },
             {
               "type": "task_created",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "agentId": "mock",
               "cwd": "/",
               "cwdDisplay": "/",
@@ -340,7 +340,7 @@
             },
             {
               "type": "state_patch",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "seq": 1,
               "patch": {
                 "runtime": {
@@ -355,12 +355,12 @@
             },
             {
               "type": "system_message",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "kind": "collaboration",
               "messageId": "00000000-0000-4000-8000-000000000007",
               "sourceTaskId": "00000000-0000-4000-8000-000000000001",
               "sourceLabel": "root",
-              "targetTaskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "targetTaskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "targetLabel": "Regression review",
               "role": "target",
               "title": "@root sent @\"Regression review\"",
@@ -368,7 +368,7 @@
             },
             {
               "type": "state_patch",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "seq": 2,
               "patch": {
                 "runtime": {
@@ -381,7 +381,7 @@
             },
             {
               "type": "message_chunk",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "text": "REGRESSION_WAIT: review-update"
             }
           ]
@@ -441,7 +441,7 @@
                   "content": [
                     {
                       "type": "text",
-                      "text": "{\"taskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\"}"
+                      "text": "{\"taskId\":\"b52ad572-883c-5355-844d-50a394e78e63\"}"
                     }
                   ]
                 },
@@ -454,7 +454,7 @@
               "sessionId": "00000000-0000-4000-8000-000000000001",
               "tool": "task_send",
               "arguments": {
-                "target": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+                "target": "b52ad572-883c-5355-844d-50a394e78e63",
                 "body": "park regression review"
               },
               "status": 200,
@@ -522,7 +522,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 2,
                 "system_message",
-                "{\"kind\":\"task_created\",\"taskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"taskTitle\":\"Regression review\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Regression review\\\"\",\"body\":\"Task ID: ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+                "{\"kind\":\"task_created\",\"taskId\":\"b52ad572-883c-5355-844d-50a394e78e63\",\"taskTitle\":\"Regression review\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Regression review\\\"\",\"body\":\"Task ID: b52ad572-883c-5355-844d-50a394e78e63\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
                 "agent",
                 1789333200000
               ]
@@ -564,10 +564,10 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+                "b52ad572-883c-5355-844d-50a394e78e63",
                 1,
                 "system_message",
-                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"targetLabel\":\"Regression review\",\"role\":\"target\",\"title\":\"@root sent @\\\"Regression review\\\"\",\"body\":\"park regression review\"}",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"b52ad572-883c-5355-844d-50a394e78e63\",\"targetLabel\":\"Regression review\",\"role\":\"target\",\"title\":\"@root sent @\\\"Regression review\\\"\",\"body\":\"park regression review\"}",
                 "msg:00000000-0000-4000-8000-000000000007",
                 1789333200000
               ]
@@ -579,7 +579,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+                "b52ad572-883c-5355-844d-50a394e78e63",
                 2,
                 "collaboration_prompt",
                 "{\"messageIds\":[\"00000000-0000-4000-8000-000000000007\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8000-000000000001):\\n---8<---\\npark regression review\\n---8<---\",\"truncated\":false,\"rawSize\":100}",
@@ -596,7 +596,7 @@
               "args": [
                 "00000000-0000-4000-8000-000000000007",
                 "00000000-0000-4000-8000-000000000001",
-                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+                "b52ad572-883c-5355-844d-50a394e78e63",
                 "agent",
                 "park regression review",
                 1789333200000
@@ -608,7 +608,7 @@
               "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-000000000007",
-                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+                "b52ad572-883c-5355-844d-50a394e78e63",
                 "target",
                 1789333200000
               ]
@@ -620,8 +620,8 @@
               "args": [
                 "00000000-0000-4000-8000-000000000008",
                 "00000000-0000-4000-8000-000000000007",
-                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
-                "00000000-0000-4000-8000-000000000007:ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+                "b52ad572-883c-5355-844d-50a394e78e63",
+                "00000000-0000-4000-8000-000000000007:b52ad572-883c-5355-844d-50a394e78e63",
                 "queued",
                 1789333200000,
                 null,
@@ -652,7 +652,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 3,
                 "system_message",
-                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"targetLabel\":\"Regression review\",\"role\":\"source\",\"title\":\"@root sent @\\\"Regression review\\\"\",\"body\":\"park regression review\"}",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"b52ad572-883c-5355-844d-50a394e78e63\",\"targetLabel\":\"Regression review\",\"role\":\"source\",\"title\":\"@root sent @\\\"Regression review\\\"\",\"body\":\"park regression review\"}",
                 "msg:00000000-0000-4000-8000-000000000007",
                 1789333200000
               ]
@@ -672,7 +672,7 @@
               "method": "run",
               "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
               "args": [
-                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+                "b52ad572-883c-5355-844d-50a394e78e63",
                 "/",
                 "agent",
                 "00000000-0000-4000-8000-000000000001",
@@ -689,7 +689,7 @@
               "args": [
                 "mock",
                 "00000000-0000-4000-8000-000000000002",
-                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+                "b52ad572-883c-5355-844d-50a394e78e63",
                 1789333200000
               ]
             }
@@ -719,7 +719,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-              "args": ["agent", "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd"]
+              "args": ["agent", "b52ad572-883c-5355-844d-50a394e78e63"]
             }
           ],
           [
@@ -727,7 +727,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET model = ? WHERE id = ?",
-              "args": ["mock-model", "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd"]
+              "args": ["mock-model", "b52ad572-883c-5355-844d-50a394e78e63"]
             }
           ],
           [
@@ -735,7 +735,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-              "args": ["medium", "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd"]
+              "args": ["medium", "b52ad572-883c-5355-844d-50a394e78e63"]
             }
           ],
           [
@@ -743,7 +743,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-              "args": ["running", "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd"]
+              "args": ["running", "b52ad572-883c-5355-844d-50a394e78e63"]
             }
           ]
         ],
@@ -776,7 +776,7 @@
               "archived": false
             },
             {
-              "id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "id": "b52ad572-883c-5355-844d-50a394e78e63",
               "cwd": "/",
               "title": "Regression review",
               "workflow_status": "running",
@@ -806,11 +806,11 @@
       ],
       "sse": [
         {
-          "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+          "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
           "events": [
             {
               "type": "state_patch",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "seq": 3,
               "patch": {
                 "runtime": {
@@ -825,7 +825,7 @@
             },
             {
               "type": "state_patch",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "seq": 4,
               "patch": {
                 "runtime": {
@@ -835,7 +835,7 @@
             },
             {
               "type": "state_patch",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "seq": 5,
               "patch": {
                 "runtime": {
@@ -848,7 +848,7 @@
             },
             {
               "type": "prompt_done",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "stopReason": "cancelled",
               "promptId": "prompt-2"
             }
@@ -879,7 +879,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+                "b52ad572-883c-5355-844d-50a394e78e63",
                 3,
                 "assistant_message",
                 "{\"text\":\"REGRESSION_WAIT: review-update\"}",
@@ -894,7 +894,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+                "b52ad572-883c-5355-844d-50a394e78e63",
                 4,
                 "prompt_done",
                 "{\"stopReason\":\"cancelled\",\"promptId\":\"prompt-2\"}",
@@ -908,7 +908,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-              "args": ["idle", "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd"]
+              "args": ["idle", "b52ad572-883c-5355-844d-50a394e78e63"]
             }
           ]
         ],
@@ -947,7 +947,7 @@
               "taskId": "00000000-0000-4000-8000-000000000001",
               "kind": "collaboration",
               "messageId": "00000000-0000-4000-8000-00000000000a",
-              "sourceTaskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "sourceTaskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "sourceLabel": "Regression review",
               "targetTaskId": "00000000-0000-4000-8000-000000000001",
               "targetLabel": "root",
@@ -1005,17 +1005,17 @@
           ]
         },
         {
-          "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+          "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
           "events": [
             {
               "type": "user_message",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "text": "complete regression review",
               "clientOpId": "00000000-0000-4000-8000-000000000009"
             },
             {
               "type": "state_patch",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "seq": 6,
               "patch": {
                 "runtime": {
@@ -1030,10 +1030,10 @@
             },
             {
               "type": "system_message",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "kind": "collaboration",
               "messageId": "00000000-0000-4000-8000-00000000000a",
-              "sourceTaskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "sourceTaskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "sourceLabel": "Regression review",
               "targetTaskId": "00000000-0000-4000-8000-000000000001",
               "targetLabel": "root",
@@ -1044,14 +1044,14 @@
             },
             {
               "type": "collaboration_delivery",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "messageId": "00000000-0000-4000-8000-00000000000a",
               "status": "delivered",
               "deliveredAt": "2026-09-13T21:00:00.000Z"
             },
             {
               "type": "state_patch",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "seq": 7,
               "patch": {
                 "runtime": {
@@ -1064,12 +1064,12 @@
             },
             {
               "type": "message_chunk",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "text": "Review finished."
             },
             {
               "type": "state_patch",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "seq": 8,
               "patch": {
                 "runtime": {
@@ -1079,7 +1079,7 @@
             },
             {
               "type": "state_patch",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "seq": 9,
               "patch": {
                 "runtime": {
@@ -1092,7 +1092,7 @@
             },
             {
               "type": "prompt_done",
-              "taskId": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+              "taskId": "b52ad572-883c-5355-844d-50a394e78e63",
               "stopReason": "end_turn",
               "promptId": "prompt-3"
             }
@@ -1107,7 +1107,7 @@
               "kind": "acp",
               "method": "session/prompt",
               "sessionId": "00000000-0000-4000-8000-000000000001",
-              "text": "From \"Regression review\" (task id ec89e10d-fdab-5b42-b6b7-955be1a7bbbd):\n---8<---\nTask status: done\nReview complete.\n---8<---"
+              "text": "From \"Regression review\" (task id b52ad572-883c-5355-844d-50a394e78e63):\n---8<---\nTask status: done\nReview complete.\n---8<---"
             }
           ]
         },
@@ -1186,7 +1186,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 6,
                 "system_message",
-                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"sourceLabel\":\"Regression review\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Regression review\\\" sent @root\",\"body\":\"Task status: done\\nReview complete.\"}",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"b52ad572-883c-5355-844d-50a394e78e63\",\"sourceLabel\":\"Regression review\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Regression review\\\" sent @root\",\"body\":\"Task status: done\\nReview complete.\"}",
                 "msg:00000000-0000-4000-8000-00000000000a",
                 1789333200000
               ]
@@ -1201,7 +1201,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 7,
                 "collaboration_prompt",
-                "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000a\"],\"text\":\"From \\\"Regression review\\\" (task id ec89e10d-fdab-5b42-b6b7-955be1a7bbbd):\\n---8<---\\nTask status: done\\nReview complete.\\n---8<---\",\"truncated\":false,\"rawSize\":125}",
+                "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000a\"],\"text\":\"From \\\"Regression review\\\" (task id b52ad572-883c-5355-844d-50a394e78e63):\\n---8<---\\nTask status: done\\nReview complete.\\n---8<---\",\"truncated\":false,\"rawSize\":125}",
                 "system",
                 1789333200000
               ]
@@ -1243,7 +1243,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+                "b52ad572-883c-5355-844d-50a394e78e63",
                 5,
                 "user_message",
                 "{\"text\":\"complete regression review\",\"clientOpId\":\"00000000-0000-4000-8000-000000000009\"}",
@@ -1258,7 +1258,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+                "b52ad572-883c-5355-844d-50a394e78e63",
                 8,
                 "assistant_message",
                 "{\"text\":\"Review finished.\"}",
@@ -1273,7 +1273,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+                "b52ad572-883c-5355-844d-50a394e78e63",
                 9,
                 "prompt_done",
                 "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-3\"}",
@@ -1307,7 +1307,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
-              "args": [1789333200000, "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd"]
+              "args": [1789333200000, "b52ad572-883c-5355-844d-50a394e78e63"]
             }
           ],
           [
@@ -1315,17 +1315,17 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET workflow_status = ? WHERE id = ?",
-              "args": ["done", "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd"]
+              "args": ["done", "b52ad572-883c-5355-844d-50a394e78e63"]
             },
             {
               "kind": "write",
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+                "b52ad572-883c-5355-844d-50a394e78e63",
                 6,
                 "task_update",
-                "{\"status\":\"done\",\"body\":\"Review complete.\",\"reason\":\"settled\",\"sourceTaskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\"}",
+                "{\"status\":\"done\",\"body\":\"Review complete.\",\"reason\":\"settled\",\"sourceTaskId\":\"b52ad572-883c-5355-844d-50a394e78e63\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\"}",
                 "agent",
                 1789333200000
               ]
@@ -1336,7 +1336,7 @@
               "sql": "INSERT INTO messages\n         (id, source_task_id, direct_target_task_id, source_actor, body, created_at)\n         VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
                 "00000000-0000-4000-8000-00000000000a",
-                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+                "b52ad572-883c-5355-844d-50a394e78e63",
                 "00000000-0000-4000-8000-000000000001",
                 "agent",
                 "Task status: done\nReview complete.",
@@ -1381,7 +1381,7 @@
               "sql": "INSERT INTO message_projections\n           (message_id, task_id, role, created_at)\n           VALUES (?, ?, 'source', ?)",
               "args": [
                 "00000000-0000-4000-8000-00000000000a",
-                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+                "b52ad572-883c-5355-844d-50a394e78e63",
                 1789333200000
               ]
             },
@@ -1390,10 +1390,10 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+                "b52ad572-883c-5355-844d-50a394e78e63",
                 7,
                 "system_message",
-                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"sourceLabel\":\"Regression review\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Regression review\\\" sent @root\",\"body\":\"Task status: done\\nReview complete.\"}",
+                "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"b52ad572-883c-5355-844d-50a394e78e63\",\"sourceLabel\":\"Regression review\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Regression review\\\" sent @root\",\"body\":\"Task status: done\\nReview complete.\"}",
                 "msg:00000000-0000-4000-8000-00000000000a",
                 1789333200000
               ]
@@ -1438,7 +1438,7 @@
         "last_active_at": 1789333200000
       },
       {
-        "id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+        "id": "b52ad572-883c-5355-844d-50a394e78e63",
         "cwd": "/",
         "title": "Regression review",
         "workflow_status": "done",
@@ -1463,7 +1463,7 @@
       {
         "agent_key": "mock",
         "agent_session_id": "00000000-0000-4000-8000-000000000002",
-        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+        "task_id": "b52ad572-883c-5355-844d-50a394e78e63",
         "created_at": 1789333200000
       }
     ],
@@ -1482,7 +1482,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 2,
         "type": "system_message",
-        "data": "{\"kind\":\"task_created\",\"taskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"taskTitle\":\"Regression review\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Regression review\\\"\",\"body\":\"Task ID: ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+        "data": "{\"kind\":\"task_created\",\"taskId\":\"b52ad572-883c-5355-844d-50a394e78e63\",\"taskTitle\":\"Regression review\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Regression review\\\"\",\"body\":\"Task ID: b52ad572-883c-5355-844d-50a394e78e63\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },
@@ -1491,22 +1491,22 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 3,
         "type": "system_message",
-        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"targetLabel\":\"Regression review\",\"role\":\"source\",\"title\":\"@root sent @\\\"Regression review\\\"\",\"body\":\"park regression review\"}",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"b52ad572-883c-5355-844d-50a394e78e63\",\"targetLabel\":\"Regression review\",\"role\":\"source\",\"title\":\"@root sent @\\\"Regression review\\\"\",\"body\":\"park regression review\"}",
         "created_at": 1789333200000,
         "from_ref": "msg:00000000-0000-4000-8000-000000000007"
       },
       {
         "id": 4,
-        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+        "task_id": "b52ad572-883c-5355-844d-50a394e78e63",
         "seq": 1,
         "type": "system_message",
-        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"targetLabel\":\"Regression review\",\"role\":\"target\",\"title\":\"@root sent @\\\"Regression review\\\"\",\"body\":\"park regression review\"}",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-000000000007\",\"sourceTaskId\":\"00000000-0000-4000-8000-000000000001\",\"sourceLabel\":\"root\",\"targetTaskId\":\"b52ad572-883c-5355-844d-50a394e78e63\",\"targetLabel\":\"Regression review\",\"role\":\"target\",\"title\":\"@root sent @\\\"Regression review\\\"\",\"body\":\"park regression review\"}",
         "created_at": 1789333200000,
         "from_ref": "msg:00000000-0000-4000-8000-000000000007"
       },
       {
         "id": 5,
-        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+        "task_id": "b52ad572-883c-5355-844d-50a394e78e63",
         "seq": 2,
         "type": "collaboration_prompt",
         "data": "{\"messageIds\":[\"00000000-0000-4000-8000-000000000007\"],\"text\":\"From \\\"root\\\" (task id 00000000-0000-4000-8000-000000000001):\\n---8<---\\npark regression review\\n---8<---\",\"truncated\":false,\"rawSize\":100}",
@@ -1533,7 +1533,7 @@
       },
       {
         "id": 8,
-        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+        "task_id": "b52ad572-883c-5355-844d-50a394e78e63",
         "seq": 3,
         "type": "assistant_message",
         "data": "{\"text\":\"REGRESSION_WAIT: review-update\"}",
@@ -1542,7 +1542,7 @@
       },
       {
         "id": 9,
-        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+        "task_id": "b52ad572-883c-5355-844d-50a394e78e63",
         "seq": 4,
         "type": "prompt_done",
         "data": "{\"stopReason\":\"cancelled\",\"promptId\":\"prompt-2\"}",
@@ -1551,7 +1551,7 @@
       },
       {
         "id": 10,
-        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+        "task_id": "b52ad572-883c-5355-844d-50a394e78e63",
         "seq": 5,
         "type": "user_message",
         "data": "{\"text\":\"complete regression review\",\"clientOpId\":\"00000000-0000-4000-8000-000000000009\"}",
@@ -1560,19 +1560,19 @@
       },
       {
         "id": 11,
-        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+        "task_id": "b52ad572-883c-5355-844d-50a394e78e63",
         "seq": 6,
         "type": "task_update",
-        "data": "{\"status\":\"done\",\"body\":\"Review complete.\",\"reason\":\"settled\",\"sourceTaskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\"}",
+        "data": "{\"status\":\"done\",\"body\":\"Review complete.\",\"reason\":\"settled\",\"sourceTaskId\":\"b52ad572-883c-5355-844d-50a394e78e63\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\"}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },
       {
         "id": 12,
-        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+        "task_id": "b52ad572-883c-5355-844d-50a394e78e63",
         "seq": 7,
         "type": "system_message",
-        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"sourceLabel\":\"Regression review\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Regression review\\\" sent @root\",\"body\":\"Task status: done\\nReview complete.\"}",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"b52ad572-883c-5355-844d-50a394e78e63\",\"sourceLabel\":\"Regression review\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"source\",\"title\":\"@\\\"Regression review\\\" sent @root\",\"body\":\"Task status: done\\nReview complete.\"}",
         "created_at": 1789333200000,
         "from_ref": "msg:00000000-0000-4000-8000-00000000000a"
       },
@@ -1581,7 +1581,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 6,
         "type": "system_message",
-        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"ec89e10d-fdab-5b42-b6b7-955be1a7bbbd\",\"sourceLabel\":\"Regression review\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Regression review\\\" sent @root\",\"body\":\"Task status: done\\nReview complete.\"}",
+        "data": "{\"kind\":\"collaboration\",\"messageId\":\"00000000-0000-4000-8000-00000000000a\",\"sourceTaskId\":\"b52ad572-883c-5355-844d-50a394e78e63\",\"sourceLabel\":\"Regression review\",\"targetTaskId\":\"00000000-0000-4000-8000-000000000001\",\"targetLabel\":\"root\",\"role\":\"target\",\"title\":\"@\\\"Regression review\\\" sent @root\",\"body\":\"Task status: done\\nReview complete.\"}",
         "created_at": 1789333200000,
         "from_ref": "msg:00000000-0000-4000-8000-00000000000a"
       },
@@ -1590,7 +1590,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 7,
         "type": "collaboration_prompt",
-        "data": "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000a\"],\"text\":\"From \\\"Regression review\\\" (task id ec89e10d-fdab-5b42-b6b7-955be1a7bbbd):\\n---8<---\\nTask status: done\\nReview complete.\\n---8<---\",\"truncated\":false,\"rawSize\":125}",
+        "data": "{\"messageIds\":[\"00000000-0000-4000-8000-00000000000a\"],\"text\":\"From \\\"Regression review\\\" (task id b52ad572-883c-5355-844d-50a394e78e63):\\n---8<---\\nTask status: done\\nReview complete.\\n---8<---\",\"truncated\":false,\"rawSize\":125}",
         "created_at": 1789333200000,
         "from_ref": "system"
       },
@@ -1614,7 +1614,7 @@
       },
       {
         "id": 17,
-        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+        "task_id": "b52ad572-883c-5355-844d-50a394e78e63",
         "seq": 8,
         "type": "assistant_message",
         "data": "{\"text\":\"Review finished.\"}",
@@ -1623,7 +1623,7 @@
       },
       {
         "id": 18,
-        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+        "task_id": "b52ad572-883c-5355-844d-50a394e78e63",
         "seq": 9,
         "type": "prompt_done",
         "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-3\"}",
@@ -1635,14 +1635,14 @@
       {
         "id": "00000000-0000-4000-8000-000000000007",
         "source_task_id": "00000000-0000-4000-8000-000000000001",
-        "direct_target_task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+        "direct_target_task_id": "b52ad572-883c-5355-844d-50a394e78e63",
         "source_actor": "agent",
         "body": "park regression review",
         "created_at": 1789333200000
       },
       {
         "id": "00000000-0000-4000-8000-00000000000a",
-        "source_task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+        "source_task_id": "b52ad572-883c-5355-844d-50a394e78e63",
         "direct_target_task_id": "00000000-0000-4000-8000-000000000001",
         "source_actor": "agent",
         "body": "Task status: done\nReview complete.",
@@ -1652,7 +1652,7 @@
     "message_projections": [
       {
         "message_id": "00000000-0000-4000-8000-000000000007",
-        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+        "task_id": "b52ad572-883c-5355-844d-50a394e78e63",
         "role": "target",
         "created_at": 1789333200000
       },
@@ -1670,7 +1670,7 @@
       },
       {
         "message_id": "00000000-0000-4000-8000-00000000000a",
-        "task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+        "task_id": "b52ad572-883c-5355-844d-50a394e78e63",
         "role": "source",
         "created_at": 1789333200000
       }
@@ -1679,8 +1679,8 @@
       {
         "id": "00000000-0000-4000-8000-000000000008",
         "message_id": "00000000-0000-4000-8000-000000000007",
-        "recipient_task_id": "ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
-        "idempotency_key": "00000000-0000-4000-8000-000000000007:ec89e10d-fdab-5b42-b6b7-955be1a7bbbd",
+        "recipient_task_id": "b52ad572-883c-5355-844d-50a394e78e63",
+        "idempotency_key": "00000000-0000-4000-8000-000000000007:b52ad572-883c-5355-844d-50a394e78e63",
         "status": "delivered",
         "queued_at": 1789333200000,
         "delivered_at": 1789333200000,
@@ -1709,7 +1709,6 @@
         "source_category": null
       }
     ],
-    "client_ops": [],
     "recent_paths": [
       {
         "cwd": "/",

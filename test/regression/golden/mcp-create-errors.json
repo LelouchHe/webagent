@@ -150,11 +150,11 @@
               "kind": "task_created",
               "messageId": "00000000-0000-4000-8000-000000000007",
               "sourceTaskId": "00000000-0000-4000-8000-000000000001",
-              "targetTaskId": "0b1db73f-3228-5628-bb56-07ad8f0cb09e",
+              "targetTaskId": "1cf57a5d-67a9-570b-b955-94d2a43c1d29",
               "taskTitle": "Unique child",
               "role": "source",
               "title": "Created task @\"Unique child\"",
-              "body": "Task ID: 0b1db73f-3228-5628-bb56-07ad8f0cb09e\nagent: mock\ncwd: /\nmodel: mock-model\nthinking: medium"
+              "body": "Task ID: 1cf57a5d-67a9-570b-b955-94d2a43c1d29\nagent: mock\ncwd: /\nmodel: mock-model\nthinking: medium"
             },
             {
               "type": "state_patch",
@@ -206,11 +206,11 @@
           ]
         },
         {
-          "taskId": "0b1db73f-3228-5628-bb56-07ad8f0cb09e",
+          "taskId": "1cf57a5d-67a9-570b-b955-94d2a43c1d29",
           "events": [
             {
               "type": "available_commands_update",
-              "taskId": "0b1db73f-3228-5628-bb56-07ad8f0cb09e",
+              "taskId": "1cf57a5d-67a9-570b-b955-94d2a43c1d29",
               "commands": [
                 {
                   "name": "context",
@@ -229,7 +229,7 @@
             },
             {
               "type": "task_created",
-              "taskId": "0b1db73f-3228-5628-bb56-07ad8f0cb09e",
+              "taskId": "1cf57a5d-67a9-570b-b955-94d2a43c1d29",
               "agentId": "mock",
               "cwd": "/",
               "cwdDisplay": "/",
@@ -396,7 +396,7 @@
                   "content": [
                     {
                       "type": "text",
-                      "text": "{\"taskId\":\"0b1db73f-3228-5628-bb56-07ad8f0cb09e\"}"
+                      "text": "{\"taskId\":\"1cf57a5d-67a9-570b-b955-94d2a43c1d29\"}"
                     }
                   ]
                 },
@@ -478,7 +478,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 2,
                 "system_message",
-                "{\"kind\":\"task_created\",\"taskId\":\"0b1db73f-3228-5628-bb56-07ad8f0cb09e\",\"taskTitle\":\"Unique child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Unique child\\\"\",\"body\":\"Task ID: 0b1db73f-3228-5628-bb56-07ad8f0cb09e\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+                "{\"kind\":\"task_created\",\"taskId\":\"1cf57a5d-67a9-570b-b955-94d2a43c1d29\",\"taskTitle\":\"Unique child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Unique child\\\"\",\"body\":\"Task ID: 1cf57a5d-67a9-570b-b955-94d2a43c1d29\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
                 "agent",
                 1789333200000
               ]
@@ -528,7 +528,24 @@
               "method": "run",
               "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
               "args": [
-                "0b1db73f-3228-5628-bb56-07ad8f0cb09e",
+                "07051020-7f14-5893-ac60-c93a81cb74de",
+                "/",
+                "agent",
+                "00000000-0000-4000-8000-000000000001",
+                "Unique child",
+                "idle",
+                1789333200000,
+                1789333200000
+              ]
+            }
+          ],
+          [
+            {
+              "kind": "write",
+              "method": "run",
+              "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              "args": [
+                "1cf57a5d-67a9-570b-b955-94d2a43c1d29",
                 "/",
                 "agent",
                 "00000000-0000-4000-8000-000000000001",
@@ -545,24 +562,7 @@
               "args": [
                 "mock",
                 "00000000-0000-4000-8000-000000000002",
-                "0b1db73f-3228-5628-bb56-07ad8f0cb09e",
-                1789333200000
-              ]
-            }
-          ],
-          [
-            {
-              "kind": "write",
-              "method": "run",
-              "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-              "args": [
-                "7127f04b-aeda-517e-966e-9d75b57fb2d5",
-                "/",
-                "agent",
-                "00000000-0000-4000-8000-000000000001",
-                "Unique child",
-                "idle",
-                1789333200000,
+                "1cf57a5d-67a9-570b-b955-94d2a43c1d29",
                 1789333200000
               ]
             }
@@ -580,7 +580,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-              "args": ["agent", "0b1db73f-3228-5628-bb56-07ad8f0cb09e"]
+              "args": ["agent", "1cf57a5d-67a9-570b-b955-94d2a43c1d29"]
             }
           ],
           [
@@ -588,7 +588,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET model = ? WHERE id = ?",
-              "args": ["mock-model", "0b1db73f-3228-5628-bb56-07ad8f0cb09e"]
+              "args": ["mock-model", "1cf57a5d-67a9-570b-b955-94d2a43c1d29"]
             }
           ],
           [
@@ -596,7 +596,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-              "args": ["medium", "0b1db73f-3228-5628-bb56-07ad8f0cb09e"]
+              "args": ["medium", "1cf57a5d-67a9-570b-b955-94d2a43c1d29"]
             }
           ]
         ],
@@ -622,7 +622,7 @@
         "last_active_at": 1789333200000
       },
       {
-        "id": "0b1db73f-3228-5628-bb56-07ad8f0cb09e",
+        "id": "1cf57a5d-67a9-570b-b955-94d2a43c1d29",
         "cwd": "/",
         "title": "Unique child",
         "workflow_status": "idle",
@@ -647,7 +647,7 @@
       {
         "agent_key": "mock",
         "agent_session_id": "00000000-0000-4000-8000-000000000002",
-        "task_id": "0b1db73f-3228-5628-bb56-07ad8f0cb09e",
+        "task_id": "1cf57a5d-67a9-570b-b955-94d2a43c1d29",
         "created_at": 1789333200000
       }
     ],
@@ -666,7 +666,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 2,
         "type": "system_message",
-        "data": "{\"kind\":\"task_created\",\"taskId\":\"0b1db73f-3228-5628-bb56-07ad8f0cb09e\",\"taskTitle\":\"Unique child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Unique child\\\"\",\"body\":\"Task ID: 0b1db73f-3228-5628-bb56-07ad8f0cb09e\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+        "data": "{\"kind\":\"task_created\",\"taskId\":\"1cf57a5d-67a9-570b-b955-94d2a43c1d29\",\"taskTitle\":\"Unique child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Unique child\\\"\",\"body\":\"Task ID: 1cf57a5d-67a9-570b-b955-94d2a43c1d29\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },
@@ -692,7 +692,6 @@
     "messages": [],
     "message_projections": [],
     "deliveries": [],
-    "client_ops": [],
     "recent_paths": [
       {
         "cwd": "/",
