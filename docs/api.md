@@ -343,19 +343,39 @@ local-family target. This is the structured write endpoint used after the
 frontend autocomplete has resolved an `@` target; it does not parse task-path
 text and ignores client-supplied routing metadata.
 
+**Headers:**
+
+| Header | Required | Description |
+|---|---|---|
+| `X-Client-Op-Id` | No | Caller-generated operation ID (1–128 chars) for constructive idempotency. If omitted, each request creates a new message and delivery. If present but empty or longer than 128 chars, the route returns `400`. |
+
 **Request body:**
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `targetTaskId` | string | Yes | Stable target task ID selected by the client |
-| `body` | string | Yes | Non-empty collaboration message body |
+| `body` | string | Yes | Non-empty collaboration message body (trimmed only for non-empty validation; compared verbatim on replay) |
 
-The server verifies only that the target task exists, is live, and differs from
-the source; it does not check a relationship, so a cross-branch or
-cross-archived-tree target is allowed. It atomically writes one Message,
-source and target projections, and a queued Delivery. The sender's projection
-is written and shown at send time; the receiver's is written when the pending
-deliveries are handed to its agent.
+When `X-Client-Op-Id` is supplied, the server derives the persisted `messageId`
+deterministically from a fixed namespace UUID, the authenticated token name
+(`token:<name>`), and the op ID. Within a single database transaction, after
+verifying auth/scope, request shape, and that the source task exists:
+
+- If a message with that ID already exists and its source task, direct target
+  task, and verbatim body match, the route replays `202` with the original
+  `messageId` and `deliveryId`, the delivery's **current** `status`
+  (`queued`, `delivered`, or `failed`), and the echoed `clientOpId`, without
+  repeating activity updates, SSE broadcasts, or drain calls (and without
+  checking whether the target task still exists).
+- If a message with that ID already exists and any of source, target, or
+  verbatim body differs, the route returns `409 Conflict` without performing
+  target validation.
+- Otherwise, the server verifies that the target task exists, is live, and
+  differs from the source; it does not check a relationship, so a cross-branch
+  or cross-archived-tree target is allowed. It atomically writes one Message,
+  source and target projections, and a queued Delivery. The sender's projection
+  is written and shown at send time; the receiver's is written when the pending
+  deliveries are handed to its agent.
 
 `host`-scoped tokens are rejected (`403`) on this route; cross-host messages
 travel over `POST /api/v1/link/entries`.
@@ -370,12 +390,20 @@ null`, and `title: null`; they feed reference existence only.
 {
   "messageId": "message-id",
   "deliveryId": "delivery-id",
-  "status": "queued"
+  "status": "queued",
+  "clientOpId": "op-id-when-supplied"
 }
 ```
 
-**Errors:** `400` (invalid body or the target is the source itself), `404`
-(source or target task absent or deleted).
+`clientOpId` is echoed only when `X-Client-Op-Id` was supplied. On replay,
+`status` reflects the delivery's current state (`queued`, `delivered`, or
+`failed`).
+
+**Errors:** `400` (invalid `X-Client-Op-Id` header, invalid body, or target is
+the source itself on a new operation), `401` (unauthenticated), `403`
+(`host`-scoped token), `404` (source task absent, or target task absent on a
+new operation), `409` (`X-Client-Op-Id` reused with a different source, target,
+or verbatim body).
 
 ---
 
