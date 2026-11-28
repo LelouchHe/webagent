@@ -152,11 +152,20 @@ describe("POST /api/v1/tasks/:id/archive", () => {
 
     assert.equal(store.getTask("area")?.parent_id, null);
     assert.equal(broadcasts.length, 1);
-    assert.equal(broadcasts[0].type, "system_message");
-    const event = broadcasts[0];
-    assert.equal(event.taskId, "area");
-    assert.equal(event.kind, "task_archive");
-    assert.match(event.body ?? "", /original parent/);
+    const feedEntry = broadcasts[0] as unknown as {
+      feed: string;
+      pos: number;
+      prev: number;
+      data: { type: string; data: string };
+    };
+    assert.equal(feedEntry.feed, "area");
+    assert.equal(feedEntry.data.type, "system_message");
+    const parsed = JSON.parse(feedEntry.data.data) as {
+      kind?: string;
+      body?: string;
+    };
+    assert.equal(parsed.kind, "task_archive");
+    assert.match(parsed.body ?? "", /original parent/);
 
     const list = await req(port, "GET", "/api/v1/tasks", apiToken);
     const ids = (JSON.parse(list.body) as Array<{ id: string }>).map(

@@ -729,7 +729,8 @@ function observeStep(
     sse: groupRecords(
       sse,
       (event) => {
-        const taskId = (event as JsonObject).taskId;
+        const obj = event as JsonObject;
+        const taskId = obj.taskId ?? obj.feed;
         return typeof taskId === "string" ? taskId : "*";
       },
       "taskId",

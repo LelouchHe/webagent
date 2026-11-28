@@ -1,0 +1,583 @@
+import assert from "node:assert/strict";
+import { describe, it, before, after, beforeEach } from "node:test";
+import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
+
+describe("contract-08 browser DOM reconciliation (F6, F7, F9, F10)", () => {
+  let state: typeof import("../public/js/state.ts").state;
+  let dom: typeof import("../public/js/state.ts").dom;
+  let events: typeof import("../public/js/events.ts");
+  let persisted: typeof import("../public/js/persisted-event.ts");
+
+  before(async () => {
+    setupDOM();
+    const stateMod = await import("../public/js/state.ts");
+    state = stateMod.state;
+    dom = stateMod.dom;
+    events = await import("../public/js/events.ts");
+    persisted = await import("../public/js/persisted-event.ts");
+  });
+
+  after(() => {
+    teardownDOM();
+  });
+
+  beforeEach(() => {
+    resetState(state, dom);
+    persisted.previewReconciler.reset();
+    state.taskId = "t1";
+    state.lastEventSeq = 0;
+  });
+
+  it("F6: seals provisional idle preview in-place ABOVE optimistic user bubble without duplicating", () => {
+    // 1. Agent streams an idle preview chunk with (epoch, segmentId=1).
+    events.handleEvent({
+      type: "message_chunk",
+      taskId: "t1",
+      text: "partial tail",
+      epoch: "ep-1",
+      segmentId: 1,
+      offset: 0,
+      endOffset: 12,
+    });
+    assert.ok(state.currentAssistantEl);
+    // 2. User submits a new prompt: marks provisional preview and mounts optimistic user bubble below it.
+    state.currentAssistantEl.dataset.previewProvisional = "1";
+    const userBubble = document.createElement("div");
+    userBubble.className = "msg user";
+    userBubble.textContent = "follow up";
+    userBubble.dataset.optimisticOpId = "op-2";
+    dom.messages.appendChild(userBubble);
+    state.currentAssistantEl = null;
+
+    // 3. Server /prompt flushes segment 1 as persisted assistant_message BEFORE user_message.
+    events.applyPersistedEvent({
+      feed: "t1",
+      pos: 1,
+      prev: 0,
+      data: {
+        id: 1,
+        task_id: "t1",
+        seq: 1,
+        type: "assistant_message",
+        data: JSON.stringify({
+          text: "partial tail complete",
+          epoch: "ep-1",
+          segmentId: 1,
+        }),
+        from_ref: "agent",
+        created_at: new Date().toISOString(),
+      },
+    });
+
+    const assistants = dom.messages.querySelectorAll(".msg.assistant");
+    assert.equal(assistants.length, 1, "must not duplicate assistant bubble");
+    const children = [...dom.messages.children];
+    assert.ok(
+      children.indexOf(assistants[0]) < children.indexOf(userBubble),
+      "flushed assistant must stay above optimistic user bubble",
+    );
+  });
+
+  it("F7: completes a bash block across disconnect when bash_result arrives on recovery", () => {
+    events.applyPersistedEvent({
+      feed: "t1",
+      pos: 1,
+      prev: 0,
+      data: {
+        id: 1,
+        task_id: "t1",
+        seq: 1,
+        type: "bash_command",
+        data: JSON.stringify({ command: "echo hi" }),
+        from_ref: "user",
+        created_at: new Date().toISOString(),
+      },
+    });
+    assert.ok(state.currentBashEl, "bash block mounted");
+
+    // Simulate disconnect marking the live bash stream incomplete without destroying the host.
+    state.currentBashEl.dataset.bashDisconnected = "1";
+
+    // Recovery delivers canonical bash_result.
+    events.applyPersistedEvent({
+      feed: "t1",
+      pos: 2,
+      prev: 1,
+      data: {
+        id: 2,
+        task_id: "t1",
+        seq: 2,
+        type: "bash_result",
+        data: JSON.stringify({ output: "hi\n", code: 0, signal: null }),
+        from_ref: "system",
+        created_at: new Date().toISOString(),
+      },
+    });
+
+    assert.equal(state.currentBashEl, null, "bash block sealed");
+    assert.match(dom.messages.textContent, /hi/);
+    assert.equal(state.lastEventSeq, 2);
+  });
+
+  it("F9: applies snapshot pendingPermissions and skips covered state_patch without extra snapshot GET", async () => {
+    let snapshotCalls = 0;
+    const origFetch = globalThis.fetch;
+    const permissionPosts: Array<{
+      url: string;
+      body: Record<string, unknown>;
+    }> = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/snapshot")) snapshotCalls += 1;
+      if (String(url).includes("/permissions/") && init?.method === "POST") {
+        permissionPosts.push({
+          url: String(url),
+          body: JSON.parse(
+            typeof init.body === "string" ? init.body : "{}",
+          ) as Record<string, unknown>,
+        });
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ ok: true }),
+        } as unknown as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            version: 1,
+            seq: 5,
+            task: { id: "t1", cwd: "/tmp", lastEventSeq: 0 },
+            runtime: { busy: null },
+          }),
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    try {
+      const { applySnapshot } = await import("../public/js/state.ts");
+      applySnapshot({
+        version: 1,
+        seq: 5,
+        task: {
+          id: "t1",
+          title: null,
+          cwd: "/tmp",
+          model: null,
+          mode: null,
+          createdAt: null,
+          lastEventSeq: 0,
+        },
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            type: "select",
+            currentValue: "m2",
+            options: [{ value: "m2", name: "Model 2" }],
+          },
+        ],
+        runtime: {
+          busy: null,
+          pendingPermissions: [
+            {
+              requestId: "perm-snap-1",
+              title: "Allow tool?",
+              options: [
+                { optionId: "allow_once", label: "Allow", kind: "allow_once" },
+                { optionId: "reject_once", label: "Deny", kind: "reject_once" },
+              ],
+            },
+          ],
+        },
+      });
+      assert.equal(
+        state.configOptions.find((o) => o.id === "model")?.currentValue,
+        "m2",
+        "recovery snapshot delivers configOptions even if warm arrived before route",
+      );
+      assert.ok(
+        dom.messages.querySelector(
+          '.permission[data-request-id="perm-snap-1"]',
+        ),
+        "pending permission from snapshot must be rendered",
+      );
+
+      // Covered state_patch (seq 4 <= lastStateSeq 5) must be skipped with 0 snapshot GETs.
+      events.handleEvent({
+        type: "state_patch",
+        taskId: "t1",
+        seq: 4,
+        patch: { runtime: { busy: null } },
+      } as any);
+      await new Promise((r) => setTimeout(r, 10));
+      assert.equal(snapshotCalls, 0);
+
+      // R5 + R3-4: reconstructed permission card has labeled buttons and clicking
+      // the deny button (kind: reject_once) sends denied: true.
+      const permCard = dom.messages.querySelector(
+        '.permission[data-request-id="perm-snap-1"]',
+      );
+      const permButtons = Array.from(
+        permCard?.querySelectorAll("button") ?? [],
+      );
+      assert.deepEqual(
+        permButtons.map((b) => b.textContent),
+        ["Allow", "Deny"],
+      );
+      permButtons[1]?.click();
+      await new Promise((r) => setTimeout(r, 10));
+      assert.equal(permissionPosts.length, 1);
+      assert.equal(permissionPosts[0].body.denied, true);
+
+      // R2 + R5: untrusted HTML in permission title stays literal text when settled across disconnect
+      // even after state.pendingPermissionRequestIds was cleared!
+      const xssCard = document.createElement("div");
+      xssCard.className = "permission";
+      xssCard.dataset.requestId = "perm-xss";
+      const titleEl = document.createElement("div");
+      titleEl.className = "title";
+      titleEl.textContent = '<img src=x onerror="window.__xss=1">';
+      const btn = document.createElement("button");
+      btn.textContent = "Allow";
+      xssCard.append(titleEl, btn);
+      dom.messages.appendChild(xssCard);
+      state.pendingPermissionRequestIds.clear();
+
+      applySnapshot({
+        version: 1,
+        seq: 6,
+        task: {
+          id: "t1",
+          title: null,
+          cwd: "/tmp",
+          model: null,
+          mode: null,
+          createdAt: null,
+          lastEventSeq: 0,
+        },
+        runtime: { busy: null, pendingPermissions: [] },
+      });
+      assert.equal(xssCard.querySelector("img"), null, "must not parse HTML");
+      assert.equal(
+        xssCard.querySelector("button"),
+        null,
+        "settled card removes button",
+      );
+      assert.match(
+        xssCard.textContent,
+        /<img src=x onerror="window\.__xss=1"> — resolved/,
+      );
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  it("R7: persisted apply renders directly while replayInProgress without enqueuing into replayQueue", () => {
+    state.replayInProgress = true;
+    state.replayQueue = [];
+    try {
+      events.applyPersistedEvent({
+        feed: "t1",
+        pos: 1,
+        prev: 0,
+        data: {
+          id: 1,
+          task_id: "t1",
+          seq: 1,
+          type: "user_message",
+          data: JSON.stringify({ text: "positioned during replay" }),
+          from_ref: "user",
+          created_at: new Date().toISOString(),
+        },
+      });
+      assert.equal(state.replayQueue.length, 0);
+      assert.equal(state.lastEventSeq, 1);
+      assert.match(dom.messages.textContent, /positioned during replay/);
+    } finally {
+      state.replayInProgress = false;
+    }
+  });
+
+  it("R3-5 + R4-3: adopting optimistic user bubble moves it after earlier persisted tail and BEFORE #waiting", () => {
+    const userEl = document.createElement("div");
+    userEl.className = "msg user";
+    userEl.dataset.optimisticOpId = "op-order-1";
+    userEl.textContent = "follow-up prompt";
+    dom.messages.appendChild(userEl);
+    const waitingEl = document.createElement("div");
+    waitingEl.id = "waiting";
+    waitingEl.textContent = "thinking...";
+    dom.messages.appendChild(waitingEl);
+
+    // Persisted assistant tail (seq 1) arrives with NO preview DOM in the page.
+    events.applyPersistedEvent({
+      feed: "t1",
+      pos: 1,
+      prev: 0,
+      data: {
+        id: 1,
+        task_id: "t1",
+        seq: 1,
+        type: "assistant_message",
+        data: JSON.stringify({ text: "prior tail without preview" }),
+        from_ref: "agent",
+        created_at: new Date().toISOString(),
+      },
+    });
+    // Re-ensure #waiting is at bottom (assistant_message hides it; re-attach to verify user adoption placement).
+    dom.messages.appendChild(waitingEl);
+    // Optimistic successor's echo (seq 2) adopts the user bubble.
+    events.applyPersistedEvent({
+      feed: "t1",
+      pos: 2,
+      prev: 1,
+      data: {
+        id: 2,
+        task_id: "t1",
+        seq: 2,
+        type: "user_message",
+        data: JSON.stringify({
+          text: "follow-up prompt",
+          clientOpId: "op-order-1",
+        }),
+        from_ref: "user",
+        created_at: new Date().toISOString(),
+      },
+    });
+
+    const children = Array.from(dom.messages.children);
+    assert.equal(children.length, 3);
+    assert.ok(children[0].classList.contains("assistant"));
+    assert.ok(children[1].classList.contains("user"));
+    assert.equal(children[1].getAttribute("data-optimistic-op-id"), null);
+    assert.equal(
+      children[2].id,
+      "waiting",
+      "#waiting stays below adopted user bubble",
+    );
+  });
+
+  it("R4-1 (/new): resetTaskUI immediately publishes visibility(null) to clear push suppression before lease tick", async () => {
+    const { resetTaskUI } = await import("../public/js/state.ts");
+    const origSharedWorker = globalThis.SharedWorker;
+    const origEventSource = globalThis.EventSource;
+    const origFetch = globalThis.fetch;
+    const visPosts: string[][] = [];
+    let activeEs: {
+      onmessage?: ((ev: MessageEvent) => void) | null;
+      onerror?: (() => void) | null;
+      close: () => void;
+    } | null = null;
+    class FakeES {
+      onmessage: ((ev: MessageEvent) => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor() {
+        // eslint-disable-next-line @typescript-eslint/no-this-alias
+        activeEs = this;
+      }
+      addEventListener() {}
+      close() {}
+    }
+    try {
+      // Force DirectPort fallback so SyncHub runs in-process for deterministic assertions.
+      (globalThis as Record<string, unknown>).SharedWorker = undefined;
+      (globalThis as Record<string, unknown>).EventSource = FakeES;
+      globalThis.fetch = (async (url: string, init?: RequestInit) => {
+        if (String(url).includes("/sse-ticket")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ ticket: "tk" }),
+          } as Response;
+        }
+        if (String(url).includes("/visibility") && init?.method === "POST") {
+          const body = JSON.parse(
+            typeof init.body === "string" ? init.body : "{}",
+          ) as { taskIds?: string[] };
+          visPosts.push(body.taskIds ?? []);
+          return { ok: true, status: 204, json: async () => ({}) } as Response;
+        }
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ tasks: [], agents: [] }),
+          json: async () => ({ tasks: [], agents: [] }),
+        } as Response;
+      }) as typeof fetch;
+
+      const conn = await import("../public/js/connection.ts");
+      state.taskId = "t-active";
+      conn.connect();
+      await new Promise((r) => setTimeout(r, 10));
+      activeEs!.onmessage?.({
+        data: JSON.stringify({
+          type: "connected",
+          clientId: "c-reset-1",
+          pendingCount: 0,
+        }),
+      } as MessageEvent);
+      await new Promise((r) => setTimeout(r, 10));
+      assert.deepEqual(visPosts.at(-1), ["t-active"]);
+
+      // Leaving the view via /new (resetTaskUI while state.taskId is still set
+      // before caller clears it) must IMMEDIATELY post taskIds: [] without
+      // waiting for the 10s lease tick.
+      resetTaskUI();
+      assert.deepEqual(visPosts.at(-1), []);
+    } finally {
+      (globalThis as Record<string, unknown>).SharedWorker = origSharedWorker;
+      (globalThis as Record<string, unknown>).EventSource = origEventSource;
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  it("R4-2: cold tab holding a #hash ignores foreign raw task_created without rewriting hash", () => {
+    state.taskId = null;
+    state.awaitingNewTask = false;
+    state.pendingNewTaskOpId = null;
+    state.pendingNavigationTaskId = null;
+    window.location.hash = "#my-saved-task";
+
+    persisted.handleHubControlEvent(
+      {
+        type: "task_created",
+        taskId: "foreign-task-id",
+        title: "Foreign",
+        configOptions: [],
+      },
+      events.handleEvent,
+    );
+
+    assert.equal(state.taskId, null);
+    assert.equal(window.location.hash, "#my-saved-task");
+  });
+
+  it("R3-6: handleHubControlEvent delegates task_title_updated/task_deleted once without duplicate pre-observation", () => {
+    let forwarded = 0;
+    persisted.handleHubControlEvent(
+      { type: "task_title_updated", taskId: "t1", title: "Renamed" },
+      () => {
+        forwarded += 1;
+      },
+    );
+    persisted.handleHubControlEvent(
+      { type: "task_deleted", taskId: "t2" },
+      () => {
+        forwarded += 1;
+      },
+    );
+    assert.equal(forwarded, 2);
+  });
+
+  it("F10: does not advance state.lastEventSeq when JSON is malformed or sink throws", () => {
+    assert.throws(() => {
+      events.applyPersistedEvent({
+        feed: "t1",
+        pos: 1,
+        prev: 0,
+        data: {
+          id: 1,
+          task_id: "t1",
+          seq: 1,
+          type: "user_message",
+          data: "{not-valid-json",
+          from_ref: "user",
+          created_at: new Date().toISOString(),
+        },
+      });
+    });
+    assert.equal(state.lastEventSeq, 0);
+
+    assert.throws(() => {
+      persisted.applyPersistedEventImpl(
+        {
+          feed: "t1",
+          pos: 1,
+          prev: 0,
+          data: {
+            id: 1,
+            task_id: "t1",
+            seq: 1,
+            type: "tool_call",
+            data: JSON.stringify({ id: "tc-1", title: "boom" }),
+            from_ref: "agent",
+            created_at: new Date().toISOString(),
+          },
+        },
+        {
+          liveHooks: () => ({}) as any,
+          scheduleAssistantRender: () => {},
+          promptStopNotice: () => null,
+          handleEvent: () => {
+            throw new Error("sink boom");
+          },
+        },
+      );
+    }, /sink boom/);
+    assert.equal(state.lastEventSeq, 0);
+  });
+
+  it("dogfood: tool_call_raw_output preserves completed tool_call status icon and class", () => {
+    events.handleEvent({
+      type: "tool_call",
+      taskId: "t1",
+      id: "tc-raw-1",
+      title: "Run command",
+      kind: "execute",
+    });
+    events.handleEvent({
+      type: "tool_call_update",
+      taskId: "t1",
+      id: "tc-raw-1",
+      status: "completed",
+      content: [{ type: "content", content: { type: "text", text: "ok" } }],
+    });
+    const el = dom.messages.querySelector<HTMLElement>("#tc-tc-raw-1");
+    assert.ok(el);
+    const completedClass = el.className;
+    const completedIcon = el.querySelector(".icon")?.textContent;
+    assert.ok(completedIcon && completedIcon !== "…");
+    assert.ok(completedClass.includes("completed"));
+
+    events.handleEvent({
+      type: "tool_call_raw_output",
+      taskId: "t1",
+      id: "tc-raw-1",
+      rawOutput: { exitCode: 0 },
+    });
+
+    assert.equal(el.className, completedClass);
+    assert.equal(el.querySelector(".icon")?.textContent, completedIcon);
+    assert.ok(el.querySelector("details.tc-raw-output"));
+  });
+
+  it("dogfood: persisted bash_result settles a replayed .bash-block after reload when currentBashEl is null", () => {
+    // Simulate a page reload mid-bash: loadHistory replayed bash_command into
+    // DOM without populating state.currentBashEl.
+    const block = document.createElement("div");
+    block.className = "bash-block";
+    block.innerHTML =
+      '<div class="bash-cmd running">$ sleep 2 &amp;&amp; echo hi</div><pre class="bash-output"></pre>';
+    dom.messages.appendChild(block);
+    state.currentBashEl = null;
+
+    events.applyPersistedEvent({
+      feed: "t1",
+      pos: 2,
+      prev: 1,
+      data: {
+        id: 2,
+        task_id: "t1",
+        seq: 2,
+        type: "bash_result",
+        data: JSON.stringify({ output: "hi\n", code: 0, signal: null }),
+        from_ref: "system",
+        created_at: new Date().toISOString(),
+      },
+    });
+
+    assert.equal(block.querySelector(".bash-output")?.textContent, "hi\n");
+    assert.ok(!block.querySelector(".bash-cmd")?.classList.contains("running"));
+  });
+});

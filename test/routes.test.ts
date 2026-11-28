@@ -312,14 +312,18 @@ describe("HTTP routes", () => {
     assert.equal(res.status, 404);
   });
 
-  it("GET /api/v1/tasks/:id/events returns events", async () => {
+  it("GET /api/v1/tasks/:id/events returns feed entries", async () => {
     store.createTask("s1", "/x", "auto", "test-agent");
     store.saveEvent("s1", "user_message", { text: "hi" }, { from_ref: "user" });
     const res = await makeRequest(port, "GET", "/api/v1/tasks/s1/events");
     assert.equal(res.status, 200);
     const body = JSON.parse(res.body);
     assert.equal(body.events.length, 1);
-    assert.deepEqual(body.streaming, { thinking: false, assistant: false });
+    assert.equal(body.events[0].feed, "s1");
+    assert.equal(body.events[0].pos, 1);
+    assert.equal(body.events[0].prev, 0);
+    assert.equal(body.events[0].data.type, "user_message");
+    assert.equal(body.streaming, undefined);
   });
 
   it("GET /api/v1/tasks/:id/events?after=N returns only new events", async () => {
@@ -341,7 +345,9 @@ describe("HTTP routes", () => {
     assert.equal(res.status, 200);
     const body = JSON.parse(res.body);
     assert.equal(body.events.length, 2);
-    assert.equal(body.events[0].seq, 2);
+    assert.equal(body.events[0].pos, 2);
+    assert.equal(body.events[0].prev, 1);
+    assert.equal(body.events[0].data.seq, 2);
   });
 
   it("GET /api/v1/tasks/:id/events?limit=N returns latest N events in ASC order", async () => {
@@ -363,9 +369,9 @@ describe("HTTP routes", () => {
     const body = JSON.parse(res.body);
     assert.equal(body.events.length, 3);
     // Should be the last 3, in ascending order
-    assert.equal(body.events[0].seq, 3);
-    assert.equal(body.events[1].seq, 4);
-    assert.equal(body.events[2].seq, 5);
+    assert.equal(body.events[0].pos, 3);
+    assert.equal(body.events[1].pos, 4);
+    assert.equal(body.events[2].pos, 5);
     assert.equal(body.total, 5);
     assert.equal(body.hasMore, true);
   });
@@ -387,7 +393,7 @@ describe("HTTP routes", () => {
       "/api/v1/tasks/s1/events?limit=3",
     );
     const body1 = JSON.parse(res1.body);
-    assert.equal(body1.events[0].seq, 8);
+    assert.equal(body1.events[0].pos, 8);
     assert.equal(body1.hasMore, true);
 
     // Get 3 before seq 8
@@ -398,8 +404,8 @@ describe("HTTP routes", () => {
     );
     const body2 = JSON.parse(res2.body);
     assert.equal(body2.events.length, 3);
-    assert.equal(body2.events[0].seq, 5);
-    assert.equal(body2.events[2].seq, 7);
+    assert.equal(body2.events[0].pos, 5);
+    assert.equal(body2.events[2].pos, 7);
     assert.equal(body2.hasMore, true);
 
     // Get 3 before seq 5
@@ -410,8 +416,8 @@ describe("HTTP routes", () => {
     );
     const body3 = JSON.parse(res3.body);
     assert.equal(body3.events.length, 3);
-    assert.equal(body3.events[0].seq, 2);
-    assert.equal(body3.events[2].seq, 4);
+    assert.equal(body3.events[0].pos, 2);
+    assert.equal(body3.events[2].pos, 4);
     assert.equal(body3.hasMore, true);
 
     // Get remaining before seq 2
@@ -422,7 +428,7 @@ describe("HTTP routes", () => {
     );
     const body4 = JSON.parse(res4.body);
     assert.equal(body4.events.length, 1);
-    assert.equal(body4.events[0].seq, 1);
+    assert.equal(body4.events[0].pos, 1);
     assert.equal(body4.hasMore, false);
   });
 

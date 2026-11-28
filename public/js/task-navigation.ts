@@ -1,6 +1,11 @@
 import { ApiError, consumeMessage, getTask } from "./api.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
-import { drainNavigationEvents, handleEvent, loadHistory } from "./events.ts";
+import {
+  announceNavigationRoute,
+  drainNavigationEvents,
+  handleEvent,
+  loadHistory,
+} from "./events.ts";
 import { addSystem, scrollToBottom } from "./render.ts";
 import {
   hydrateTaskRuntime,
@@ -42,6 +47,10 @@ export async function switchToTask(taskId: string): Promise<NavigationResult> {
     generation === state.taskSwitchGen &&
     connectionEpoch === state.connectionEpoch &&
     state.pendingNavigationTaskId === taskId;
+
+  // Synchronously announce intended route to SyncHub BEFORE warm: true so
+  // task_runtime_warmed is routed to this tab, without starting a consumer early.
+  announceNavigationRoute(taskId);
 
   try {
     const [task, loaded] = await Promise.all([

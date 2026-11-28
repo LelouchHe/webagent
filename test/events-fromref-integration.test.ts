@@ -4,6 +4,11 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
+import {
+  projectLegacyPerTaskEvent,
+  projectStoredEvents,
+  toEventFeedEntries,
+} from "../src/event-egress.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { handleAgentEvent } from "../src/event-handler.ts";
@@ -36,6 +41,13 @@ describe("event writers populate from_ref correctly", () => {
     tasks = createTaskManager(store, tmpDir, tmpDir);
     store.createTask("s1", "/tmp", "auto", "test-agent");
     broadcasts = [];
+    store.onEventsCommitted((rows) => {
+      const projected = projectStoredEvents(rows, { store, tasks });
+      for (const entry of toEventFeedEntries(projected)) {
+        const legacy = projectLegacyPerTaskEvent(entry.data);
+        if (legacy) broadcasts.push(legacy);
+      }
+    });
   });
 
   afterEach(() => {
@@ -123,8 +135,8 @@ describe("event writers populate from_ref correctly", () => {
       content.map((event) => event.type),
       ["assistant_message", "agent_image", "assistant_message"],
     );
-    assert.deepEqual(JSON.parse(content[0].data), { text: "before" });
-    assert.deepEqual(JSON.parse(content[2].data), { text: "after" });
+    assert.equal(JSON.parse(content[0].data).text, "before");
+    assert.equal(JSON.parse(content[2].data).text, "after");
     assert.equal(content[1].from_ref, "agent");
 
     // The bytes are NOT in the transcript: only a reference to the stored

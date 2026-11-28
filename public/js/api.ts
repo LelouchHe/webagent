@@ -2,31 +2,19 @@
 // Replaces WebSocket message sends with typed fetch calls.
 
 import type { ConfigOption, TaskDetail, TaskSummary } from "../../src/types.ts";
-import { HTTP_STATUS } from "../../src/http-status.ts";
 import type { CollaborationDeliveryStatus } from "../../src/shared/delivery-status.ts";
+import { SYNC_REQUEST_DEFAULTS } from "../../src/shared/sync/index.ts";
+import {
+  ApiError,
+  InvalidRequestError,
+  isRejectedApiError,
+  isUnknownApiError,
+  extractErrorInfo,
+  sendApiRaw,
+  request,
+} from "./api-transport.ts";
 
-export class ApiError extends Error {
-  name = "ApiError";
-  status: number;
-  /** The agent the server actually tried to start, when the failure names one.
-   *  A create/clear target can be inherited, so the caller's submission-time
-   *  guess may be wrong; this is the server's own answer. */
-  agentId: string | null;
-  constructor(status: number, message: string, agentId: string | null = null) {
-    super(message);
-    this.status = status;
-    this.agentId = agentId;
-  }
-}
-
-/**
- * A request the client refuses to build. It never reaches the server, so it
- * cannot produce an HTTP status; the failure report path treats it as a
- * definite rejection.
- */
-export class InvalidRequestError extends Error {
-  name = "InvalidRequestError";
-}
+export { ApiError, InvalidRequestError, isRejectedApiError, isUnknownApiError };
 
 /**
  * The `agentId` field of a task request.
@@ -90,56 +78,56 @@ export async function withTimeout<T>(
   }
 }
 
-async function request<T = unknown>(
-  url: string,
-  init?: RequestInit,
-  timeoutMs: number = DEFAULT_TIMEOUT_MS,
-): Promise<T> {
-  return withTimeout(async (signal) => {
-    const res = await fetch(url, signal ? { ...init, signal } : init);
-    if (!res.ok) {
-      let message = `HTTP ${res.status}`;
-      let agentId: string | null = null;
-      try {
-        const body = (await res.json()) as Record<string, unknown>;
-        if (body.error)
-          message =
-            typeof body.error === "string"
-              ? body.error
-              : JSON.stringify(body.error);
-        // Only this one field is lifted out of the body: a failed start names
-        // its real target, everything else stays a message.
-        if (typeof body.agentId === "string") agentId = body.agentId;
-      } catch {
-        /* non-JSON error body */
-      }
-      throw new ApiError(res.status, message, agentId);
-    }
-    const text = await res.text();
-    if (!text) return undefined as T;
-    return JSON.parse(text) as T;
-  }, timeoutMs);
-}
-
-function post<T = unknown>(
+function postWrite<T = unknown>(
   url: string,
   body: Record<string, unknown>,
   clientOpId?: string,
-  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+  preset: {
+    timeoutMs: number;
+    retries: number;
+    backoffMs?: readonly number[];
+  } = SYNC_REQUEST_DEFAULTS.write,
+  expectEmpty?: boolean,
 ): Promise<T> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (clientOpId) headers["X-Client-Op-Id"] = clientOpId;
-  return request<T>(
-    url,
-    {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-    },
-    timeoutMs,
-  );
+  return request<T>(url, {
+    method: "POST",
+    body,
+    opId: clientOpId ?? newOpId(),
+    timeoutMs: preset.timeoutMs,
+    retries: preset.retries,
+    backoffMs: preset.backoffMs,
+    expectEmpty,
+  });
+}
+
+function putWrite<T = unknown>(
+  url: string,
+  body: Record<string, unknown>,
+  clientOpId?: string,
+  expectEmpty?: boolean,
+): Promise<T> {
+  return request<T>(url, {
+    method: "PUT",
+    body,
+    opId: clientOpId ?? newOpId(),
+    ...SYNC_REQUEST_DEFAULTS.write,
+    expectEmpty,
+  });
+}
+
+function deleteWrite<T = unknown>(
+  url: string,
+  body?: Record<string, unknown>,
+  clientOpId?: string,
+  expectEmpty?: boolean,
+): Promise<T> {
+  return request<T>(url, {
+    method: "DELETE",
+    ...(body !== undefined ? { body } : {}),
+    opId: clientOpId ?? newOpId(),
+    ...SYNC_REQUEST_DEFAULTS.write,
+    expectEmpty,
+  });
 }
 
 export function newOpId(): string {
@@ -189,17 +177,22 @@ export function createTask(
   if (opts?.inheritFromTaskId) body.inheritFromTaskId = opts.inheritFromTaskId;
   if (opts?.parentId) body.parentId = opts.parentId;
   if (opts?.title !== undefined) body.title = opts.title;
-  return post("/api/v1/tasks", body, clientOpId);
+  // Create stays single-shot (retries: 0) until hard-deleted tasks retain replay identity.
+  return postWrite(
+    "/api/v1/tasks",
+    body,
+    clientOpId,
+    SYNC_REQUEST_DEFAULTS.create,
+  );
 }
 
 export function bootstrapTask(
   clientOpId?: string,
 ): Promise<Record<string, unknown>> {
-  const headers: Record<string, string> = {};
-  if (clientOpId) headers["X-Client-Op-Id"] = clientOpId;
   return request("/api/v1/tasks/bootstrap", {
     method: "POST",
-    headers,
+    opId: clientOpId ?? newOpId(),
+    ...SYNC_REQUEST_DEFAULTS.slowWrite,
   });
 }
 
@@ -217,14 +210,14 @@ export function clearTask(
     ...agentIdField(opts?.agentId, "clearTask"),
   };
   if (opts?.cwd) body.cwd = opts.cwd;
-  return post("/api/v1/tasks/" + id + "/clear", body);
+  return postWrite("/api/v1/tasks/" + id + "/clear", body);
 }
 
 export function compactTask(
   id: string,
   prompt?: string,
 ): Promise<Record<string, unknown>> {
-  return post("/api/v1/tasks/" + id + "/compact", {
+  return postWrite("/api/v1/tasks/" + id + "/compact", {
     ...(prompt !== undefined ? { prompt } : {}),
   });
 }
@@ -241,12 +234,10 @@ export async function deleteTask(
   id: string,
 ): Promise<DeleteTaskResult | undefined> {
   const clientOpId = newOpId();
-  const result = await request<DeleteTaskResult | undefined>(
+  const result = await deleteWrite<DeleteTaskResult | undefined>(
     "/api/v1/tasks/" + id,
-    {
-      method: "DELETE",
-      headers: { "X-Client-Op-Id": clientOpId },
-    },
+    undefined,
+    clientOpId,
   );
   return result
     ? { ...result, clientOpId: result.clientOpId ?? clientOpId }
@@ -264,7 +255,7 @@ export interface ArchiveTaskResult {
 }
 
 export function archiveTask(id: string): Promise<ArchiveTaskResult> {
-  return post(`/api/v1/tasks/${encodeURIComponent(id)}/archive`, {});
+  return postWrite(`/api/v1/tasks/${encodeURIComponent(id)}/archive`, {});
 }
 
 export interface UnarchiveTaskResult {
@@ -275,7 +266,7 @@ export interface UnarchiveTaskResult {
 }
 
 export function unarchiveTask(id: string): Promise<UnarchiveTaskResult> {
-  return post(`/api/v1/tasks/${encodeURIComponent(id)}/unarchive`, {});
+  return postWrite(`/api/v1/tasks/${encodeURIComponent(id)}/unarchive`, {});
 }
 
 /** Only the tops of archived trees: a live parentless non-Root task is what
@@ -297,8 +288,6 @@ export type CollaborationMessageSendResult =
   | { kind: "rejected"; status: number; message: string }
   | { kind: "unknown"; message: string };
 
-const COLLABORATION_MESSAGE_RETRIES = 2;
-
 export async function sendCollaborationMessage(
   sourceTaskId: string,
   targetTaskId: string,
@@ -306,33 +295,31 @@ export async function sendCollaborationMessage(
   clientOpId: string | null,
 ): Promise<CollaborationMessageSendResult> {
   const url = `/api/v1/tasks/${encodeURIComponent(sourceTaskId)}/messages`;
-  const maxAttempts =
-    clientOpId === null ? 1 : 1 + COLLABORATION_MESSAGE_RETRIES;
-  let lastUnknown: { kind: "unknown"; message: string } | null = null;
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    try {
-      const response = await post<CollaborationMessageAccepted>(
-        url,
-        { targetTaskId, body },
-        clientOpId ?? undefined,
-      );
-      return { kind: "accepted", response };
-    } catch (err) {
-      if (
-        err instanceof ApiError &&
-        err.status >= HTTP_STATUS.BAD_REQUEST &&
-        err.status < HTTP_STATUS.INTERNAL_SERVER_ERROR
-      ) {
-        if (lastUnknown !== null) return lastUnknown;
-        return { kind: "rejected", status: err.status, message: err.message };
-      }
-      lastUnknown = {
-        kind: "unknown",
-        message: err instanceof Error ? err.message : String(err),
-      };
-    }
+  const result = await sendApiRaw(url, {
+    method: "POST",
+    body: { targetTaskId, body },
+    opId: clientOpId,
+    ...SYNC_REQUEST_DEFAULTS.write,
+  });
+  if (result.kind === "success") {
+    return {
+      kind: "accepted",
+      response: result.body as CollaborationMessageAccepted,
+    };
   }
-  return lastUnknown!;
+  if (result.kind === "rejected") {
+    const { message } = extractErrorInfo(result.body, result.status);
+    return { kind: "rejected", status: result.status, message };
+  }
+  const message =
+    result.kind === "unknown"
+      ? result.status !== undefined
+        ? extractErrorInfo(result.body, result.status).message
+        : result.error instanceof Error
+          ? result.error.message
+          : String(result.error)
+      : "Request skipped";
+  return { kind: "unknown", message };
 }
 
 /** A remote child in a list read; it follows its local parent. */
@@ -433,8 +420,66 @@ export function listFiles(
 }
 
 /** client-server-split M1: fetch the current runtime snapshot. */
-export function getSnapshot(id: string): Promise<Record<string, unknown>> {
-  return request("/api/v1/tasks/" + id + "/snapshot?warm=1");
+export function getSnapshot(
+  id: string,
+  opts?: { warm?: boolean; signal?: AbortSignal },
+): Promise<Record<string, unknown>> {
+  const warm = opts?.warm !== false ? "?warm=1" : "";
+  return request("/api/v1/tasks/" + id + "/snapshot" + warm, {
+    signal: opts?.signal,
+    timeoutMs: FAST_TIMEOUT_MS,
+  });
+}
+
+export interface StoredEventRow {
+  id: number;
+  task_id: string;
+  seq: number;
+  type: string;
+  data: string;
+  from_ref: string;
+  created_at: string;
+}
+
+export interface TaskEventFeedEntry {
+  feed: string;
+  pos: number;
+  prev: number;
+  data: StoredEventRow;
+}
+
+export interface TaskEventsResponse {
+  events: TaskEventFeedEntry[];
+  hasMore?: boolean;
+  total?: number;
+  imageReferences?: unknown;
+}
+
+export function getTaskEvents(
+  taskId: string,
+  opts: {
+    after?: number;
+    before?: number;
+    upTo?: number;
+    limit?: number;
+    thinking?: boolean;
+    signal?: AbortSignal;
+  } = {},
+): Promise<TaskEventsResponse> {
+  const params = new URLSearchParams();
+  if (opts.thinking === false) params.set("thinking", "0");
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts.after !== undefined) params.set("after", String(opts.after));
+  if (opts.before !== undefined) params.set("before", String(opts.before));
+  if (opts.upTo !== undefined) params.set("upTo", String(opts.upTo));
+  const qs = params.toString();
+  return request<TaskEventsResponse>(
+    `/api/v1/tasks/${encodeURIComponent(taskId)}/events${qs ? `?${qs}` : ""}`,
+    {
+      signal: opts.signal,
+      timeoutMs: FAST_TIMEOUT_MS,
+    },
+  );
 }
 
 // --- Prompt ---
@@ -454,7 +499,7 @@ export function sendMessage(
 ): Promise<unknown> {
   const body: Record<string, unknown> = { text };
   if (attachments?.length) body.attachments = attachments;
-  return post("/api/v1/tasks/" + taskId + "/prompt", body, clientOpId);
+  return postWrite("/api/v1/tasks/" + taskId + "/prompt", body, clientOpId);
 }
 
 // --- Cancel ---
@@ -465,7 +510,7 @@ export interface CancelResult {
 }
 
 export function cancelTask(taskId: string): Promise<CancelResult> {
-  return post("/api/v1/tasks/" + taskId + "/cancel", {}, newOpId());
+  return postWrite("/api/v1/tasks/" + taskId + "/cancel", {}, newOpId());
 }
 
 // --- Permissions ---
@@ -475,10 +520,12 @@ export function resolvePermission(
   requestId: string,
   optionId: string,
 ): Promise<void> {
-  return post(
+  return postWrite(
     "/api/v1/tasks/" + taskId + "/permissions/" + requestId,
     { optionId },
     newOpId(),
+    SYNC_REQUEST_DEFAULTS.write,
+    true,
   );
 }
 
@@ -486,10 +533,12 @@ export function denyPermission(
   taskId: string,
   requestId: string,
 ): Promise<void> {
-  return post(
+  return postWrite(
     "/api/v1/tasks/" + taskId + "/permissions/" + requestId,
     { denied: true },
     newOpId(),
+    SYNC_REQUEST_DEFAULTS.write,
+    true,
   );
 }
 
@@ -502,69 +551,205 @@ export function setConfig(
 ): Promise<void> {
   const urlId = configId.replace(/_/g, "-");
   const path = typeof value === "boolean" ? "config/" + urlId : urlId;
-  return request("/api/v1/tasks/" + taskId + "/" + path, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ value }),
-  });
+  return putWrite(
+    "/api/v1/tasks/" + taskId + "/" + path,
+    { value },
+    undefined,
+    true,
+  );
 }
 
 export function setTitle(taskId: string, title: string): Promise<void> {
-  return request("/api/v1/tasks/" + taskId + "/title", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ value: title }),
-  });
+  return putWrite(
+    "/api/v1/tasks/" + taskId + "/title",
+    { value: title },
+    undefined,
+    true,
+  );
 }
 
 // --- Bash ---
 
 export function execBash(taskId: string, command: string): Promise<unknown> {
-  return post("/api/v1/tasks/" + taskId + "/bash", { command });
+  return postWrite("/api/v1/tasks/" + taskId + "/bash", { command });
 }
 
 export function cancelBash(taskId: string): Promise<void> {
-  return post("/api/v1/tasks/" + taskId + "/bash/cancel", {});
+  return postWrite(
+    "/api/v1/tasks/" + taskId + "/bash/cancel",
+    {},
+    undefined,
+    SYNC_REQUEST_DEFAULTS.write,
+    true,
+  );
 }
 
 // --- Visibility ---
 
 export function postVisibility(
   clientId: string,
-  visible: boolean,
-  taskId?: string,
+  taskIds: readonly string[],
+  rev = 1,
 ): Promise<void> {
-  const body: Record<string, unknown> = { visible };
-  if (taskId) body.taskId = taskId;
-  return post(
-    "/api/beta/clients/" + clientId + "/visibility",
-    body,
-    undefined,
-    FAST_TIMEOUT_MS,
+  return request(
+    "/api/beta/clients/" + encodeURIComponent(clientId) + "/visibility",
+    {
+      method: "POST",
+      body: { taskIds: [...taskIds] },
+      headers: { "X-Visibility-Rev": String(rev) },
+      opId: null,
+      timeoutMs: FAST_TIMEOUT_MS,
+      expectEmpty: true,
+    },
   );
 }
 
-// --- Status ---
+// --- Status & Version ---
 
 export function getStatus(taskId: string): Promise<Record<string, unknown>> {
   return request("/api/v1/tasks/" + taskId + "/status");
 }
 
+export function getVersion(): Promise<Record<string, unknown>> {
+  return request("/api/v1/version");
+}
+
+export function getRecentPaths(
+  limit?: number,
+): Promise<Array<{ cwd: string; cwdDisplay?: string; last_used_at: string }>> {
+  const url =
+    limit && limit > 0
+      ? `/api/v1/recent-paths?limit=${limit}`
+      : "/api/v1/recent-paths";
+  return request(url);
+}
+
 // --- Bridge ---
 
 export function reloadAgent(taskId?: string): Promise<void> {
-  return post("/api/v1/bridge/reload", taskId === undefined ? {} : { taskId });
+  return postWrite(
+    "/api/v1/bridge/reload",
+    taskId === undefined ? {} : { taskId },
+    undefined,
+    SYNC_REQUEST_DEFAULTS.slowWrite,
+    true,
+  );
 }
 
 // --- SSE ticket ---
 
-export function mintSseTicket(): Promise<{
+export function mintSseTicket(signal?: AbortSignal): Promise<{
   ticket: string;
   expiresIn: number;
 }> {
-  // The reconnect chain blocks on this: a stalled mint used to leave the
-  // client permanently in "connecting" because the retry only runs on reject.
-  return post("/api/v1/sse-ticket", {}, undefined, FAST_TIMEOUT_MS);
+  return request("/api/v1/sse-ticket", {
+    method: "POST",
+    body: {},
+    opId: null,
+    timeoutMs: FAST_TIMEOUT_MS,
+    signal,
+  });
+}
+
+// --- Push ---
+
+export function getPushVapidKey(): Promise<{ publicKey: string }> {
+  return request("/api/beta/push/vapid-key");
+}
+
+export function subscribePushEndpoint(payload: {
+  endpoint?: string;
+  keys?: Record<string, string>;
+  clientId: string | null;
+}): Promise<void> {
+  return postWrite(
+    "/api/beta/push/subscribe",
+    payload as Record<string, unknown>,
+    undefined,
+    SYNC_REQUEST_DEFAULTS.write,
+    true,
+  );
+}
+
+export function unsubscribePushEndpoint(endpoint: string): Promise<void> {
+  return postWrite(
+    "/api/beta/push/unsubscribe",
+    { endpoint },
+    undefined,
+    SYNC_REQUEST_DEFAULTS.write,
+    true,
+  );
+}
+
+export function registerPushClient(
+  clientId: string,
+  endpoint: string,
+): Promise<void> {
+  return request("/api/beta/push/register-client", {
+    method: "POST",
+    body: { clientId, endpoint },
+    opId: null,
+    timeoutMs: FAST_TIMEOUT_MS,
+    expectEmpty: true,
+  });
+}
+
+// --- Shares ---
+
+export function createSharePreview<T = unknown>(taskId: string): Promise<T> {
+  return postWrite<T>(`/api/v1/tasks/${encodeURIComponent(taskId)}/share`, {});
+}
+
+export function publishSharePreview<T = unknown>(
+  taskId: string,
+  token: string,
+): Promise<T> {
+  return postWrite<T>(
+    `/api/v1/tasks/${encodeURIComponent(taskId)}/share/publish`,
+    { token },
+  );
+}
+
+export function listShares<T = unknown>(): Promise<{ shares: T[] }> {
+  return request<{ shares: T[] }>("/api/v1/shares", {
+    credentials: "same-origin",
+  });
+}
+
+export function revokeTaskShare(
+  taskId: string,
+  token: string,
+): Promise<{ revoked: boolean }> {
+  return deleteWrite<{ revoked: boolean }>(
+    `/api/v1/tasks/${encodeURIComponent(taskId)}/share`,
+    { token },
+  );
+}
+
+export function getShareDisplayName(): Promise<{ value: string | null }> {
+  return request<{ value: string | null }>("/api/v1/share/by", {
+    credentials: "same-origin",
+  });
+}
+
+export function setShareDisplayName(
+  value: string | null,
+): Promise<{ value: string | null }> {
+  return putWrite<{ value: string | null }>("/api/v1/share/by", { value });
+}
+
+export function patchSharePreview(
+  taskId: string,
+  token: string,
+  displayName: string,
+): Promise<void> {
+  return request(`/api/v1/tasks/${encodeURIComponent(taskId)}/share`, {
+    method: "PATCH",
+    body: { token, display_name: displayName },
+    opId: newOpId(),
+    ...SYNC_REQUEST_DEFAULTS.write,
+    expectEmpty: true,
+  });
 }
 
 // --- Inbox messages ---
@@ -591,15 +776,18 @@ export function consumeMessage(
   id: string,
   inheritFromTaskId?: string | null,
 ): Promise<{ taskId: string; alreadyConsumed: boolean }> {
-  return post(`/api/v1/messages/${encodeURIComponent(id)}/consume`, {
+  return postWrite(`/api/v1/messages/${encodeURIComponent(id)}/consume`, {
     ...(inheritFromTaskId ? { inheritFromTaskId } : {}),
   });
 }
 
 export function ackMessage(id: string): Promise<void> {
-  return request(`/api/v1/messages/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-  });
+  return deleteWrite(
+    `/api/v1/messages/${encodeURIComponent(id)}`,
+    undefined,
+    undefined,
+    true,
+  );
 }
 
 // --- Tokens (admin scope only) ---
@@ -621,11 +809,19 @@ export function listTokens(): Promise<TokenSummary[]> {
 export function createApiToken(
   name: string,
 ): Promise<{ token: string; name: string; scope: "api" }> {
-  return post("/api/v1/tokens", { name });
+  return request("/api/v1/tokens", {
+    method: "POST",
+    body: { name },
+    opId: null,
+    timeoutMs: FAST_TIMEOUT_MS,
+  });
 }
 
 export function revokeToken(name: string): Promise<void> {
-  return request("/api/v1/tokens/" + encodeURIComponent(name), {
-    method: "DELETE",
-  });
+  return deleteWrite(
+    "/api/v1/tokens/" + encodeURIComponent(name),
+    undefined,
+    undefined,
+    true,
+  );
 }

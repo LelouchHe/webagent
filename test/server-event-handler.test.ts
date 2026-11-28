@@ -4,6 +4,11 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
+import {
+  projectLegacyPerTaskEvent,
+  projectStoredEvents,
+  toEventFeedEntries,
+} from "../src/event-egress.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { handleAgentEvent } from "../src/event-handler.ts";
@@ -12,8 +17,11 @@ import type { AgentEvent } from "../src/types.ts";
 import { createCounters } from "../src/attachment-interceptor.ts";
 import { makeEventHandlerConfig, waitFor } from "./fixtures.ts";
 
+let activeMockBroadcasted: AgentEvent[] | null = null;
+
 function createMockSseManager() {
   const broadcasted: AgentEvent[] = [];
+  activeMockBroadcasted = broadcasted;
   return {
     sseManager: {
       broadcast(event: AgentEvent) {
@@ -96,6 +104,15 @@ describe("handleAgentEvent", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-server-test-"));
     store = new Store(tmpDir);
     tasks = createTaskManager(store, tmpDir, tmpDir);
+    activeMockBroadcasted = null;
+    store.onEventsCommitted((rows) => {
+      if (!activeMockBroadcasted) return;
+      const projected = projectStoredEvents(rows, { store, tasks });
+      for (const entry of toEventFeedEntries(projected)) {
+        const legacy = projectLegacyPerTaskEvent(entry.data);
+        if (legacy) activeMockBroadcasted.push(legacy);
+      }
+    });
     // Every handler in this file drives one mock transport for the task's
     // binding agent; the runtime resolves it through the adapter.
     tasks.attachExecutionBridge({
@@ -134,13 +151,15 @@ describe("handleAgentEvent", () => {
     );
 
     assert.equal(broadcasted.length, 1);
-    assert.deepEqual(broadcasted[0], {
-      type: "message_chunk",
-      taskId: "s1",
-      text: "hello",
-    });
+    assert.equal(broadcasted[0].type, "message_chunk");
+    assert.equal(broadcasted[0].taskId, "s1");
+    assert.equal(broadcasted[0].text, "hello");
+    assert.equal(typeof broadcasted[0].epoch, "string");
+    assert.equal(broadcasted[0].segmentId, 1);
+    assert.equal(broadcasted[0].offset, 0);
+    assert.equal(broadcasted[0].endOffset, 5);
     // Text is buffered, not yet flushed to store
-    assert.equal(tasks.assistantBuffers.get("s1"), "hello");
+    assert.equal(tasks.getStreamingSnapshot("s1").assistant?.text, "hello");
   });
 
   it("flushes thinking buffer before appending assistant text", () => {
@@ -157,7 +176,7 @@ describe("handleAgentEvent", () => {
       makeEventHandlerConfig(),
       sseManager as any,
     );
-    assert.equal(tasks.thinkingBuffers.get("s1"), "hmm");
+    assert.equal(tasks.getStreamingSnapshot("s1").thinking?.text, "hmm");
 
     // Switch to message — should flush thinking
     handleAgentEvent(
@@ -168,7 +187,7 @@ describe("handleAgentEvent", () => {
       makeEventHandlerConfig(),
       sseManager as any,
     );
-    assert.equal(tasks.thinkingBuffers.has("s1"), false);
+    assert.equal(tasks.getStreamingSnapshot("s1").thinking, undefined);
     const events = store.getEvents("s1");
     assert.ok(events.some((e) => e.type === "thinking"));
   });
@@ -564,7 +583,7 @@ describe("handleAgentEvent", () => {
     );
 
     assert.equal(broadcasted.length, 0);
-    assert.equal(tasks.assistantBuffers.has("s1"), false);
+    assert.equal(tasks.getStreamingSnapshot("s1").assistant, undefined);
   });
 
   it("captures context usage during restore", () => {
@@ -774,7 +793,7 @@ describe("handleAgentEvent", () => {
       sseManager as any,
     );
 
-    assert.equal(tasks.assistantBuffers.has("s1"), false);
+    assert.equal(tasks.getStreamingSnapshot("s1").assistant, undefined);
     assert.ok(
       store.getEvents("s1").some((event) => event.type === "assistant_message"),
     );
@@ -1354,7 +1373,7 @@ describe("handleAgentEvent", () => {
       );
 
       assert.equal(broadcasted.length, 0);
-      assert.equal(tasks.assistantBuffers.has("s1"), false);
+      assert.equal(tasks.getStreamingSnapshot("s1").assistant, undefined);
       assert.equal(store.getEvents("s1").length, 0);
       assert.equal(tasks.getLastAgentActivityAt("s1"), null);
     });
@@ -1375,7 +1394,7 @@ describe("handleAgentEvent", () => {
       );
 
       assert.equal(broadcasted.length, 0);
-      assert.equal(tasks.assistantBuffers.has("s1"), false);
+      assert.equal(tasks.getStreamingSnapshot("s1").assistant, undefined);
     });
 
     it("refuses an unstamped event even when the task has no ledger entry", () => {
@@ -1397,7 +1416,7 @@ describe("handleAgentEvent", () => {
       );
 
       assert.equal(broadcasted.length, 0);
-      assert.equal(tasks.assistantBuffers.has("s1"), false);
+      assert.equal(tasks.getStreamingSnapshot("s1").assistant, undefined);
       assert.equal(store.getEvents("s1").length, 0);
     });
 
@@ -1420,7 +1439,7 @@ describe("handleAgentEvent", () => {
       );
 
       assert.equal(broadcasted.length, 0);
-      assert.equal(tasks.assistantBuffers.has("s1"), false);
+      assert.equal(tasks.getStreamingSnapshot("s1").assistant, undefined);
     });
 
     it("refuses a lease that names another task", () => {
@@ -1443,7 +1462,7 @@ describe("handleAgentEvent", () => {
       );
 
       assert.equal(broadcasted.length, 0);
-      assert.equal(tasks.assistantBuffers.has("s1"), false);
+      assert.equal(tasks.getStreamingSnapshot("s1").assistant, undefined);
     });
   });
 });

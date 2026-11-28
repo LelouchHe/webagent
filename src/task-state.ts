@@ -27,7 +27,7 @@ export interface PendingPermission {
   requestId: string;
   toolName: string;
   title: string;
-  options: Array<{ optionId: string; label: string }>;
+  options: Array<{ optionId: string; label: string; kind?: string }>;
 }
 
 export interface StreamingState {

@@ -62,9 +62,9 @@ describe("shared task navigation", () => {
           configOptions: [],
         });
       }
-      if (url.startsWith("/api/v1/tasks/message-task/events?flush=1&limit=")) {
+      if (url.startsWith("/api/v1/tasks/message-task/events?limit=")) {
         if (delayedHistory) return delayedHistory;
-        return response({ events: [], streaming: {} });
+        return response({ events: [] });
       }
       if (url === "/api/v1/tasks/message-task/snapshot?warm=1") {
         if (delayedSnapshot) {
@@ -86,8 +86,8 @@ describe("shared task navigation", () => {
           configOptions: [],
         });
       }
-      if (url.startsWith("/api/v1/tasks/back-task/events?flush=1&limit=")) {
-        return response({ events: [], streaming: {} });
+      if (url.startsWith("/api/v1/tasks/back-task/events?limit=")) {
+        return response({ events: [] });
       }
       if (url === "/api/v1/tasks/back-task/snapshot?warm=1") {
         return response({
@@ -622,15 +622,21 @@ describe("shared task navigation", () => {
     history.replaceState(null, "", "/?message=retry");
 
     const first = await navigation.processStartupMessageIntent();
+    const afterFirstCount = fetchCalls.filter(
+      (call) => call.url === "/api/v1/messages/retry/consume",
+    ).length;
     const second = await navigation.processStartupMessageIntent();
 
     assert.equal(first, "retryable-error");
     assert.equal(second, "ignored");
     assert.equal(location.search, "?message=retry");
+    // sendSyncRequest retries 503 with built-in write preset (1 + 2 retries),
+    // and the second processStartupMessageIntent call does not issue any more.
+    assert.equal(afterFirstCount, 3);
     assert.equal(
       fetchCalls.filter((call) => call.url === "/api/v1/messages/retry/consume")
         .length,
-      1,
+      afterFirstCount,
     );
   });
 });

@@ -184,10 +184,11 @@ describe("Bash REST API", () => {
       );
 
       const cmdEvt = broadcastEvents.find(
-        (e: any) => e.type === "bash_command",
-      );
+        (e: any) => e.data?.type === "bash_command",
+      ) as any;
       assert.ok(cmdEvt);
-      assert.equal((cmdEvt as any).command, "echo bc");
+      assert.equal(cmdEvt.feed, id);
+      assert.equal(JSON.parse(cmdEvt.data.data).command, "echo bc");
       await waitFor(() => !tasks.runningBashProcs.has(id));
     });
 

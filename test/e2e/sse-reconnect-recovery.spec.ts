@@ -11,6 +11,7 @@ test("SSE reconnect keeps the same task without duplicating history", async ({
   page,
 }) => {
   await page.addInitScript(() => {
+    delete (window as any).SharedWorker;
     const NativeES = window.EventSource;
     class TrackingES extends NativeES {
       constructor(url: string | URL, init?: EventSourceInit) {
@@ -53,6 +54,7 @@ test("SSE reconnect recovers a reply completed while the stream was down", async
   page,
 }) => {
   await page.addInitScript(() => {
+    delete (window as any).SharedWorker;
     const NativeES = window.EventSource;
     class TrackingES extends NativeES {
       constructor(url: string | URL, init?: EventSourceInit) {

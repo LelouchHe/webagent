@@ -65,13 +65,6 @@ time. An entry without a "closing condition" is a wish, not an issue.
   Upgrading a hub before its owner would let hub `DELETE` retries hit an owner
   without `ops` and turn a duplicate into `404`. *Closing:* pre-1.0 upgrade
   order convention; multi-hop chaining beyond two hosts is out of scope.
-- **A browser retry uses whatever token is current.** The `@` send keeps one op
-  id across retries, but each attempt reads the stored token; if another tab
-  signs in under a different token name between attempts, the retry derives a
-  different Message id and the message can be delivered twice. Requires an
-  attempt that committed but whose outcome was unknown to the browser (lost or
-  malformed response, proxy `5xx`) and a token swap inside the retry window. *Closing:* a real browser
-  path that keeps several tokens live at once.
 - **Owner entries stay queued indefinitely if a hub never reconnects.** The
   pull-side outbox does not expire entries when a hub stops dialing. *Closing:*
   add an explicit host/link removal operation.
@@ -258,6 +251,29 @@ time. An entry without a "closing condition" is a wish, not an issue.
   source task is deleted during the cwd probe) leaves no active task until a
   reload. The probe's liveness guard fails open on purpose. *Closing:* clear
   only after a successful create, or restore the previous task on failure.
+
+## Browser sync and SharedWorker
+
+- **The 5-second SSE grace period on last-tab close is a best-effort upper
+  bound.** Browsers decide when to terminate a `SharedWorker` once it has zero
+  active documents (HTML Standard §10.2.3); WebAgent does not add leader
+  election or a persistent worker protocol to extend it. *Closing:* accepted
+  platform behavior.
+- **Single-SSE sharing is scoped to one shared worker instance.** Tabs share one
+  physical SSE stream per origin, storage partition, and build version (during a
+  deploy, old-version and new-version tabs each connect to their own version's
+  worker; environments without `SharedWorker` fall back to one connection per
+  tab). *Closing:* accepted browser isolation boundary.
+- **Pre-1.0 browser sync wire switch requires a page refresh.** Migrating to the
+  unified `{ feed, pos, prev, data: StoredEvent }` envelope and declarative
+  `{ taskIds }` `/visibility` payload intentionally omits dual-stack legacy
+  compatibility; open tabs refresh after deploy to adopt the new wire format.
+  *Closing:* protocol versioning at 1.0 if needed.
+- **Browser `POST /api/v1/tasks` (`create`) remains single-shot (`retries: 0`).**
+  Hard-deleting an unshared child task removes its row without retaining replay
+  identity, so retrying a create whose response was lost could recreate a
+  deleted child. *Closing:* enable browser create retries once hard-deleted
+  tasks retain replay identity.
 - **Archive UI and late delivery are best effort.** An already-open task menu
   on another client may keep a pre-archive row until the menu is reopened; work
   already handed to ACP may still be delivered after archive; and a late

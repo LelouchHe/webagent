@@ -242,7 +242,6 @@ export function finishAssistant() {
     );
   state.pendingFinalAnswerToolText = null;
   if (assistantEl && typeof assistantEl.querySelector === "function") {
-    assistantEl.removeAttribute("data-primed");
     enhanceCodeBlocks(assistantEl);
     // Turn boundary: drop the per-block memo. The bubble is now sealed —
     // any future write into this element (e.g. agent-instructed user
@@ -283,10 +282,35 @@ export function finishThinking() {
     sum.textContent = "⠿ thought";
     sum.classList.remove("active");
     sum.style.animation = "none";
-    state.currentThinkingEl.removeAttribute("data-primed");
     state.currentThinkingEl = null;
     state.currentThinkingText = "";
   }
+}
+
+/** Discard unsealed streaming preview DOM nodes (e.g. on disconnect or authoritative empty snapshot). */
+export function discardAssistantPreview(): void {
+  if (state.assistantRafToken != null) {
+    if (typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(state.assistantRafToken);
+    }
+    state.assistantRafToken = null;
+  }
+  const el = state.currentAssistantEl;
+  if (el) {
+    resetMarkdownStream(el);
+    el.remove();
+  }
+  state.currentAssistantEl = null;
+  state.currentAssistantText = "";
+  state.pendingFinalAnswerToolText = null;
+}
+
+export function discardThinkingPreview(): void {
+  if (state.currentThinkingEl) {
+    state.currentThinkingEl.remove();
+  }
+  state.currentThinkingEl = null;
+  state.currentThinkingText = "";
 }
 
 let waitingEl: HTMLDivElement | null = null;

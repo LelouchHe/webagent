@@ -111,9 +111,9 @@ describe("HTTP /events attachment label egress", () => {
     const res = await makeRequest(port, "/api/v1/tasks/s1/events");
     assert.equal(res.status, 200);
     const body = JSON.parse(res.body) as {
-      events: Array<{ type: string; data: string }>;
+      events: Array<{ data: { type: string; data: string } }>;
     };
-    const tc = body.events.find((e) => e.type === "tool_call")!;
+    const tc = body.events.find((e) => e.data.type === "tool_call")!.data;
     const parsed = JSON.parse(tc.data);
     assert.equal(parsed.title, "Read report.pdf [#abcd]");
     assert.equal(parsed.rawInput.path, "report.pdf [#abcd]");
@@ -141,9 +141,11 @@ describe("HTTP /events attachment label egress", () => {
 
     const res = await makeRequest(port, "/api/v1/tasks/s1/events");
     const body = JSON.parse(res.body) as {
-      events: Array<{ type: string; data: string }>;
+      events: Array<{ data: { type: string; data: string } }>;
     };
-    const pr = body.events.find((e) => e.type === "permission_request")!;
+    const pr = body.events.find(
+      (e) => e.data.type === "permission_request",
+    )!.data;
     const parsed = JSON.parse(pr.data);
     assert.equal(parsed.title, "Allow read report.pdf [#abcd]");
     assert.equal(

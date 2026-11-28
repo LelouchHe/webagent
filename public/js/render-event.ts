@@ -722,12 +722,12 @@ function applyToolCallUpdate(
   const id = typeof data.id === "string" ? data.id : "";
   const el = hooks.findToolCallEl(id);
   if (!el) return;
-  const status = typeof data.status === "string" ? data.status : "pending";
-  const si = getStatusIcon(status);
-  el.className = si.className;
+  if (typeof data.status === "string" && data.status !== "") {
+    const si = getStatusIcon(data.status);
+    el.className = si.className;
+    el.querySelector(".icon")?.replaceChildren(si.icon);
+  }
   applyToolCallMetadata(el, data);
-  const iconSpan = el.querySelector(".icon");
-  if (iconSpan) iconSpan.textContent = si.icon;
   const content = Array.isArray(data.content)
     ? (data.content as ToolContentItem[])
     : [];

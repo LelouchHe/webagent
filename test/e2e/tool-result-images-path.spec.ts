@@ -59,9 +59,9 @@ test("a tool result that only names an image file resolves assistant Markdown", 
   );
   const rows = (
     (await response.json()) as {
-      events: Array<{ type: string; data: string }>;
+      events: Array<{ data: { type: string; data: string } }>;
     }
-  ).events;
+  ).events.map((entry) => entry.data);
   const update = rows.find((row) => row.type === "tool_call_update");
   expect(update).toBeTruthy();
   const content = (

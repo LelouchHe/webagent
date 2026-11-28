@@ -30,7 +30,7 @@ test.describe("image lightbox", () => {
     await expect(overlay).toBeVisible();
     await expect(overlay.locator("img")).toHaveAttribute(
       "src",
-      (await chatImage.getAttribute("src")) as string,
+      await chatImage.evaluate((el: HTMLImageElement) => el.src),
     );
   });
 

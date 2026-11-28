@@ -147,6 +147,9 @@ describe("S3 collaboration write routes", () => {
         broadcast(event: { type: string; taskId?: string }) {
           broadcasts.push(event);
         },
+        broadcastFeedEntry(entry: Record<string, unknown>) {
+          broadcasts.push(entry);
+        },
       }),
       store,
       tasks,
@@ -489,20 +492,35 @@ describe("S3 collaboration write routes", () => {
     assert.ok(delivery);
     assert.equal(delivery.recipient_task_id, "sibling");
     assert.equal(delivery.status, "delivered");
+    const feedEvents = broadcasts
+      .filter((event: any) => event.data?.type === "system_message")
+      .map((event: any) => ({
+        taskId: event.feed,
+        ...JSON.parse(event.data.data),
+      }));
+    assert.deepEqual(feedEvents.map((event) => event.taskId).sort(), [
+      "parent",
+      "sibling",
+    ]);
     assert.deepEqual(
-      broadcasts
-        .filter((event) => event.type === "system_message")
-        .map((event) => event.taskId)
-        .sort(),
-      ["parent", "sibling"],
-    );
-    // The live envelope is built by the shared builder, so it carries the raw
-    // labels a client needs to place the reference. A hand-rolled envelope here
-    // would drop them and silently lose the live mark.
-    assert.deepEqual(
-      broadcasts
+      feedEvents
         .filter((event) => event.kind === "collaboration")
-        .map((event) => ({ ...event, messageId: "<message>" })),
+        .map((event) => ({
+          type: "system_message",
+          taskId: event.taskId,
+          kind: event.kind,
+          messageId: "<message>",
+          sourceTaskId: event.sourceTaskId,
+          sourceLabel: event.sourceLabel,
+          targetTaskId: event.targetTaskId,
+          targetLabel: event.targetLabel,
+          role: event.role,
+          title: event.title,
+          body: event.body,
+          ...(event.deliveryStatus !== undefined
+            ? { deliveryStatus: event.deliveryStatus }
+            : {}),
+        })),
       [
         {
           type: "system_message",
@@ -712,16 +730,18 @@ describe("S3 collaboration write routes", () => {
       const response = await get(port, "/api/v1/tasks/parent/events");
       assert.equal(response.status, 200);
       const events = response.body.events as Array<{
-        type: string;
-        data: string;
+        data: {
+          type: string;
+          data: string;
+        };
       }>;
       const row = events.find((event) => {
-        if (event.type !== "system_message") return false;
+        if (event.data.type !== "system_message") return false;
         return (
-          (JSON.parse(event.data) as { messageId?: string }).messageId ===
+          (JSON.parse(event.data.data) as { messageId?: string }).messageId ===
           "egress-message"
         );
-      });
+      })?.data;
       assert.ok(row);
       return JSON.parse(row.data) as {
         deliveryStatus?: string;

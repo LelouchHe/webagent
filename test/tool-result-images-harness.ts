@@ -3,6 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/store.ts";
+import {
+  projectLegacyPerTaskEvent,
+  projectStoredEvents,
+  toEventFeedEntries,
+} from "../src/event-egress.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { handleAgentEvent } from "../src/event-handler.ts";
@@ -78,6 +83,23 @@ export function createToolResultImageHarness(
         broadcasts.push(event);
       },
     } as unknown as Parameters<typeof handleAgentEvent>[5]);
+
+  realStore.onEventsCommitted((rows) => {
+    const projected = projectStoredEvents(rows, { store: realStore, tasks });
+    for (const entry of toEventFeedEntries(projected)) {
+      if (
+        typeof (sseManager as { broadcastFeedEntry?: unknown })
+          .broadcastFeedEntry === "function"
+      ) {
+        (
+          sseManager as { broadcastFeedEntry(e: typeof entry): void }
+        ).broadcastFeedEntry(entry);
+      } else {
+        const legacy = projectLegacyPerTaskEvent(entry.data);
+        if (legacy) broadcasts.push(legacy);
+      }
+    }
+  });
 
   function config() {
     return {

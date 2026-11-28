@@ -162,6 +162,9 @@ describe("REST collaboration message constructive idempotency", () => {
       broadcast(event: Record<string, unknown>) {
         broadcastCalls.push(event);
       },
+      broadcastFeedEntry(entry: Record<string, unknown>) {
+        broadcastCalls.push(entry);
+      },
     });
     const handler = createRequestHandler({
       store,

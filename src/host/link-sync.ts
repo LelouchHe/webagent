@@ -516,6 +516,7 @@ export class LinkSyncHubPusher {
       this.scheduleTimeout();
       return true;
     }
+    if (result.kind === "skipped") return false;
     if (
       result.status === HTTP_STATUS.UNAUTHORIZED ||
       result.status === HTTP_STATUS.FORBIDDEN

@@ -3,7 +3,7 @@
     {
       "name": "setup",
       "response": {
-        "childId": "00000000-0000-4000-8000-000000000004"
+        "childId": "00000000-0000-4000-8000-000000000005"
       },
       "sse": [
         {
@@ -23,28 +23,11 @@
           ]
         },
         {
-          "taskId": "00000000-0000-4000-8000-000000000001",
-          "events": [
-            {
-              "type": "system_message",
-              "taskId": "00000000-0000-4000-8000-000000000001",
-              "kind": "task_created",
-              "messageId": "00000000-0000-4000-8000-000000000005",
-              "sourceTaskId": "00000000-0000-4000-8000-000000000001",
-              "targetTaskId": "00000000-0000-4000-8000-000000000004",
-              "taskTitle": "Cold-family child",
-              "role": "source",
-              "title": "Created task @\"Cold-family child\"",
-              "body": "Task ID: 00000000-0000-4000-8000-000000000004\nagent: mock\ncwd: /\nmodel: mock-model\nthinking: medium"
-            }
-          ]
-        },
-        {
-          "taskId": "00000000-0000-4000-8000-000000000004",
+          "taskId": "00000000-0000-4000-8000-000000000005",
           "events": [
             {
               "type": "available_commands_update",
-              "taskId": "00000000-0000-4000-8000-000000000004",
+              "taskId": "00000000-0000-4000-8000-000000000005",
               "commands": [
                 {
                   "name": "context",
@@ -58,12 +41,12 @@
                   }
                 }
               ],
-              "epoch": "00000000-0000-4000-8000-000000000003",
+              "epoch": "00000000-0000-4000-8000-000000000004",
               "revision": 1
             },
             {
               "type": "task_created",
-              "taskId": "00000000-0000-4000-8000-000000000004",
+              "taskId": "00000000-0000-4000-8000-000000000005",
               "agentId": "mock",
               "cwd": "/",
               "cwdDisplay": "/",
@@ -132,7 +115,7 @@
                 }
               ],
               "agentCommands": {
-                "epoch": "00000000-0000-4000-8000-000000000003",
+                "epoch": "00000000-0000-4000-8000-000000000004",
                 "revision": 1,
                 "commands": [
                   {
@@ -151,7 +134,7 @@
             },
             {
               "type": "config_option_update",
-              "taskId": "00000000-0000-4000-8000-000000000004",
+              "taskId": "00000000-0000-4000-8000-000000000005",
               "configOptions": [
                 {
                   "type": "select",
@@ -250,7 +233,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 1,
                 "system_message",
-                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000004\",\"taskTitle\":\"Cold-family child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Cold-family child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000004\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Cold-family child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Cold-family child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
                 "user",
                 1789333200000
               ]
@@ -262,7 +245,7 @@
               "method": "run",
               "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000004",
+                "00000000-0000-4000-8000-000000000005",
                 "/",
                 "auto",
                 "00000000-0000-4000-8000-000000000001",
@@ -279,7 +262,7 @@
               "args": [
                 "mock",
                 "00000000-0000-4000-8000-000000000001",
-                "00000000-0000-4000-8000-000000000004",
+                "00000000-0000-4000-8000-000000000005",
                 1789333200000
               ]
             }
@@ -289,7 +272,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-              "args": ["agent", "00000000-0000-4000-8000-000000000004"]
+              "args": ["agent", "00000000-0000-4000-8000-000000000005"]
             }
           ],
           [
@@ -297,7 +280,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET model = ? WHERE id = ?",
-              "args": ["mock-model", "00000000-0000-4000-8000-000000000004"]
+              "args": ["mock-model", "00000000-0000-4000-8000-000000000005"]
             }
           ],
           [
@@ -305,7 +288,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-              "args": ["medium", "00000000-0000-4000-8000-000000000004"]
+              "args": ["medium", "00000000-0000-4000-8000-000000000005"]
             }
           ]
         ],
@@ -322,17 +305,11 @@
       },
       "sse": [
         {
-          "taskId": "00000000-0000-4000-8000-000000000004",
+          "taskId": "00000000-0000-4000-8000-000000000005",
           "events": [
             {
-              "type": "user_message",
-              "taskId": "00000000-0000-4000-8000-000000000004",
-              "text": "read cold parent",
-              "clientOpId": "00000000-0000-4000-8000-000000000006"
-            },
-            {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000004",
+              "taskId": "00000000-0000-4000-8000-000000000005",
               "seq": 1,
               "patch": {
                 "runtime": {
@@ -347,7 +324,7 @@
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000004",
+              "taskId": "00000000-0000-4000-8000-000000000005",
               "seq": 2,
               "patch": {
                 "runtime": {
@@ -360,12 +337,16 @@
             },
             {
               "type": "message_chunk",
-              "taskId": "00000000-0000-4000-8000-000000000004",
-              "text": "Cold parent read."
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "text": "Cold parent read.",
+              "epoch": "00000000-0000-4000-8000-000000000002",
+              "segmentId": 1,
+              "offset": 0,
+              "endOffset": 17
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000004",
+              "taskId": "00000000-0000-4000-8000-000000000005",
               "seq": 3,
               "patch": {
                 "runtime": {
@@ -375,7 +356,7 @@
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000004",
+              "taskId": "00000000-0000-4000-8000-000000000005",
               "seq": 4,
               "patch": {
                 "runtime": {
@@ -385,12 +366,6 @@
                   }
                 }
               }
-            },
-            {
-              "type": "prompt_done",
-              "taskId": "00000000-0000-4000-8000-000000000004",
-              "stopReason": "end_turn",
-              "promptId": "prompt-1"
             }
           ]
         }
@@ -446,7 +421,7 @@
                   "content": [
                     {
                       "type": "text",
-                      "text": "{\"tasks\":[{\"id\":\"00000000-0000-4000-8000-000000000004\",\"title\":\"Cold-family child\",\"relation\":\"self\",\"workflowStatus\":\"idle\",\"executionState\":\"agent\",\"lastAgentActivityAt\":null,\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"},{\"id\":\"00000000-0000-4000-8000-000000000001\",\"title\":\"root\",\"relation\":\"parent\",\"workflowStatus\":\"idle\",\"executionState\":\"idle\",\"lastAgentActivityAt\":null,\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"}]}"
+                      "text": "{\"tasks\":[{\"id\":\"00000000-0000-4000-8000-000000000005\",\"title\":\"Cold-family child\",\"relation\":\"self\",\"workflowStatus\":\"idle\",\"executionState\":\"agent\",\"lastAgentActivityAt\":null,\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"},{\"id\":\"00000000-0000-4000-8000-000000000001\",\"title\":\"root\",\"relation\":\"parent\",\"workflowStatus\":\"idle\",\"executionState\":\"idle\",\"lastAgentActivityAt\":null,\"lastEventAt\":\"2026-09-13T21:00:00.000Z\"}]}"
                     }
                   ]
                 },
@@ -468,7 +443,7 @@
                   "content": [
                     {
                       "type": "text",
-                      "text": "{\"task_id\":\"00000000-0000-4000-8000-000000000001\",\"max_seq\":1,\"rows\":[{\"seq\":1,\"type\":\"system_message\",\"bytes\":330,\"title\":\"Created task @\\\"Cold-family child\\\"\",\"field\":\"body\",\"text\":\"Task ID: 00000000-0000-4000-8000-000000000004\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}]}"
+                      "text": "{\"task_id\":\"00000000-0000-4000-8000-000000000001\",\"max_seq\":1,\"rows\":[{\"seq\":1,\"type\":\"system_message\",\"bytes\":330,\"title\":\"Created task @\\\"Cold-family child\\\"\",\"field\":\"body\",\"text\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}]}"
                     }
                   ]
                 },
@@ -490,7 +465,7 @@
                   "content": [
                     {
                       "type": "text",
-                      "text": "{\"task_id\":\"00000000-0000-4000-8000-000000000001\",\"rows\":[{\"seq\":1,\"type\":\"system_message\",\"at\":\"2026-09-13T21:00:00.000Z\",\"from\":\"user\",\"data\":{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000004\",\"taskTitle\":\"Cold-family child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Cold-family child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000004\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}}]}"
+                      "text": "{\"task_id\":\"00000000-0000-4000-8000-000000000001\",\"rows\":[{\"seq\":1,\"type\":\"system_message\",\"at\":\"2026-09-13T21:00:00.000Z\",\"from\":\"user\",\"data\":{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Cold-family child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Cold-family child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}}]}"
                     }
                   ]
                 },
@@ -509,10 +484,10 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000004",
+                "00000000-0000-4000-8000-000000000005",
                 1,
                 "user_message",
-                "{\"text\":\"read cold parent\",\"clientOpId\":\"00000000-0000-4000-8000-000000000006\"}",
+                "{\"text\":\"read cold parent\",\"clientOpId\":\"00000000-0000-4000-8000-000000000007\"}",
                 "user",
                 1789333200000
               ]
@@ -524,10 +499,10 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000004",
+                "00000000-0000-4000-8000-000000000005",
                 2,
                 "assistant_message",
-                "{\"text\":\"Cold parent read.\"}",
+                "{\"text\":\"Cold parent read.\",\"epoch\":\"00000000-0000-4000-8000-000000000002\",\"segmentId\":1}",
                 "agent",
                 1789333200000
               ]
@@ -539,7 +514,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000004",
+                "00000000-0000-4000-8000-000000000005",
                 3,
                 "prompt_done",
                 "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
@@ -561,7 +536,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
-              "args": [1789333200000, "00000000-0000-4000-8000-000000000004"]
+              "args": [1789333200000, "00000000-0000-4000-8000-000000000005"]
             }
           ]
         ],
@@ -587,7 +562,7 @@
         "last_active_at": 1789333200000
       },
       {
-        "id": "00000000-0000-4000-8000-000000000004",
+        "id": "00000000-0000-4000-8000-000000000005",
         "cwd": "/",
         "title": "Cold-family child",
         "workflow_status": "idle",
@@ -606,7 +581,7 @@
       {
         "agent_key": "mock",
         "agent_session_id": "00000000-0000-4000-8000-000000000001",
-        "task_id": "00000000-0000-4000-8000-000000000004",
+        "task_id": "00000000-0000-4000-8000-000000000005",
         "created_at": 1789333200000
       }
     ],
@@ -616,31 +591,31 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 1,
         "type": "system_message",
-        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000004\",\"taskTitle\":\"Cold-family child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Cold-family child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000004\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"Cold-family child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"Cold-family child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
         "created_at": 1789333200000,
         "from_ref": "user"
       },
       {
         "id": 2,
-        "task_id": "00000000-0000-4000-8000-000000000004",
+        "task_id": "00000000-0000-4000-8000-000000000005",
         "seq": 1,
         "type": "user_message",
-        "data": "{\"text\":\"read cold parent\",\"clientOpId\":\"00000000-0000-4000-8000-000000000006\"}",
+        "data": "{\"text\":\"read cold parent\",\"clientOpId\":\"00000000-0000-4000-8000-000000000007\"}",
         "created_at": 1789333200000,
         "from_ref": "user"
       },
       {
         "id": 3,
-        "task_id": "00000000-0000-4000-8000-000000000004",
+        "task_id": "00000000-0000-4000-8000-000000000005",
         "seq": 2,
         "type": "assistant_message",
-        "data": "{\"text\":\"Cold parent read.\"}",
+        "data": "{\"text\":\"Cold parent read.\",\"epoch\":\"00000000-0000-4000-8000-000000000002\",\"segmentId\":1}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },
       {
         "id": 4,
-        "task_id": "00000000-0000-4000-8000-000000000004",
+        "task_id": "00000000-0000-4000-8000-000000000005",
         "seq": 3,
         "type": "prompt_done",
         "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",

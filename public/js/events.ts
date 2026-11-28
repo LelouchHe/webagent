@@ -1,14 +1,8 @@
 // Event handling and history replay
 //
-// DOM data-attribute contracts used by the reconnect/replay system:
-//   data-raw           — DB content snapshot. Set during replay, never updated by
-//                        live chunks. Used by revert logic and post-merge to restore
-//                        or combine elements without reading innerHTML.
-//   data-primed        — Marks an element adopted by primeStreamingState for continued
-//                        live streaming. Cleared by finishAssistant/finishThinking on
-//                        normal completion, or by the revert step in loadNewEvents.
-//   data-sync-boundary — Marks the last DOM child after replay. loadNewEvents removes
-//                        everything after it, then replays incremental events.
+// DOM data-attribute contracts used by the replay/sync system:
+//   data-raw           — DB content snapshot. Set during replay or on seal.
+//   data-sync-boundary — Marks the last DOM child after replay.
 
 import {
   state,
@@ -37,6 +31,7 @@ import {
   finishNewTaskRequest,
   setNavigationLoadInvalidator,
   setRuntimeHydrationReconciler,
+  setSnapshotExtrasApplier,
 } from "./state.ts";
 import {
   addMessage,
@@ -56,6 +51,14 @@ import {
   flushStreamingRender,
 } from "./render.ts";
 import * as api from "./api.ts";
+import type { StreamingSnapshot } from "./preview-reconciler.ts";
+import {
+  previewReconciler,
+  applySnapshotStreaming as applySnapshotStreamingImpl,
+  applyPersistedEventImpl,
+  reconcileSnapshotPermissions,
+} from "./persisted-event.ts";
+export { previewReconciler };
 import {
   loadTaskList,
   loadTaskListFresh,
@@ -145,6 +148,7 @@ setNavigationLoadInvalidator(() => {
 
 setCreatedTaskActivator((task) => {
   if (typeof task.id !== "string") return;
+  state.pendingNavigationTaskId = task.id;
   handleEvent({
     type: "task_created",
     taskId: task.id,
@@ -546,6 +550,58 @@ export function reconcileReplayedPendingTools(): void {
 
 setRuntimeHydrationReconciler(reconcileReplayedPendingTools);
 
+let taskFocusNotifier: ((taskId: string) => void) | null = null;
+export function setTaskFocusNotifier(fn: (taskId: string) => void): void {
+  taskFocusNotifier = fn;
+}
+
+let statePatchGapRecovery: (() => Promise<void>) | null = null;
+export function setStatePatchGapRecovery(fn: () => Promise<void>): void {
+  statePatchGapRecovery = fn;
+}
+
+let routeAnnouncer: ((taskId: string) => void) | null = null;
+export function setRouteAnnouncer(fn: (taskId: string) => void): void {
+  routeAnnouncer = fn;
+}
+export function announceNavigationRoute(taskId: string): void {
+  routeAnnouncer?.(taskId);
+}
+
+export function applySnapshotStreaming(streaming: StreamingSnapshot): void {
+  applySnapshotStreamingImpl(streaming, scheduleAssistantRender);
+}
+
+setSnapshotExtrasApplier((snap) => {
+  if (state.taskId !== snap.task.id) return;
+  if (snap.imageReferences !== undefined) {
+    setMarkdownImageReferenceScope(snap.task.id, snap.imageReferences);
+  }
+  if (snap.streaming) {
+    applySnapshotStreaming(snap.streaming);
+  }
+  reconcileSnapshotPermissions(
+    snap.task.id,
+    snap.runtime.pendingPermissions,
+    handleEvent,
+  );
+});
+
+/**
+ * Unified persisted feed entry applier used by both live `feed_entry` frames
+ * and forward `SyncFeedConsumer` catch-up pages.
+ */
+export function applyPersistedEvent(
+  entry: api.TaskEventFeedEntry,
+  opts?: { catchingUp?: boolean },
+): boolean {
+  return applyPersistedEventImpl(
+    entry,
+    { liveHooks, scheduleAssistantRender, promptStopNotice, handleEvent },
+    opts,
+  );
+}
+
 const HISTORY_PAGE_SIZE = 200;
 
 export async function loadHistory(sid: string): Promise<boolean> {
@@ -555,18 +611,9 @@ export async function loadHistory(sid: string): Promise<boolean> {
   state.replayQueue = [];
   state.replayQueueEpoch = state.connectionEpoch;
   try {
-    const body = await api.withTimeout(async (signal) => {
-      const res = await fetch(
-        `/api/v1/tasks/${sid}/events?flush=1&limit=${HISTORY_PAGE_SIZE}`,
-        signal ? { signal } : undefined,
-      );
-      if (!res.ok) return null;
-      return (await res.json()) as Record<string, unknown>;
-    });
-    if (!body) return false;
+    const body = await api.getTaskEvents(sid, { limit: HISTORY_PAGE_SIZE });
     if (replayToken !== replayLoadToken) return false;
-    const { events, streaming, hasMore, imageReferences } =
-      normalizeEventsResponse(body);
+    const { events, hasMore, imageReferences } = normalizeEventsResponse(body);
     setMarkdownImageReferenceScope(sid, imageReferences);
 
     // Batch DOM operations: render into an offscreen fragment, then append once.
@@ -597,7 +644,6 @@ export async function loadHistory(sid: string): Promise<boolean> {
     }
 
     setSyncBoundary();
-    primeStreamingState(events, streaming);
     return true;
   } catch {
     return false;
@@ -611,111 +657,8 @@ export async function loadHistory(sid: string): Promise<boolean> {
   }
 }
 
-/**
- * After replay, if the backend signaled that thinking/assistant buffers were
- * actively streaming, convert the last replayed element into a live-streaming
- * element so incoming thought_chunk / message_chunk events append to it instead
- * of creating duplicates.
- */
-function primeStreamingState(
-  events: StoredEvent[],
-  streaming: { thinking: boolean; assistant: boolean },
-) {
-  // Invariant: no rAF should be pending when prime runs. The only callers
-  // (_loadNewEventsImpl, initial replay) all cancel/flush upstream. A non-
-  // null token here means a clearing path was missed and a stale rAF could
-  // fire onto the freshly-primed element. Warn (dev-only signal) but do
-  // not auto-fix — fix the upstream missing flush.
-  if (state.assistantRafToken != null) {
-    log.warn(
-      "primeStreamingState: assistantRafToken non-null at entry (missing flush upstream)",
-    );
-  }
-  if (streaming.thinking) {
-    let el: HTMLDetailsElement | undefined;
-    if (events.length) {
-      // Tools may follow an open stream, but a user message is a hard turn
-      // boundary. Never adopt thinking from before the latest user message.
-      if (
-        lastEventIndex(events, "thinking") >
-        lastEventIndex(events, "user_message")
-      ) {
-        const allThinking = dom.messages.querySelectorAll(".thinking");
-        el = allThinking[allThinking.length - 1] as
-          HTMLDetailsElement | undefined;
-      }
-    } else {
-      // No new events but still streaming — re-prime from existing DOM
-      const allThinking = dom.messages.querySelectorAll(".thinking");
-      el = allThinking[allThinking.length - 1] as
-        HTMLDetailsElement | undefined;
-    }
-    if (el) {
-      state.currentThinkingEl = el;
-      state.currentThinkingText = el.getAttribute("data-raw") ?? "";
-      el.setAttribute("data-primed", "");
-      const sum = el.querySelector("summary");
-      if (sum) {
-        sum.textContent = "⠿ thinking...";
-        sum.classList.add("active");
-      }
-    }
-  }
-  if (streaming.assistant) {
-    let el: HTMLDivElement | undefined;
-    if (events.length) {
-      if (
-        lastEventIndex(events, "assistant_message") >
-        lastEventIndex(events, "user_message")
-      ) {
-        const allMsg = dom.messages.querySelectorAll(".msg.assistant");
-        el = allMsg[allMsg.length - 1] as HTMLDivElement | undefined;
-      }
-    } else {
-      // No new events but still streaming — re-prime from existing DOM
-      const allMsg = dom.messages.querySelectorAll(".msg.assistant");
-      el = allMsg[allMsg.length - 1] as HTMLDivElement | undefined;
-    }
-    if (el) {
-      state.currentAssistantEl = el;
-      state.currentAssistantText = el.getAttribute("data-raw") ?? "";
-      el.setAttribute("data-primed", "");
-    }
-  }
-
-  function lastEventIndex(historyEvents: StoredEvent[], type: string): number {
-    for (let i = historyEvents.length - 1; i >= 0; i--) {
-      if (historyEvents[i].type === type) return i;
-    }
-    return -1;
-  }
-}
-
-/**
- * Re-attach the optimistic bubble detached by a transcript rebuild, unless the
- * replayed transcript already carries the authoritative copy. `awaitingOwnUserEcho`
- * only means this client never saw its own SSE echo — the message may well have
- * been persisted, in which case re-attaching would duplicate it below the reply
- * that answered it.
- */
-function restorePendingEcho(el: HTMLElement | null): void {
-  if (!el) return;
-  // Nothing detached it, so leave it in place: appending would move it past
-  // siblings added after it (e.g. the waiting cursor) and reorder the view.
-  if (el.parentNode === dom.messages) return;
-  const opId = el.dataset.optimisticOpId;
-  if (opId) {
-    const persisted = Array.from(
-      dom.messages.querySelectorAll<HTMLElement>(
-        ".msg.user[data-client-op-id]",
-      ),
-    ).some((node) => node.dataset.clientOpId === opId);
-    if (persisted) return;
-  }
-  dom.messages.appendChild(el);
-}
-
-/** Mark the last DOM child as the sync boundary for incremental reconnect. */ function setSyncBoundary() {
+/** Mark the last DOM child as the sync boundary for incremental reconnect. */
+function setSyncBoundary() {
   const prev = dom.messages.querySelector("[data-sync-boundary]");
   if (prev) prev.removeAttribute("data-sync-boundary");
   const last = dom.messages.lastElementChild;
@@ -799,183 +742,40 @@ export function loadNewEvents(
   return promise;
 }
 
-// eslint-disable-next-line complexity -- TODO: refactor to reduce branching in replay logic
 async function _loadNewEventsImpl(
   sid: string,
-  inflight: InflightEventLoad,
+  _inflight: InflightEventLoad,
 ): Promise<boolean> {
   const replayToken = ++replayLoadToken;
   state.replayInProgress = true;
   state.replayQueue = [];
   state.replayQueueEpoch = state.connectionEpoch;
-  // Seal the latest buffered text before replay can revert or preserve the
-  // live element. In preserve-on-empty mode there may be no DB event to
-  // reconstruct this tail, so cancelling the rAF without flushing loses it.
   flushStreamingRender();
   try {
-    const url = `/api/v1/tasks/${sid}/events?flush=1&after=${state.lastEventSeq}`;
-    const body = await api.withTimeout(async (signal) => {
-      const res = await fetch(url, signal ? { signal } : undefined);
-      if (!res.ok) return null;
-      return (await res.json()) as Record<string, unknown>;
-    });
-    if (!body) return false;
+    const body = await api.getTaskEvents(sid, { after: state.lastEventSeq });
     if (
       replayToken !== replayLoadToken ||
       (state.taskId && state.taskId !== sid)
     )
       return false;
-    const { events, streaming, imageReferences } =
-      normalizeEventsResponse(body);
-    setMarkdownImageReferenceScope(sid, imageReferences);
-    if (inflight.preserveLiveOnEmpty && events.length === 0) return true;
-
-    // Revert primed elements to their DB-only content before boundary cleanup.
-    // primeStreamingState marks adopted elements with [data-primed]; live chunks
-    // may have grown them beyond their data-raw content. Reverting prevents
-    // duplication when the server force-flushes the buffer tail as a new event.
-    for (const primed of dom.messages.querySelectorAll("[data-primed]")) {
-      const raw = primed.getAttribute("data-raw") ?? "";
-      primed.removeAttribute("data-primed");
-      if (
-        primed.classList.contains("msg") &&
-        primed.classList.contains("assistant")
-      ) {
-        resetMarkdownStream(primed as HTMLElement);
-        (primed as HTMLElement).replaceChildren();
-        updateAssistantDisplay(primed as HTMLElement, raw, undefined, true);
-        enhanceCodeBlocks(primed);
-      } else if (primed.classList.contains("thinking")) {
-        const content = primed.querySelector(".thinking-content");
-        if (content) content.textContent = raw;
-        const sum = primed.querySelector("summary");
-        if (sum) {
-          sum.textContent = "⠿ thought";
-          sum.classList.remove("active");
-          sum.style.animation = "none";
-        }
-      }
+    const { events, imageReferences } = normalizeEventsResponse(body);
+    if (imageReferences !== undefined) {
+      setMarkdownImageReferenceScope(sid, imageReferences);
     }
-
-    // Always remove DOM elements added after the sync boundary (live-rendered
-    // content that may be orphaned or overlap with new DB events), and reset
-    // in-progress streaming state.  This must run even when the event list is
-    // empty so that partially-streamed elements left over from a disconnect
-    // don't stay in the DOM.
-    // An in-flight prompt's optimistic bubble is the only copy of that message:
-    // it is not in the transcript we just fetched, and the server's eventual
-    // user_message broadcast is suppressed as this client's own echo. Hold a
-    // reference so the DOM rebuild below can put it back at the tail.
-    let pendingEcho: HTMLElement | null = null;
-    if (state.awaitingOwnUserEcho && state.sentMessageOpId) {
-      for (const el of dom.messages.querySelectorAll(
-        "[data-optimistic-op-id]",
-      )) {
-        if (
-          (el as HTMLElement).dataset.optimisticOpId === state.sentMessageOpId
-        )
-          pendingEcho = el as HTMLElement;
-      }
+    for (const ev of events) {
+      applyPersistedEvent(
+        {
+          feed: sid,
+          pos: ev.seq,
+          prev: ev.seq - 1,
+          data: ev as unknown as api.StoredEventRow,
+        },
+        { catchingUp: true },
+      );
     }
-
-    const boundary = dom.messages.querySelector("[data-sync-boundary]");
-    if (boundary) {
-      while (boundary.nextElementSibling) boundary.nextElementSibling.remove();
+    if (events.length > 0) {
+      setSyncBoundary();
     }
-    // Sync boundary truncation may have detached the live streaming element;
-    // reset its memo defensively before nulling so a future re-render against
-    // a stale-cached host can never dev-mode-throw on entry invariant. The
-    // host is about to be GC'd in most paths, but cold-cache reset is cheap.
-    if (state.currentAssistantEl) {
-      resetMarkdownStream(state.currentAssistantEl);
-    }
-    state.currentAssistantEl = null;
-    state.currentAssistantText = "";
-    state.pendingFinalAnswerToolText = null;
-    state.currentThinkingEl = null;
-    state.currentThinkingText = "";
-    state.currentBashEl = null;
-
-    if (events.length === 0) {
-      primeStreamingState(events, streaming);
-      restorePendingEcho(pendingEcho);
-      return true;
-    }
-
-    // A never-replayed task (frontier 0) has no boundary to truncate at, so
-    // everything in the pane is live-rendered or client-only. Replace it
-    // wholesale with the authoritative transcript — but only now that the
-    // server has actually returned one. Wiping before the empty-response check
-    // would discard unpersisted content (optimistic user bubbles, addSystem
-    // rows) with nothing to put back.
-    if (!boundary && state.lastEventSeq === 0) {
-      dom.messages.replaceChildren();
-    }
-
-    // Batch DOM operations into a fragment to avoid per-element reflow
-    const fragment = document.createDocumentFragment();
-    const ri = createReplayIndex(events, true);
-    state.replayTarget = fragment;
-    for (let i = 0; i < events.length; i++) {
-      const data = JSON.parse(events[i].data) as Record<string, unknown>;
-      replayEvent(events[i].type, data, events, i, ri);
-    }
-    flushReplayOrphanToolUpdates(ri, events);
-    state.replayTarget = null;
-
-    // Post-merge: if the last DOM element and first fragment child are the same
-    // type (both assistant or both thinking), merge them to avoid split bubbles
-    // across the boundary.
-    const lastInDom = dom.messages.lastElementChild as HTMLElement | null;
-    const firstInFrag = fragment.firstElementChild as HTMLElement | null;
-    if (
-      lastInDom &&
-      firstInFrag &&
-      replayElementsAreAdjacent(lastInDom, firstInFrag)
-    ) {
-      if (
-        lastInDom.classList.contains("msg") &&
-        lastInDom.classList.contains("assistant") &&
-        firstInFrag.classList.contains("msg") &&
-        firstInFrag.classList.contains("assistant")
-      ) {
-        const existingRaw = lastInDom.getAttribute("data-raw") ?? "";
-        const newRaw = firstInFrag.getAttribute("data-raw") ?? "";
-        const combined = existingRaw + newRaw;
-        lastInDom.setAttribute("data-raw", combined);
-        resetMarkdownStream(lastInDom);
-        lastInDom.replaceChildren();
-        updateAssistantDisplay(lastInDom, combined, undefined, true);
-        enhanceCodeBlocks(lastInDom);
-        const lastEventSeq = firstInFrag.dataset.lastEventSeq;
-        if (lastEventSeq) lastInDom.dataset.lastEventSeq = lastEventSeq;
-        else delete lastInDom.dataset.lastEventSeq;
-        firstInFrag.remove();
-      } else if (
-        lastInDom.classList.contains("thinking") &&
-        firstInFrag.classList.contains("thinking")
-      ) {
-        const existingRaw = lastInDom.getAttribute("data-raw") ?? "";
-        const newRaw = firstInFrag.getAttribute("data-raw") ?? "";
-        const combined = existingRaw + newRaw;
-        lastInDom.setAttribute("data-raw", combined);
-        const content = lastInDom.querySelector(".thinking-content");
-        if (content) content.textContent = combined;
-        const lastEventSeq = firstInFrag.dataset.lastEventSeq;
-        if (lastEventSeq) lastInDom.dataset.lastEventSeq = lastEventSeq;
-        else delete lastInDom.dataset.lastEventSeq;
-        firstInFrag.remove();
-      }
-    }
-
-    dom.messages.appendChild(fragment);
-
-    state.lastEventSeq = events[events.length - 1].seq;
-    setSyncBoundary();
-    primeStreamingState(events, streaming);
-    // After setSyncBoundary, so an unpersisted bubble never becomes the
-    // persistence frontier the next catch-up truncates from.
-    restorePendingEcho(pendingEcho);
     return true;
   } catch {
     return false;
@@ -989,7 +789,7 @@ async function _loadNewEventsImpl(
   }
 }
 
-function markReplayCompletion(): void {
+export function markReplayCompletion(): void {
   const previous = Number(dom.messages.dataset.replayCompletion ?? 0);
   dom.messages.dataset.replayCompletion = String(previous + 1);
 }
@@ -1118,7 +918,6 @@ function mergeOlderReplayPageBoundary(
   if (
     !older ||
     !newer ||
-    newer.hasAttribute("data-primed") ||
     newer === state.currentAssistantEl ||
     newer === state.currentThinkingEl
   ) {
@@ -1282,16 +1081,16 @@ async function fetchOlderEventsPage(
   hasMore: boolean | undefined;
   imageReferences: NormalizedEventsResponse["imageReferences"];
 } | null> {
-  const body = await api.withTimeout(async (signal) => {
-    const res = await fetch(
-      `/api/v1/tasks/${taskId}/events?limit=${HISTORY_PAGE_SIZE}&before=${state.oldestLoadedSeq}`,
-      signal ? { signal } : undefined,
-    );
-    if (!res.ok) return null;
-    return (await res.json()) as Record<string, unknown>;
-  });
+  let body: api.TaskEventsResponse;
+  try {
+    body = await api.getTaskEvents(taskId, {
+      limit: HISTORY_PAGE_SIZE,
+      before: state.oldestLoadedSeq,
+    });
+  } catch {
+    return null;
+  }
   if (!isCurrentHistoryLoad(taskId, loadToken)) return null;
-  if (!body) return null;
   const { events, hasMore, imageReferences } = normalizeEventsResponse(body);
   return { events, hasMore, imageReferences };
 }
@@ -1299,6 +1098,7 @@ async function fetchOlderEventsPage(
 // Revoke both pagination and replay ownership across task switches.
 onTaskReset(removeHistorySentinel);
 onTaskReset(() => {
+  previewReconciler.reset();
   replayLoadToken++;
   inflightByTask.clear();
   terminalReconcileGeneration++;
@@ -2100,47 +1900,44 @@ export function drainNavigationEvents(taskId: string): void {
 }
 
 // eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions
-export function handleEvent(msg: AgentEvent) {
+export function handleEvent(
+  msg: AgentEvent,
+  opts?: { fromPersisted?: boolean; fromHubControl?: boolean },
+) {
+  const fromPersisted = opts?.fromPersisted === true;
   // The status bar's reference binding is consumed *before* the per-view
   // filters below: only events for the current task's parent matter, and that
   // parent is usually another task this client is not viewing.
-  if (msg.type === "task_created") {
-    observeTaskCreated(msg.taskId, msg.agentId ?? null);
-    noteTaskCreated(msg.taskId, msg.title ?? null);
-  } else if (
-    msg.type === "system_message" &&
-    msg.kind === "task_created" &&
-    msg.targetTaskId
-  ) {
-    noteTaskCreated(msg.targetTaskId, msg.taskTitle ?? null);
-  } else if (msg.type === "task_deleted") {
-    observeTaskDeleted(msg.taskId);
-    // Before the "is this the current task" branch below: a deleted task is
-    // any row's reference task, not only this client's current one.
-    noteTaskDeleted(msg.taskId);
-  } else if (msg.type === "task_title_updated") {
-    // Same reason: a row rendered in another task names this one, and the name
-    // it recorded may now be stale. Only the current task's own header below
-    // is view-scoped.
-    noteTaskTitleUpdated(msg.taskId, msg.title);
-  } else if (
-    msg.type === "system_message" &&
-    (msg.kind === "task_archive" || msg.kind === "task_unarchive")
-  ) {
-    // The structural fact changes the active tree for every view, not only the
-    // task's own transcript. Consume it before the per-view filter below. The
-    // refreshed active list decides the reference marks: an archived task (and
-    // its subtree) is absent, a restored task is present again.
-    if (msg.kind === "task_archive") {
-      noteTaskArchived(msg.taskId);
-      void loadTaskListFresh()
-        .then((tasks) => {
-          pruneCreatedTasksAbsentFrom(tasks);
-        })
-        .catch(() => undefined);
-    } else {
-      noteTaskUnarchived(msg.taskId);
-      void loadTaskListFresh().catch(() => undefined);
+  if (!fromPersisted) {
+    if (msg.type === "task_created") {
+      observeTaskCreated(msg.taskId, msg.agentId ?? null);
+      noteTaskCreated(msg.taskId, msg.title ?? null);
+    } else if (
+      msg.type === "system_message" &&
+      msg.kind === "task_created" &&
+      msg.targetTaskId
+    ) {
+      noteTaskCreated(msg.targetTaskId, msg.taskTitle ?? null);
+    } else if (msg.type === "task_deleted") {
+      observeTaskDeleted(msg.taskId);
+      noteTaskDeleted(msg.taskId);
+    } else if (msg.type === "task_title_updated") {
+      noteTaskTitleUpdated(msg.taskId, msg.title);
+    } else if (
+      msg.type === "system_message" &&
+      (msg.kind === "task_archive" || msg.kind === "task_unarchive")
+    ) {
+      if (msg.kind === "task_archive") {
+        noteTaskArchived(msg.taskId);
+        void loadTaskListFresh()
+          .then((tasks) => {
+            pruneCreatedTasksAbsentFrom(tasks);
+          })
+          .catch(() => undefined);
+      } else {
+        noteTaskUnarchived(msg.taskId);
+        void loadTaskListFresh().catch(() => undefined);
+      }
     }
   }
   if (msg.type === "inbox_count_changed") {
@@ -2148,10 +1945,9 @@ export function handleEvent(msg: AgentEvent) {
     return;
   }
 
-  // Queue events that arrive while history replay is in progress to avoid duplicates
-  if (state.replayInProgress) {
-    // The queue belongs to the generation that opened the replay; a first push
-    // after a reconnect stamps the new one rather than inheriting an old one.
+  // Never enqueue positioned persisted rows into state.replayQueue (which would
+  // acknowledge/advance cursor for an unapplied row).
+  if (!fromPersisted && state.replayInProgress) {
     if (state.replayQueue.length === 0) {
       state.replayQueueEpoch = state.connectionEpoch;
     }
@@ -2227,8 +2023,9 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "state_patch": {
-      // client-server-split M1: runtime state (busy, future: pending perms,
-      // streaming) flows through snapshot + patch, not replay.
+      // Skip already-covered patches (seq <= installed snapshot/patch seq)
+      // without triggering redundant snapshot GETs.
+      if (msg.seq <= state.lastStateSeq) break;
       const previousCancelStatus = state.cancelStatus;
       const applied = applyStatePatch({ seq: msg.seq, patch: msg.patch });
       if (
@@ -2241,9 +2038,13 @@ export function handleEvent(msg: AgentEvent) {
         );
       }
       if (!applied && state.taskId === msg.taskId) {
-        // seq gap (missed patches) → reload the authoritative snapshot
-        const taskId = state.taskId;
-        void reloadSnapshot(taskId, () => state.taskId === taskId);
+        // Real seq gap → route through ordered SyncFeedConsumer recovery when active.
+        if (statePatchGapRecovery) {
+          void statePatchGapRecovery();
+        } else {
+          const taskId = state.taskId;
+          void reloadSnapshot(taskId, () => state.taskId === taskId);
+        }
       }
       break;
     }
@@ -2272,17 +2073,27 @@ export function handleEvent(msg: AgentEvent) {
       if (matchesPendingCreate) {
         finishNewTaskRequest(msg.clientOpId);
       }
+      // Only activate a remote task_created when this tab explicitly owns it
+      // (pending create, pending navigation, or active task refresh).
       if (
         state.pendingNavigationTaskId &&
         msg.taskId !== state.pendingNavigationTaskId
       ) {
         break;
       }
-      // Only switch to the new task if this client requested it
       if (
         !state.awaitingNewTask &&
         state.taskId &&
         msg.taskId !== state.taskId
+      ) {
+        break;
+      }
+      if (
+        opts?.fromHubControl === true &&
+        !matchesPendingCreate &&
+        !state.awaitingNewTask &&
+        state.taskId === null &&
+        state.pendingNavigationTaskId !== msg.taskId
       ) {
         break;
       }
@@ -2319,12 +2130,7 @@ export function handleEvent(msg: AgentEvent) {
       updateModeUI();
       updateStatusBar();
       setHashTaskId(state.taskId);
-      // Report which task this client is now viewing (for per-task push suppression)
-      if (state.clientId) {
-        api
-          .postVisibility(state.clientId, !document.hidden, state.taskId)
-          .catch(() => {});
-      }
+      taskFocusNotifier?.(state.taskId);
       updateTaskInfo(state.taskId, state.taskTitle);
       setConnectionStatus("connected", "connected");
       syncInputEnabled();
@@ -2408,19 +2214,37 @@ export function handleEvent(msg: AgentEvent) {
       break;
     }
 
-    case "message_chunk":
-      // ACP background work may trigger a new Main-agent message while the
-      // foreground prompt remains ended/idle. Render that unsolicited stream
-      // as a fresh assistant bubble without reopening the foreground turn.
+    case "message_chunk": {
+      const action = previewReconciler.applyChunk("assistant", msg);
+      if (action.action === "ignore") break;
+      if (action.action === "resync") {
+        void reloadSnapshot(msg.taskId);
+        break;
+      }
       hideWaiting();
       finishThinking();
-      if (!state.currentAssistantEl) {
+      if (action.action === "start") {
+        if (state.currentAssistantEl) finishAssistant();
         state.currentAssistantEl = addMessage("assistant", "");
-        state.currentAssistantText = "";
+        if (typeof msg.epoch === "string") {
+          state.currentAssistantEl.dataset.previewEpoch = msg.epoch;
+        }
+        if (typeof msg.segmentId === "number") {
+          state.currentAssistantEl.dataset.previewSegmentId = String(
+            msg.segmentId,
+          );
+        }
+        state.currentAssistantText = action.text;
+      } else {
+        if (!state.currentAssistantEl) {
+          state.currentAssistantEl = addMessage("assistant", "");
+          state.currentAssistantText = "";
+        }
+        state.currentAssistantText += action.text;
       }
-      state.currentAssistantText += msg.text;
       scheduleAssistantRender();
       break;
+    }
 
     case "agent_image": {
       // An image the agent returned is its own element, exactly as replay
@@ -2435,26 +2259,61 @@ export function handleEvent(msg: AgentEvent) {
       break;
     }
 
-    case "thought_chunk":
-      // Like assistant chunks, thought chunks may belong to Main-agent work
-      // triggered by background activity while the foreground turn stays idle.
+    case "thought_chunk": {
+      const action = previewReconciler.applyChunk("thinking", msg);
+      if (action.action === "ignore") break;
+      if (action.action === "resync") {
+        void reloadSnapshot(msg.taskId);
+        break;
+      }
       hideWaiting();
-      // Match the backend buffer boundary: assistant → thought → assistant
-      // must produce three ordered live elements, just as replay does.
       finishAssistant();
-      if (!state.currentThinkingEl) {
+      if (action.action === "start") {
+        finishThinking();
         state.currentThinkingEl = document.createElement("details");
         state.currentThinkingEl.className = "thinking";
         state.currentThinkingEl.innerHTML =
           '<summary class="active">⠿ thinking...</summary><div class="thinking-content"></div>';
-        state.currentThinkingText = "";
+        if (typeof msg.epoch === "string") {
+          state.currentThinkingEl.dataset.previewEpoch = msg.epoch;
+        }
+        if (typeof msg.segmentId === "number") {
+          state.currentThinkingEl.dataset.previewSegmentId = String(
+            msg.segmentId,
+          );
+        }
+        state.currentThinkingText = action.text;
         appendMessageElement(state.currentThinkingEl);
+      } else {
+        if (!state.currentThinkingEl) {
+          state.currentThinkingEl = document.createElement("details");
+          state.currentThinkingEl.className = "thinking";
+          state.currentThinkingEl.innerHTML =
+            '<summary class="active">⠿ thinking...</summary><div class="thinking-content"></div>';
+          state.currentThinkingText = "";
+          appendMessageElement(state.currentThinkingEl);
+        }
+        state.currentThinkingText += action.text;
       }
-      state.currentThinkingText += msg.text;
       state.currentThinkingEl.querySelector(".thinking-content")!.textContent =
         state.currentThinkingText;
       scrollToBottom();
       break;
+    }
+
+    case "tool_call_raw_output": {
+      applyLiveToolCallUpdate(
+        {
+          type: "tool_call_update",
+          taskId: msg.taskId,
+          id: msg.id,
+          status: "",
+          rawOutput: msg.rawOutput,
+        },
+        liveHooks(),
+      );
+      break;
+    }
 
     case "tool_call": {
       // Background ACP work may emit a tool call while the foreground runtime

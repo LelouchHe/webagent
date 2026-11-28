@@ -389,6 +389,7 @@ describe("task pickers paint from the last list, then revalidate", () => {
     assert.ok(rows().includes("Beta Two"));
     assert.equal(selectedPrimary(), rows()[0]);
     assert.equal(selectedPrimary(), "Beta");
+    await tick();
   });
 
   it("/switch still shows (loading...) when no list has been fetched", async () => {

@@ -64,22 +64,16 @@ function rawSlashArgument(text: string): string {
 async function subscribePush(): Promise<void> {
   try {
     const reg = await navigator.serviceWorker.ready;
-    const res = await fetch("/api/beta/push/vapid-key");
-    if (!res.ok) return;
-    const { publicKey } = (await res.json()) as { publicKey: string };
+    const { publicKey } = await api.getPushVapidKey();
     const sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(publicKey) as BufferSource,
     });
     const json = sub.toJSON();
-    await fetch("/api/beta/push/subscribe", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        endpoint: json.endpoint,
-        keys: json.keys,
-        clientId: state.clientId,
-      }),
+    await api.subscribePushEndpoint({
+      endpoint: json.endpoint,
+      keys: json.keys,
+      clientId: state.clientId,
     });
   } catch (err) {
     log.scope("push").error("subscribe failed", { err });
@@ -93,11 +87,7 @@ async function unsubscribePush(): Promise<void> {
     if (!sub) return;
     const endpoint = sub.endpoint;
     await sub.unsubscribe();
-    await fetch("/api/beta/push/unsubscribe", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ endpoint }),
-    });
+    await api.unsubscribePushEndpoint(endpoint);
   } catch (err) {
     log.scope("push").error("unsubscribe failed", { err });
   }

@@ -32,6 +32,11 @@ import {
 } from "./collaboration-message.ts";
 import { isoFromMillis } from "./shared/time.ts";
 import { formatFieldBlock } from "./shared/field-block.ts";
+import {
+  StreamingBufferStore,
+  type StreamingChunkCoords,
+  type StreamingSnapshot,
+} from "./streaming-buffers.ts";
 import type { AgentBridge } from "./bridge.ts";
 import { buildMcpServerEntry } from "./mcp/server.ts";
 import type { CapabilityStore } from "./mcp/capability.ts";
@@ -554,7 +559,22 @@ export interface PublicPendingPermission {
   requestId: string;
   toolName: string;
   title: string;
-  options: Array<{ optionId: string; label: string }>;
+  options: Array<{ optionId: string; label: string; kind?: string }>;
+}
+
+function projectPendingPermission(
+  p: PendingPermission,
+): PublicPendingPermission {
+  return {
+    requestId: p.requestId,
+    toolName: "",
+    title: p.title,
+    options: p.options.map((o) => ({
+      optionId: o.optionId,
+      label: o.label,
+      ...(o.kind ? { kind: o.kind } : {}),
+    })),
+  };
 }
 
 export interface TaskExecution {
@@ -672,8 +692,7 @@ export class TaskManager implements ObligationHost {
   /** Roots whose post-reset rebuild owns the task's binding right now. */
   readonly rebuildingTasks = new Set<string>();
   readonly restoringTasks = new Set<string>();
-  readonly assistantBuffers = new Map<string, string>();
-  readonly thinkingBuffers = new Map<string, string>();
+  private readonly streamingBuffers = new StreamingBufferStore();
   private remoteTaskDeleter: RemoteTaskDeleter | undefined;
   /**
    * Per-turn metadata of the slot. Declared before `activePrompts` because the
@@ -2256,8 +2275,7 @@ export class TaskManager implements ObligationHost {
    */
   private resetTaskRuntime(taskId: string, preserveRuntimeState = false): void {
     this.publishedWarmIdentity.delete(taskId);
-    this.assistantBuffers.delete(taskId);
-    this.thinkingBuffers.delete(taskId);
+    this.streamingBuffers.clearTask(taskId);
     // `preserveRuntimeState` preserves the *state* ledger, not authorization:
     // the execution this turn ran on is being replaced, so its turn ends here
     // whether or not the projection is kept.
@@ -3365,8 +3383,7 @@ export class TaskManager implements ObligationHost {
     this.capabilities?.revokeByTask(id);
     this.publishedWarmIdentity.delete(id);
     this.liveTasks.delete(id);
-    this.assistantBuffers.delete(id);
-    this.thinkingBuffers.delete(id);
+    this.streamingBuffers.deleteTask(id);
     this.endTurn(id, { sync: false });
     this.pendingWorkRecoveries.delete(id);
     this.lastAgentActivityAt.delete(id);
@@ -3415,6 +3432,11 @@ export class TaskManager implements ObligationHost {
     }
   }
 
+  /** Pure read of current in-flight streaming preview and watermark. */
+  getStreamingSnapshot(taskId: string): StreamingSnapshot {
+    return this.streamingBuffers.snapshot(taskId);
+  }
+
   /** Flush assistant/thinking buffers to store. */
   flushBuffers(taskId: string): void {
     this.flushAssistantBuffer(taskId);
@@ -3423,13 +3445,12 @@ export class TaskManager implements ObligationHost {
 
   /** Flush only the assistant message buffer to store. */
   flushAssistantBuffer(taskId: string): void {
-    const assistant = this.assistantBuffers.get(taskId);
-    this.assistantBuffers.delete(taskId);
-    if (assistant && this.store.getTask(taskId)) {
+    const seg = this.streamingBuffers.takeAssistant(taskId);
+    if (seg && this.store.getTask(taskId)) {
       this.store.saveEvent(
         taskId,
         "assistant_message",
-        { text: assistant },
+        { text: seg.text, epoch: seg.epoch, segmentId: seg.segmentId },
         { from_ref: "agent" },
       );
     }
@@ -3437,28 +3458,25 @@ export class TaskManager implements ObligationHost {
 
   /** Flush only the thinking buffer to store. */
   flushThinkingBuffer(taskId: string): void {
-    const thinking = this.thinkingBuffers.get(taskId);
-    this.thinkingBuffers.delete(taskId);
-    if (thinking && this.store.getTask(taskId)) {
+    const seg = this.streamingBuffers.takeThinking(taskId);
+    if (seg && this.store.getTask(taskId)) {
       this.store.saveEvent(
         taskId,
         "thinking",
-        { text: thinking },
+        { text: seg.text, epoch: seg.epoch, segmentId: seg.segmentId },
         { from_ref: "agent" },
       );
     }
   }
 
   /** Append to assistant message buffer. */
-  appendAssistant(taskId: string, text: string): void {
-    const buf = (this.assistantBuffers.get(taskId) ?? "") + text;
-    this.assistantBuffers.set(taskId, buf);
+  appendAssistant(taskId: string, text: string): StreamingChunkCoords {
+    return this.streamingBuffers.appendAssistant(taskId, text);
   }
 
   /** Append to thinking buffer. */
-  appendThinking(taskId: string, text: string): void {
-    const buf = (this.thinkingBuffers.get(taskId) ?? "") + text;
-    this.thinkingBuffers.set(taskId, buf);
+  appendThinking(taskId: string, text: string): StreamingChunkCoords {
+    return this.streamingBuffers.appendThinking(taskId, text);
   }
 
   /** Get CWD for a task (falls back to default). */
@@ -4576,15 +4594,7 @@ export class TaskManager implements ObligationHost {
   getPendingPermissions(taskId?: string): PublicPendingPermission[] {
     const perms = [...this.pendingPermissions.values()];
     return (taskId ? perms.filter((p) => p.taskId === taskId) : perms).map(
-      (p) => ({
-        requestId: p.requestId,
-        toolName: "",
-        title: p.title,
-        options: p.options.map((option) => ({
-          optionId: option.optionId,
-          label: option.label,
-        })),
-      }),
+      projectPendingPermission,
     );
   }
 
@@ -4596,15 +4606,7 @@ export class TaskManager implements ObligationHost {
   syncPendingPermissions(taskId: string): void {
     const forTask = [...this.pendingPermissions.values()]
       .filter((p) => p.taskId === taskId)
-      .map((p) => ({
-        requestId: p.requestId,
-        toolName: "",
-        title: p.title,
-        options: p.options.map((o) => ({
-          optionId: o.optionId,
-          label: o.label,
-        })),
-      }));
+      .map(projectPendingPermission);
     this.state.patch(taskId, {
       runtime: { pendingPermissions: forTask },
     });

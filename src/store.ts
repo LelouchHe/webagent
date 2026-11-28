@@ -3,6 +3,10 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { canonicalCwd } from "./cwd-path.ts";
+import {
+  installCommittedEventTracker,
+  type CommittedEventTracker,
+} from "./event-egress.ts";
 
 import { formatTaskPath } from "./shared/task-reference.ts";
 import {
@@ -512,6 +516,7 @@ export class Store {
   private readonly outboxObservers: Array<
     (entries: readonly OutboxRow[]) => void
   > = [];
+  private readonly committedEvents: CommittedEventTracker;
   /**
    * Binding facts belong to the outermost successful commit, not to any one
    * recursive Store method. Every binding write registers its before/after
@@ -543,6 +548,7 @@ export class Store {
     assertNotLegacyDatabase(dataDir);
     mkdirSync(dataDir, { recursive: true });
     this.db = new Database(join(dataDir, "webagent.db"));
+    this.committedEvents = installCommittedEventTracker(this.db);
     const internal: StoreInternal = {
       db: this.db,
       getRootTaskId: () => this.rootTaskId,
@@ -674,6 +680,10 @@ export class Store {
 
   onOutboxCommitted(observer: (entries: readonly OutboxRow[]) => void): void {
     this.outboxObservers.push(observer);
+  }
+
+  onEventsCommitted(observer: (events: readonly EventRow[]) => void): void {
+    this.committedEvents.onCommitted(observer);
   }
 
   private writeOutbox<T>(fn: () => T): T {
@@ -2212,9 +2222,11 @@ export class Store {
       this.db
         .prepare("UPDATE tasks SET pending_compact_summary = ? WHERE id = ?")
         .run(pending, taskId);
-      return this.db
+      const row = this.db
         .prepare("SELECT * FROM events WHERE task_id = ? AND seq = ?")
         .get(taskId, seq) as EventRow;
+      this.committedEvents.record(row);
+      return row;
     })();
   }
 
@@ -2296,9 +2308,11 @@ export class Store {
         )
         .run(taskId, seq, type, JSON.stringify(data), fromRef, Date.now());
 
-      return this.db
+      const row = this.db
         .prepare("SELECT * FROM events WHERE task_id = ? AND seq = ?")
         .get(taskId, seq) as EventRow;
+      this.committedEvents.record(row);
+      return row;
     })();
   }
 
@@ -2332,7 +2346,9 @@ export class Store {
       excludeThinking?: boolean;
       afterSeq?: number;
       beforeSeq?: number;
+      upToSeq?: number;
       limit?: number;
+      direction?: "asc" | "desc";
       text?: string;
     },
   ): EventRow[] {
@@ -2347,26 +2363,27 @@ export class Store {
       conditions.push("seq < ?");
       params.push(opts.beforeSeq);
     }
-    if (opts?.excludeThinking) {
-      conditions.push("type != 'thinking'");
+    if (opts?.upToSeq != null) {
+      conditions.push("seq <= ?");
+      params.push(opts.upToSeq);
     }
+    if (opts?.excludeThinking) conditions.push("type != 'thinking'");
     if (opts?.text !== undefined) {
       conditions.push("data LIKE ? ESCAPE '\\'");
-      const escaped = opts.text.replace(/[\\%_]/g, (char) => `\\${char}`);
-      params.push(`%${escaped}%`);
+      params.push(`%${opts.text.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
     }
     const where = conditions.join(" AND ");
-
-    if (hasLimit) {
-      // Fetch the last N matching rows: subquery orders DESC with LIMIT,
-      // outer query re-orders ASC so the page is in chronological order.
-      const sql = `SELECT * FROM (SELECT * FROM events WHERE ${where} ORDER BY seq DESC LIMIT ?) ORDER BY seq`;
-      params.push(opts.limit);
-      return this.db.prepare(sql).all(...params) as EventRow[];
+    if (!hasLimit) {
+      return this.db
+        .prepare(`SELECT * FROM events WHERE ${where} ORDER BY seq`)
+        .all(...params) as EventRow[];
     }
-    return this.db
-      .prepare(`SELECT * FROM events WHERE ${where} ORDER BY seq`)
-      .all(...params) as EventRow[];
+    params.push(opts.limit);
+    const sql =
+      opts.direction === "asc"
+        ? `SELECT * FROM events WHERE ${where} ORDER BY seq ASC LIMIT ?`
+        : `SELECT * FROM (SELECT * FROM events WHERE ${where} ORDER BY seq DESC LIMIT ?) ORDER BY seq`;
+    return this.db.prepare(sql).all(...params) as EventRow[];
   }
 
   getEventCount(taskId: string, opts?: { excludeThinking?: boolean }): number {

@@ -18,6 +18,7 @@ import "./attachments.ts"; // attach/paste listeners
 import "./lightbox.ts"; // click-to-enlarge image viewer
 import "./input.ts"; // keyboard/send listeners
 import { connect } from "./connection.ts";
+import * as api from "./api.ts";
 import { state, dom } from "./state.ts";
 import { addSystem, onThemeChange } from "./render.ts";
 import { installInputFocusRecovery } from "./input-focus-recovery.ts";
@@ -46,8 +47,8 @@ onThemeChange(hljsThemeChange);
 connect();
 
 // Fetch version info (non-blocking)
-void fetch("/api/v1/version")
-  .then((r) => r.json())
+void api
+  .getVersion()
   .then((v: Record<string, unknown>) => {
     if (typeof v.server === "string") state.serverVersion = v.server;
     const agent = v.agent as Record<string, string> | null;

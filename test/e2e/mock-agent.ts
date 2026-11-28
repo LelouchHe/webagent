@@ -1546,37 +1546,34 @@ class MockAgent {
 
     if (text.startsWith("E2E_TOOL_EDIT")) {
       const toolCallId = `tool-${++this.toolCallCounter}`;
-      await this.connection.notify("session/update", {
-        sessionId: params.sessionId,
-        update: {
-          sessionUpdate: "tool_call",
-          toolCallId,
-          title: "Edit File",
-          kind: "edit",
-          rawInput: {
-            path: "src/server.ts",
-            old_str: 'const PORT = 3000;\nconst HOST = "localhost";',
-            new_str:
-              'const PORT = parseInt(process.env.PORT || "8080");\nconst HOST = "0.0.0.0";',
-          },
+      const emit = (update: Record<string, unknown>) =>
+        this.connection.notify("session/update", {
+          sessionId: params.sessionId,
+          update,
+        });
+      await emit({
+        sessionUpdate: "tool_call",
+        toolCallId,
+        title: "Edit File",
+        kind: "edit",
+        rawInput: {
+          path: "src/server.ts",
+          old_str: 'const PORT = 3000;\nconst HOST = "localhost";',
+          new_str:
+            'const PORT = parseInt(process.env.PORT || "8080");\nconst HOST = "0.0.0.0";',
         },
       });
-      await this.connection.notify("session/update", {
-        sessionId: params.sessionId,
-        update: {
-          sessionUpdate: "tool_call_update",
-          toolCallId,
-          status: "completed",
-        },
+      await emit({
+        sessionUpdate: "tool_call_update",
+        toolCallId,
+        status: "completed",
+        rawOutput: { ok: true },
       });
-      await this.connection.notify("session/update", {
-        sessionId: params.sessionId,
-        update: {
-          sessionUpdate: "agent_message_chunk",
-          content: {
-            type: "text",
-            text: "Updated the server config to use environment variables.",
-          },
+      await emit({
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "text",
+          text: "Updated the server config to use environment variables.",
         },
       });
       return { stopReason: "end_turn" };

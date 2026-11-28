@@ -4,6 +4,10 @@ import type { AgentEvent } from "./types.ts";
 import { reSignAttachmentUrlsInJson } from "./auth.ts";
 import { enrichEventForDisplay, type LabelMap } from "./attachment-labels.ts";
 import { log } from "./log.ts";
+import {
+  projectLegacyPerTaskEvent,
+  type EventFeedEntry,
+} from "./event-egress.ts";
 import { SSE_HEARTBEAT_INTERVAL_MS } from "./shared/stream-supervisor.ts";
 
 const slog = log.scope("sse");
@@ -39,9 +43,23 @@ export class SseManager {
   private isTokenRevoked: ((tokenName: string) => boolean) | null = null;
   private attachmentSecret: Buffer | null = null;
   private getLabelMap: ((taskId: string) => LabelMap) | null = null;
+  private readonly stagedToolRawOutputs = new Map<string, unknown>();
 
   constructor(heartbeatMs = SSE_HEARTBEAT_INTERVAL_MS) {
     this.heartbeatInterval = heartbeatMs;
+  }
+
+  /**
+   * Stage stripped `rawOutput` for an immediately-following committed
+   * `tool_call_update` so per-task SSE edges can inline it without dual
+   * producer broadcasts while global feed clients receive a separate ephemeral.
+   */
+  stageToolCallRawOutput(
+    taskId: string,
+    toolCallId: string,
+    rawOutput: unknown,
+  ): void {
+    this.stagedToolRawOutputs.set(`${taskId}:${toolCallId}`, rawOutput);
   }
 
   /** Register a callback invoked when a client disconnects. */
@@ -175,6 +193,79 @@ export class SseManager {
       // Drop the client so we stop writing to it on every broadcast.
       slog.warn("write failed", { clientId: client.id, err: String(err) });
       this.remove(client.id, "write-failed");
+    }
+  }
+
+  /**
+   * Broadcast a committed persisted event feed entry to connected SSE clients.
+   * Global clients receive `{ feed, pos, prev, data }` with NO `id:` line;
+   * per-task clients receive the thin legacy event projection with `id: pos`.
+   */
+  broadcastFeedEntry(entry: EventFeedEntry): void {
+    let stagedRawOutput: { id: string; rawOutput: unknown } | null = null;
+    if (entry.data.type === "tool_call_update") {
+      try {
+        const parsed = JSON.parse(entry.data.data) as { id?: unknown };
+        if (typeof parsed.id === "string") {
+          const key = `${entry.feed}:${parsed.id}`;
+          if (this.stagedToolRawOutputs.has(key)) {
+            stagedRawOutput = {
+              id: parsed.id,
+              rawOutput: this.stagedToolRawOutputs.get(key),
+            };
+            this.stagedToolRawOutputs.delete(key);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const snapshot = [...this.clients.values()];
+    let feedFrame: string | null = null;
+    let rawOutputFrame: string | null = null;
+    let legacyFrame: string | null = null;
+    for (const client of snapshot) {
+      if (client.res.writableEnded) continue;
+      if (client.receiveBusinessEvents === false) continue;
+      if (client.taskId) {
+        if (client.taskId !== entry.feed) continue;
+        // Per-task SSE consumers receive ephemeral `bash_done` as the bash
+        // terminator; omit the persisted `bash_result` duplicate at this edge.
+        if (entry.data.type === "bash_result") continue;
+        if (legacyFrame === null) {
+          const legacy = projectLegacyPerTaskEvent(entry.data);
+          if (!legacy) continue;
+          const out =
+            stagedRawOutput !== null
+              ? { ...legacy, rawOutput: stagedRawOutput.rawOutput }
+              : legacy;
+          legacyFrame = `id: ${entry.pos}\ndata: ${JSON.stringify(out)}\n\n`;
+        }
+        try {
+          client.res.write(legacyFrame);
+        } catch (err) {
+          slog.warn("write failed", { clientId: client.id, err: String(err) });
+          this.remove(client.id, "write-failed");
+        }
+      } else {
+        feedFrame ??= `data: ${JSON.stringify(entry)}\n\n`;
+        try {
+          client.res.write(feedFrame);
+          if (stagedRawOutput !== null) {
+            rawOutputFrame ??= `data: ${JSON.stringify({
+              type: "tool_call_raw_output",
+              taskId: entry.feed,
+              id: stagedRawOutput.id,
+              rawOutput: stagedRawOutput.rawOutput,
+            })}\n\n`;
+            client.res.write(rawOutputFrame);
+          }
+        } catch (err) {
+          slog.warn("write failed", { clientId: client.id, err: String(err) });
+          this.remove(client.id, "write-failed");
+        }
+      }
     }
   }
 

@@ -27,7 +27,7 @@
           "source": "root",
           "configOptions": [],
           "agentCommands": {
-            "epoch": "00000000-0000-4000-8000-000000000003",
+            "epoch": "00000000-0000-4000-8000-000000000004",
             "revision": 1,
             "commands": [
               {
@@ -83,7 +83,7 @@
               "agentId": "mock",
               "configOptions": [],
               "agentCommands": {
-                "epoch": "00000000-0000-4000-8000-000000000003",
+                "epoch": "00000000-0000-4000-8000-000000000004",
                 "revision": 1,
                 "commands": [
                   {
@@ -221,12 +221,6 @@
           "taskId": "00000000-0000-4000-8000-000000000001",
           "events": [
             {
-              "type": "user_message",
-              "taskId": "00000000-0000-4000-8000-000000000001",
-              "text": "exercise denied tools",
-              "clientOpId": "00000000-0000-4000-8000-000000000004"
-            },
-            {
               "type": "state_patch",
               "taskId": "00000000-0000-4000-8000-000000000001",
               "seq": 1,
@@ -257,7 +251,11 @@
             {
               "type": "message_chunk",
               "taskId": "00000000-0000-4000-8000-000000000001",
-              "text": "Denied operations attempted."
+              "text": "Denied operations attempted.",
+              "epoch": "00000000-0000-4000-8000-000000000002",
+              "segmentId": 1,
+              "offset": 0,
+              "endOffset": 28
             },
             {
               "type": "state_patch",
@@ -281,12 +279,6 @@
                   }
                 }
               }
-            },
-            {
-              "type": "prompt_done",
-              "taskId": "00000000-0000-4000-8000-000000000001",
-              "stopReason": "end_turn",
-              "promptId": "prompt-1"
             }
           ]
         }
@@ -436,7 +428,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 1,
                 "user_message",
-                "{\"text\":\"exercise denied tools\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+                "{\"text\":\"exercise denied tools\",\"clientOpId\":\"00000000-0000-4000-8000-000000000005\"}",
                 "user",
                 1789333200000
               ]
@@ -451,7 +443,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 2,
                 "assistant_message",
-                "{\"text\":\"Denied operations attempted.\"}",
+                "{\"text\":\"Denied operations attempted.\",\"epoch\":\"00000000-0000-4000-8000-000000000002\",\"segmentId\":1}",
                 "agent",
                 1789333200000
               ]
@@ -521,12 +513,6 @@
           "taskId": "00000000-0000-4000-8000-000000000001",
           "events": [
             {
-              "type": "user_message",
-              "taskId": "00000000-0000-4000-8000-000000000001",
-              "text": "exercise missing capability",
-              "clientOpId": "00000000-0000-4000-8000-000000000005"
-            },
-            {
               "type": "state_patch",
               "taskId": "00000000-0000-4000-8000-000000000001",
               "seq": 5,
@@ -557,7 +543,11 @@
             {
               "type": "message_chunk",
               "taskId": "00000000-0000-4000-8000-000000000001",
-              "text": "Missing capability attempted."
+              "text": "Missing capability attempted.",
+              "epoch": "00000000-0000-4000-8000-000000000002",
+              "segmentId": 2,
+              "offset": 0,
+              "endOffset": 29
             },
             {
               "type": "state_patch",
@@ -581,12 +571,6 @@
                   }
                 }
               }
-            },
-            {
-              "type": "prompt_done",
-              "taskId": "00000000-0000-4000-8000-000000000001",
-              "stopReason": "end_turn",
-              "promptId": "prompt-2"
             }
           ]
         }
@@ -658,7 +642,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 4,
                 "user_message",
-                "{\"text\":\"exercise missing capability\",\"clientOpId\":\"00000000-0000-4000-8000-000000000005\"}",
+                "{\"text\":\"exercise missing capability\",\"clientOpId\":\"00000000-0000-4000-8000-000000000006\"}",
                 "user",
                 1789333200000
               ]
@@ -673,7 +657,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 5,
                 "assistant_message",
-                "{\"text\":\"Missing capability attempted.\"}",
+                "{\"text\":\"Missing capability attempted.\",\"epoch\":\"00000000-0000-4000-8000-000000000002\",\"segmentId\":2}",
                 "agent",
                 1789333200000
               ]
@@ -789,7 +773,7 @@
             }
           ],
           "agentCommands": {
-            "epoch": "00000000-0000-4000-8000-000000000003",
+            "epoch": "00000000-0000-4000-8000-000000000004",
             "revision": 0,
             "commands": []
           }
@@ -830,7 +814,7 @@
                   }
                 }
               ],
-              "epoch": "00000000-0000-4000-8000-000000000003",
+              "epoch": "00000000-0000-4000-8000-000000000004",
               "revision": 2
             },
             {
@@ -921,7 +905,7 @@
                 }
               ],
               "agentCommands": {
-                "epoch": "00000000-0000-4000-8000-000000000003",
+                "epoch": "00000000-0000-4000-8000-000000000004",
                 "revision": 0,
                 "commands": []
               }
@@ -1091,12 +1075,6 @@
           "taskId": "00000000-0000-4000-8000-000000000001",
           "events": [
             {
-              "type": "user_message",
-              "taskId": "00000000-0000-4000-8000-000000000001",
-              "text": "exercise stale capability",
-              "clientOpId": "00000000-0000-4000-8000-000000000006"
-            },
-            {
               "type": "state_patch",
               "taskId": "00000000-0000-4000-8000-000000000001",
               "seq": 11,
@@ -1127,7 +1105,11 @@
             {
               "type": "message_chunk",
               "taskId": "00000000-0000-4000-8000-000000000001",
-              "text": "Stale capability attempted."
+              "text": "Stale capability attempted.",
+              "epoch": "00000000-0000-4000-8000-000000000002",
+              "segmentId": 3,
+              "offset": 0,
+              "endOffset": 27
             },
             {
               "type": "state_patch",
@@ -1151,12 +1133,6 @@
                   }
                 }
               }
-            },
-            {
-              "type": "prompt_done",
-              "taskId": "00000000-0000-4000-8000-000000000001",
-              "stopReason": "end_turn",
-              "promptId": "prompt-4"
             }
           ]
         }
@@ -1243,7 +1219,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 8,
                 "user_message",
-                "{\"text\":\"exercise stale capability\",\"clientOpId\":\"00000000-0000-4000-8000-000000000006\"}",
+                "{\"text\":\"exercise stale capability\",\"clientOpId\":\"00000000-0000-4000-8000-000000000007\"}",
                 "user",
                 1789333200000
               ]
@@ -1258,7 +1234,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 9,
                 "assistant_message",
-                "{\"text\":\"Stale capability attempted.\"}",
+                "{\"text\":\"Stale capability attempted.\",\"epoch\":\"00000000-0000-4000-8000-000000000002\",\"segmentId\":3}",
                 "agent",
                 1789333200000
               ]
@@ -1317,7 +1293,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 1,
         "type": "user_message",
-        "data": "{\"text\":\"exercise denied tools\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+        "data": "{\"text\":\"exercise denied tools\",\"clientOpId\":\"00000000-0000-4000-8000-000000000005\"}",
         "created_at": 1789333200000,
         "from_ref": "user"
       },
@@ -1326,7 +1302,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 2,
         "type": "assistant_message",
-        "data": "{\"text\":\"Denied operations attempted.\"}",
+        "data": "{\"text\":\"Denied operations attempted.\",\"epoch\":\"00000000-0000-4000-8000-000000000002\",\"segmentId\":1}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },
@@ -1344,7 +1320,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 4,
         "type": "user_message",
-        "data": "{\"text\":\"exercise missing capability\",\"clientOpId\":\"00000000-0000-4000-8000-000000000005\"}",
+        "data": "{\"text\":\"exercise missing capability\",\"clientOpId\":\"00000000-0000-4000-8000-000000000006\"}",
         "created_at": 1789333200000,
         "from_ref": "user"
       },
@@ -1353,7 +1329,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 5,
         "type": "assistant_message",
-        "data": "{\"text\":\"Missing capability attempted.\"}",
+        "data": "{\"text\":\"Missing capability attempted.\",\"epoch\":\"00000000-0000-4000-8000-000000000002\",\"segmentId\":2}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },
@@ -1380,7 +1356,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 8,
         "type": "user_message",
-        "data": "{\"text\":\"exercise stale capability\",\"clientOpId\":\"00000000-0000-4000-8000-000000000006\"}",
+        "data": "{\"text\":\"exercise stale capability\",\"clientOpId\":\"00000000-0000-4000-8000-000000000007\"}",
         "created_at": 1789333200000,
         "from_ref": "user"
       },
@@ -1389,7 +1365,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 9,
         "type": "assistant_message",
-        "data": "{\"text\":\"Stale capability attempted.\"}",
+        "data": "{\"text\":\"Stale capability attempted.\",\"epoch\":\"00000000-0000-4000-8000-000000000002\",\"segmentId\":3}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },

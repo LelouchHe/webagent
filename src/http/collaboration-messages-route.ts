@@ -1,6 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { TokenRecord } from "../auth-store.ts";
-import { buildCollaborationBroadcast } from "../collaboration-message.ts";
 import { HTTP_STATUS } from "../http-status.ts";
 import { COLLABORATION_MESSAGE_NAMESPACE, opIdentity } from "../op-identity.ts";
 import { parseClientOpIdHeader } from "./ops-adapter.ts";
@@ -80,7 +79,7 @@ function respondCollaborationOutcome(
   outcome: ReturnType<Store["createOrReplayCollaborationMessage"]>,
   opId: string | null,
 ): void {
-  const { req, res, sourceTaskId, store, sseManager, json } = ctx;
+  const { req, res, sourceTaskId, store, json } = ctx;
   switch (outcome.kind) {
     case "source_not_found":
       json(res, HTTP_STATUS.NOT_FOUND, { error: "Source task not found" });
@@ -114,24 +113,8 @@ function respondCollaborationOutcome(
     case "created": {
       // A user-originated collaboration action counts as activity on the
       // Task where the user entered it, not only on the recipient.
+      // Persisted collaboration rows publish automatically via outer-commit feed.
       store.updateTaskLastActive(sourceTaskId);
-      const sourceLabel =
-        outcome.sourceTask.title ?? outcome.sourceTask.id.slice(0, 8);
-      const targetLabel =
-        outcome.targetTask.title ?? outcome.targetTask.id.slice(0, 8);
-      sseManager.broadcast(
-        buildCollaborationBroadcast({
-          messageId: outcome.message.id,
-          sourceTaskId,
-          sourceLabel,
-          targetTaskId: outcome.targetTask.id,
-          targetLabel,
-          role: "source",
-          taskId: sourceTaskId,
-          body: outcome.message.body,
-          deliveryStatus: "queued",
-        }),
-      );
       json(
         res,
         HTTP_STATUS.ACCEPTED,

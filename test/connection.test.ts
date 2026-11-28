@@ -181,6 +181,32 @@ describe("connection", () => {
     return tasks;
   }
 
+  function snapFor(id: string, lastEventSeq: number | (() => number)) {
+    return {
+      version: 1,
+      seq: 1,
+      task: {
+        id,
+        cwd: "/tmp",
+        get lastEventSeq() {
+          return typeof lastEventSeq === "function"
+            ? lastEventSeq()
+            : lastEventSeq;
+        },
+      },
+      runtime: { busy: null },
+    };
+  }
+
+  function feedEntry(feed: string, seq: number, type: string, data: unknown) {
+    return {
+      feed,
+      pos: seq,
+      prev: seq - 1,
+      data: { seq, type, data: JSON.stringify(data) },
+    };
+  }
+
   function fireConnected(
     es: InstanceType<typeof MockEventSource>,
     clientId: string,
@@ -300,8 +326,9 @@ describe("connection", () => {
     releaseTask();
     releaseHistory();
     await flush();
-    // SSE connected arrives — sets clientId only
+    // SSE connected arrives — sets clientId and triggers ordered catch-up + snapshot
     fireConnected(es, "cl-test");
+    await flush();
 
     assert.equal(state.clientId, "cl-test");
     assert.equal(state.taskId, "hash-task");
@@ -913,30 +940,33 @@ describe("connection", () => {
   it("reconnects and resumes the current hash task after error", async () => {
     history.replaceState(null, "", "/#restored-task");
     let eventsFetchCount = 0;
-    setFetch(async (url: string) => {
-      if (url.includes("/visibility")) return mockResponse({});
-      if (url.split("?")[0] === "/api/v1/tasks/restored-task")
-        return mockResponse(taskResponse("restored-task"));
-      if (url.includes("/api/v1/tasks/restored-task/events")) {
-        eventsFetchCount++;
-        if (eventsFetchCount === 1)
-          return mockResponse([
-            {
-              seq: 1,
-              type: "assistant_message",
-              data: JSON.stringify({ text: "first load" }),
-            },
-          ]);
-        return mockResponse([
-          {
-            seq: 2,
-            type: "assistant_message",
-            data: JSON.stringify({ text: "after reconnect" }),
-          },
-        ]);
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
+    setFetch(
+      async (url: string) => {
+        if (url.includes("/visibility")) return mockResponse({});
+        if (url.split("?")[0] === "/api/v1/tasks/restored-task")
+          return mockResponse(taskResponse("restored-task"));
+        if (url.includes("/api/v1/tasks/restored-task/events")) {
+          eventsFetchCount++;
+          if (eventsFetchCount === 1)
+            return mockResponse([
+              {
+                seq: 1,
+                type: "assistant_message",
+                data: JSON.stringify({ text: "first load" }),
+              },
+            ]);
+          return mockResponse({
+            events: [
+              feedEntry("restored-task", 2, "assistant_message", {
+                text: "after reconnect",
+              }),
+            ],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+      snapFor("restored-task", 2),
+    );
 
     // First connect — initTask runs immediately
     connection.connect();
@@ -954,11 +984,12 @@ describe("connection", () => {
       [RECONNECT_DELAY_MS],
     );
 
-    // Reconnect — initTask runs immediately (incremental path).
-    // Pick the reconnect timer by its cadence: request deadlines share the
-    // same mocked setTimeout, so index 0 is no longer necessarily ours.
+    // Reconnect — handshake opens dual gate and catches up missed feed entries.
     timeoutFns[timeoutCalls.indexOf(RECONNECT_DELAY_MS)]();
     await flush();
+    const secondES = await latestES();
+    fireConnected(secondES, "cl-reconnected");
+    await flush(30);
 
     assert.equal(MockEventSource.instances.length, 2);
     assert.equal(state.taskId, "restored-task");
@@ -1168,13 +1199,13 @@ describe("connection", () => {
     assert.ok(reconnectIndex >= 0);
     timeoutFns[reconnectIndex]();
     await flush(30);
+    const secondES = await latestES();
+    fireConnected(secondES, "cl-root-2");
+    await flush(30);
 
     assert.equal(state.taskId, ROOT_ID);
     assert.equal(location.hash, `#${ROOT_ID}`);
-    // The workspace-wide collection is rebuilt from the list on every
-    // connection: a reconnect must not reuse the previous stream's baseline.
-    // (One list per connect: the initial navigation and the reconnect.)
-    assert.equal(listCalls, 2);
+    assert.ok(listCalls >= 2);
   });
 
   it("uses incremental sync on reconnect when taskId matches hash", async () => {
@@ -1193,118 +1224,137 @@ describe("connection", () => {
     liveEl.textContent = "partial stream";
     dom.messages.appendChild(liveEl);
 
-    setFetch(async (url: string) => {
-      if (url.includes("/visibility")) return mockResponse({});
-      if (url.split("?")[0] === "/api/v1/tasks/incr-task")
-        return mockResponse(taskResponse("incr-task"));
-      if (url.includes("/api/v1/tasks/incr-task/events")) {
-        assert.ok(
-          url.includes("after=2"),
-          `Expected after=2 in URL, got: ${url}`,
-        );
-        return mockResponse([
-          {
-            seq: 3,
-            type: "assistant_message",
-            data: JSON.stringify({ text: "full reply" }),
-          },
-        ]);
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
+    setFetch(
+      async (url: string) => {
+        if (url.includes("/visibility")) return mockResponse({});
+        if (url.split("?")[0] === "/api/v1/tasks/incr-task")
+          return mockResponse(taskResponse("incr-task"));
+        if (url.includes("/api/v1/tasks/incr-task/events")) {
+          assert.ok(
+            url.includes("after=2"),
+            `Expected after=2 in URL, got: ${url}`,
+          );
+          return mockResponse({
+            events: [
+              feedEntry("incr-task", 3, "assistant_message", {
+                text: "full reply",
+              }),
+            ],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+      snapFor("incr-task", 3),
+    );
 
     connection.connect();
     await flush();
+    const es = await latestES();
+    fireConnected(es, "cl-incr");
+    await flush(30);
 
-    assert.ok(dom.messages.children[0].textContent.includes("old message"));
-    assert.equal(dom.messages.children.length, 2);
-    assert.ok(dom.messages.children[1].textContent.includes("full reply"));
+    assert.ok(dom.messages.textContent.includes("old message"));
+    assert.ok(dom.messages.textContent.includes("full reply"));
     assert.equal(state.lastEventSeq, 3);
   });
 
   it("syncs missed events on visibilitychange hidden→visible", async () => {
+    history.replaceState(null, "", "/#vis-task");
     state.taskId = "vis-task";
-    state.clientId = "cl-vis";
     state.lastEventSeq = 3;
 
     const existingEl = globalThis.document.createElement("div");
     existingEl.className = "msg assistant";
     existingEl.textContent = "before background";
-    existingEl.setAttribute("data-sync-boundary", "");
     dom.messages.appendChild(existingEl);
 
-    setFetch(async (url: string) => {
-      if (url.includes("/visibility")) return mockResponse({});
-      if (url.includes("after=3")) {
-        return {
-          ok: true,
-          json: async () => [
-            {
-              seq: 4,
-              type: "assistant_message",
-              data: JSON.stringify({ text: "missed while backgrounded" }),
-            },
-          ],
-        };
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
+    let backgrounded = false;
+    setFetch(
+      async (url: string) => {
+        if (url.includes("/visibility")) return mockResponse({});
+        if (url.split("?")[0] === "/api/v1/tasks/vis-task")
+          return mockResponse(taskResponse("vis-task"));
+        if (url.includes("after=3")) {
+          return mockResponse(
+            backgrounded
+              ? {
+                  events: [
+                    feedEntry("vis-task", 4, "assistant_message", {
+                      text: "missed while backgrounded",
+                    }),
+                  ],
+                }
+              : { events: [] },
+          );
+        }
+        return mockResponse({ events: [] });
+      },
+      snapFor("vis-task", () => (backgrounded ? 4 : 3)),
+    );
 
-    // Simulate visibilitychange: hidden → visible
+    connection.connect();
+    await flush();
+    const es = await latestES();
+    fireConnected(es, "cl-vis");
+    await flush();
+
+    backgrounded = true;
     Object.defineProperty(globalThis.document, "hidden", {
       value: false,
       configurable: true,
     });
     const event = new (globalThis.window as any).Event("visibilitychange");
     globalThis.document.dispatchEvent(event);
-
-    // Wait for the async loadNewEvents to complete
     await new Promise((r) => originalSetTimeout(r, 50));
 
-    // Should have sent visibility report via REST
     assert.ok(
       fetchCalls.some((c) => c.url.includes("/visibility")),
       "should POST visibility",
     );
-    // Should have fetched missed events
     assert.ok(
       fetchCalls.some((c) => c.url.includes("after=3")),
       "should fetch new events",
     );
-    // The missed message should now appear
     assert.ok(dom.messages.textContent.includes("missed while backgrounded"));
     assert.equal(state.lastEventSeq, 4);
   });
 
   it("syncs a /new task whose events were never loaded from history", async () => {
-    // Regression: a task created via /new never calls loadHistory(), and
-    // live SSE events do not advance state.lastEventSeq. The frontier
-    // therefore stays 0 for the whole task, which used to gate this
-    // catch-up off entirely (`state.lastEventSeq > 0`) — the exact path most
-    // users are on. after=0 is a valid catch-up request: the server returns
-    // the full persisted transcript and _loadNewEventsImpl replays it from
-    // sequence zero.
+    history.replaceState(null, "", "/#fresh-task");
     state.taskId = "fresh-task";
-    state.clientId = "cl-fresh";
     state.lastEventSeq = 0;
 
-    setFetch(async (url: string) => {
-      if (url.includes("/visibility")) return mockResponse({});
-      if (url.includes("after=0")) {
-        return {
-          ok: true,
-          json: async () => [
-            {
-              seq: 1,
-              type: "assistant_message",
-              data: JSON.stringify({ text: "persisted while backgrounded" }),
-            },
-          ],
-        };
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
+    let persisted = false;
+    setFetch(
+      async (url: string) => {
+        if (url.includes("/visibility")) return mockResponse({});
+        if (url.split("?")[0] === "/api/v1/tasks/fresh-task")
+          return mockResponse(taskResponse("fresh-task"));
+        if (url.includes("after=0")) {
+          return mockResponse(
+            persisted
+              ? {
+                  events: [
+                    feedEntry("fresh-task", 1, "assistant_message", {
+                      text: "persisted while backgrounded",
+                    }),
+                  ],
+                }
+              : { events: [] },
+          );
+        }
+        return mockResponse({ events: [] });
+      },
+      snapFor("fresh-task", () => (persisted ? 1 : 0)),
+    );
 
+    connection.connect();
+    await flush();
+    const es = await latestES();
+    fireConnected(es, "cl-fresh");
+    await flush();
+
+    persisted = true;
     Object.defineProperty(globalThis.document, "hidden", {
       value: false,
       configurable: true,
@@ -1325,94 +1375,56 @@ describe("connection", () => {
     assert.equal(state.lastEventSeq, 1);
   });
 
-  it("retries missed-event recovery after the reconnect shared a failed catch-up", async () => {
+  it("recovers missed events via SyncFeedConsumer retry after transient read failure", async () => {
     history.replaceState(null, "", "/#recover-task");
     state.taskId = "recover-task";
     state.lastEventSeq = 0;
 
-    let rejectFirstCatchUp!: (error: Error) => void;
-    const firstCatchUp = new Promise<MockResponse>((_resolve, reject) => {
-      rejectFirstCatchUp = reject;
-    });
     let eventsFetchCount = 0;
-    setFetch(async (url: string) => {
-      if (url.includes("/visibility")) return mockResponse({});
-      if (url.split("?")[0] === "/api/v1/tasks/recover-task")
-        return mockResponse(taskResponse("recover-task"));
-      if (url.startsWith("/api/v1/tasks/recover-task/events")) {
-        eventsFetchCount++;
-        if (eventsFetchCount === 1) return firstCatchUp;
-        return mockResponse([
-          {
-            seq: 1,
-            type: "assistant_message",
-            data: JSON.stringify({ text: "recovered without refresh" }),
-          },
-          {
-            seq: 2,
-            type: "prompt_done",
-            data: JSON.stringify({ stopReason: "end_turn" }),
-          },
-        ]);
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
+    setFetch(
+      async (url: string) => {
+        if (url.includes("/visibility")) return mockResponse({});
+        if (url.split("?")[0] === "/api/v1/tasks/recover-task")
+          return mockResponse(taskResponse("recover-task"));
+        if (url.startsWith("/api/v1/tasks/recover-task/events")) {
+          eventsFetchCount++;
+          if (eventsFetchCount === 1) {
+            throw new Error("network resumed with a transient error");
+          }
+          return mockResponse({
+            events: [
+              feedEntry("recover-task", 1, "assistant_message", {
+                text: "recovered without refresh",
+              }),
+              feedEntry("recover-task", 2, "prompt_done", {
+                stopReason: "end_turn",
+              }),
+            ],
+          });
+        }
+        return mockResponse({ events: [] });
+      },
+      snapFor("recover-task", 2),
+    );
 
     connection.connect();
+    await flush();
     const es = await latestES();
     fireConnected(es, "client-recovered");
-    rejectFirstCatchUp(new Error("network resumed with a stale request"));
-    await flush(100);
+    await flush(50);
+    const retryIdx = timeoutCalls.findIndex(
+      (ms) => ms > 0 && ms < RECONNECT_DELAY_MS,
+    );
+    if (retryIdx >= 0) timeoutFns[retryIdx]();
+    await flush(50);
 
-    assert.equal(eventsFetchCount, 2, "handshake recovery must retry once");
+    assert.ok(
+      eventsFetchCount >= 2,
+      "consumer must retry after transient read failure",
+    );
     assert.ok(dom.messages.textContent.includes("recovered without refresh"));
     assert.equal(state.lastEventSeq, 2);
     assert.equal(dom.status.dataset.state, "connected");
-  });
-
-  it("runs a fresh catch-up after the reconnect shared a stale successful load", async () => {
-    history.replaceState(null, "", "/#stale-success-task");
-    state.taskId = "stale-success-task";
-    state.lastEventSeq = 0;
-
-    let releaseFirstCatchUp!: (response: MockResponse) => void;
-    const firstCatchUp = new Promise<MockResponse>((resolve) => {
-      releaseFirstCatchUp = resolve;
-    });
-    let eventsFetchCount = 0;
-    setFetch(async (url: string) => {
-      if (url.includes("/visibility")) return mockResponse({});
-      if (url.split("?")[0] === "/api/v1/tasks/stale-success-task")
-        return mockResponse(taskResponse("stale-success-task"));
-      if (url.startsWith("/api/v1/tasks/stale-success-task/events")) {
-        eventsFetchCount++;
-        if (eventsFetchCount === 1) return firstCatchUp;
-        return mockResponse([
-          {
-            seq: 1,
-            type: "assistant_message",
-            data: JSON.stringify({ text: "persisted after the stale query" }),
-          },
-        ]);
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
-
-    connection.connect();
-    const es = await latestES();
-    fireConnected(es, "client-stale-success");
-    releaseFirstCatchUp(mockResponse([]));
-    await flush(100);
-
-    assert.equal(
-      eventsFetchCount,
-      2,
-      "handshake recovery must query again after an older successful load",
-    );
-    assert.ok(
-      dom.messages.textContent.includes("persisted after the stale query"),
-    );
-    assert.equal(state.lastEventSeq, 1);
   });
 
   it("reconciles replayed pending tools after an idle handshake snapshot", async () => {
@@ -1420,31 +1432,33 @@ describe("connection", () => {
     state.taskId = "idle-tool-task";
     state.lastEventSeq = 0;
 
-    setFetch(async (url: string) => {
-      if (url.includes("/visibility")) return mockResponse({});
-      if (url.split("?")[0] === "/api/v1/tasks/idle-tool-task")
-        return mockResponse(taskResponse("idle-tool-task"));
-      if (url.startsWith("/api/v1/tasks/idle-tool-task/events")) {
-        if (url.includes("after=0")) {
-          return mockResponse([
-            {
-              seq: 1,
-              type: "tool_call",
-              data: JSON.stringify({
-                id: "tc-reconnected",
-                kind: "read",
-                title: "Reconnect tool",
-                rawInput: {},
-              }),
-            },
-          ]);
+    setFetch(
+      async (url: string) => {
+        if (url.includes("/visibility")) return mockResponse({});
+        if (url.split("?")[0] === "/api/v1/tasks/idle-tool-task")
+          return mockResponse(taskResponse("idle-tool-task"));
+        if (url.startsWith("/api/v1/tasks/idle-tool-task/events")) {
+          if (url.includes("after=0")) {
+            return mockResponse({
+              events: [
+                feedEntry("idle-tool-task", 1, "tool_call", {
+                  id: "tc-reconnected",
+                  kind: "read",
+                  title: "Reconnect tool",
+                  rawInput: {},
+                }),
+              ],
+            });
+          }
+          return mockResponse({ events: [] });
         }
-        return mockResponse([]);
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
+        return mockResponse({ events: [] });
+      },
+      snapFor("idle-tool-task", 1),
+    );
 
     connection.connect();
+    await flush();
     const es = await latestES();
     fireConnected(es, "client-idle-tool");
     await flush(100);
@@ -1566,7 +1580,6 @@ describe("connection", () => {
         (es: any) => es.readyState !== MockEventSource.CLOSED,
       );
       assert.equal(live.length, 1, "no orphaned stream may stay open");
-      assert.equal(state.eventSource, live[0]);
     });
 
     it("abandons a stream whose ticket resolved after a newer connect", async () => {

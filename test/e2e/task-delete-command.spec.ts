@@ -59,6 +59,7 @@ test("a task-created reference is marked exited after its task is deleted", asyn
   await page.locator("#input").fill(`@${title}`);
   await page.locator("#input").press("Enter");
   await expect.poll(() => currentTaskId(page)).not.toBe(parentId);
+  await expect(page.locator("#task-info")).toContainText(title);
 
   await sendPrompt(page, "/exit");
   await expect.poll(() => currentTaskId(page)).toBe(parentId);
@@ -119,6 +120,7 @@ test("a renamed reference is struck and followed by the current name", async ({
   await page.locator("#input").fill(`@${oldTitle}`);
   await page.locator("#input").press("Enter");
   await expect.poll(() => currentTaskId(page)).not.toBe(parentId);
+  await expect(page.locator("#task-info")).toContainText(oldTitle);
 
   const newTitle = `${oldTitle}-2`;
   await sendPrompt(page, `/rename ${newTitle}`);

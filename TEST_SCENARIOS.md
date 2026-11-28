@@ -1,6 +1,6 @@
 # Test Scenarios
 
-Last updated: 2026-11-23
+Last updated: 2026-11-27
 
 This file is a scenario-level map of the current automated test suite.
 It is intentionally higher-level than raw test names so we can review coverage,
@@ -12,6 +12,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - Browser E2E tests: `test/e2e/*.spec.ts`
 - External behavior regression goldens: `test/regression/scenarios/*.ts`
 - Current focus of the suite:
+  - browser migration onto `shared/sync` (`test/sync.test.ts`, `test/browser-sync.test.ts`, `test/e2e/shared-worker-sync.spec.ts`): `sendSyncRequest` 409 `op_aborted`/`unknown->4xx`/backoff/`beforeSend`, `SyncFeedConsumer` `ephemeral` + `catchUpOnConnect` + `external` liveness, server outer-commit `events` feed publication, `PreviewReconciler` streaming watermark, declarative `{ taskIds }` `/visibility` + `X-Visibility-Rev`, and static same-origin `SharedWorker` single-SSE multiplexing under strict CSP
   - task lifecycle and restore behavior
   - cross-client synchronization
   - permission and cancel lifecycles

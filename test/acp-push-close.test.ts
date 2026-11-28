@@ -32,6 +32,8 @@ class SpyPushService extends PushService {
   }
 }
 
+let nextVisRev = 0;
+
 function send(
   port: number,
   method: string,
@@ -40,16 +42,20 @@ function send(
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const data = body === undefined ? "" : JSON.stringify(body);
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      "content-length": Buffer.byteLength(data).toString(),
+    };
+    if (path.endsWith("/visibility")) {
+      headers["x-visibility-rev"] = String(++nextVisRev);
+    }
     const r = http.request(
       {
         hostname: "127.0.0.1",
         port,
         path,
         method,
-        headers: {
-          "content-type": "application/json",
-          "content-length": Buffer.byteLength(data).toString(),
-        },
+        headers,
       },
       (res) => {
         let d = "";
@@ -224,8 +230,7 @@ describe("acp-push-close: handled signals fire sendClose", () => {
       "POST",
       `/api/beta/clients/${clientId}/visibility`,
       {
-        visible: true,
-        taskId,
+        taskIds: [taskId],
       },
     );
     assert.equal(r.status, 200);
@@ -240,7 +245,7 @@ describe("acp-push-close: handled signals fire sendClose", () => {
     );
   });
 
-  it("visibility false does NOT fire task closes", async () => {
+  it("empty taskIds does NOT fire task closes", async () => {
     const clientId = "client-2";
     addFakeSseClient(clientId);
     push.registerClient(clientId, "https://push.example.com/2");
@@ -249,24 +254,7 @@ describe("acp-push-close: handled signals fire sendClose", () => {
       "POST",
       `/api/beta/clients/${clientId}/visibility`,
       {
-        visible: false,
-        taskId,
-      },
-    );
-    assert.equal(r.status, 200);
-    assert.deepEqual(push.closes, []);
-  });
-
-  it("visibility without taskId does NOT fire any close", async () => {
-    const clientId = "client-3";
-    addFakeSseClient(clientId);
-    push.registerClient(clientId, "https://push.example.com/3");
-    const r = await send(
-      port,
-      "POST",
-      `/api/beta/clients/${clientId}/visibility`,
-      {
-        visible: true,
+        taskIds: [],
       },
     );
     assert.equal(r.status, 200);
@@ -278,27 +266,21 @@ describe("acp-push-close: handled signals fire sendClose", () => {
     addFakeSseClient(clientId);
     push.registerClient(clientId, "https://push.example.com/edge");
 
-    // First transition: visible:true + taskId = edge → one sendClose.
     let r = await send(
       port,
       "POST",
       `/api/beta/clients/${clientId}/visibility`,
       {
-        visible: true,
-        taskId,
+        taskIds: [taskId],
       },
     );
     assert.equal(r.status, 200);
     const afterEdge = push.closes.length;
     assert.ok(afterEdge >= 1, `expected ≥1 close on edge, got ${afterEdge}`);
 
-    // Five heartbeat refreshes (same visible:true, same taskId preserved)
-    // must produce ZERO additional sendClose. This is what the previous
-    // design got wrong — it would re-close banners every 15s on every device.
     for (let i = 0; i < 5; i++) {
       r = await send(port, "POST", `/api/beta/clients/${clientId}/visibility`, {
-        visible: true,
-        taskId,
+        taskIds: [taskId],
       });
       assert.equal(r.status, 200);
     }
@@ -309,35 +291,19 @@ describe("acp-push-close: handled signals fire sendClose", () => {
     );
   });
 
-  it("POST without taskId key preserves previously-set task", async () => {
-    const clientId = "client-preserve";
+  it("POST { taskIds } replaces visible set and ignores stale X-Visibility-Rev", async () => {
+    const clientId = "client-rev";
     addFakeSseClient(clientId);
     push.registerClient(clientId, "https://push.example.com/p");
 
     await send(port, "POST", `/api/beta/clients/${clientId}/visibility`, {
-      visible: true,
-      taskId,
+      taskIds: [taskId],
     });
-    // Omit taskId key entirely → preserve.
-    await send(port, "POST", `/api/beta/clients/${clientId}/visibility`, {
-      visible: true,
-    });
-    assert.equal(registry.get(clientId)?.active, taskId);
-  });
-
-  it("POST with taskId:null explicitly clears the task", async () => {
-    const clientId = "client-clear";
-    addFakeSseClient(clientId);
-    push.registerClient(clientId, "https://push.example.com/cl");
+    assert.equal(registry.get(clientId)?.visibleTaskIds.has(taskId), true);
 
     await send(port, "POST", `/api/beta/clients/${clientId}/visibility`, {
-      visible: true,
-      taskId,
+      taskIds: [],
     });
-    await send(port, "POST", `/api/beta/clients/${clientId}/visibility`, {
-      visible: true,
-      taskId: null,
-    });
-    assert.equal(registry.get(clientId)?.active, null);
+    assert.equal(registry.get(clientId)?.visibleTaskIds.size, 0);
   });
 });

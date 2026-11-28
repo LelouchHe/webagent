@@ -49,7 +49,7 @@ describe("PushService — visibility reads delegate to ClientRegistry (Plan C St
   it("hasVisibleClient returns true when ONLY registry has the visible client (pushService.clients empty)", () => {
     // pushService.clients has nothing — no updateClient call.
     registry.register("c1", { capabilities: [] });
-    registry.setVisibility("c1", { visible: true, active: "sid-A" });
+    registry.setVisibility("c1", ["sid-A"]);
 
     assert.equal(svc.hasVisibleClient(), true);
   });
@@ -64,7 +64,7 @@ describe("PushService — visibility reads delegate to ClientRegistry (Plan C St
 
   it("isTaskVisibleToAnyClient reads registry, not pushService.clients", () => {
     registry.register("c1", { capabilities: [] });
-    registry.setVisibility("c1", { visible: true, active: "sid-A" });
+    registry.setVisibility("c1", ["sid-A"]);
 
     assert.equal(svc.isTaskVisibleToAnyClient("sid-A"), true);
     assert.equal(svc.isTaskVisibleToAnyClient("sid-B"), false);
@@ -77,7 +77,7 @@ describe("PushService — visibility reads delegate to ClientRegistry (Plan C St
       now: () => nowMs,
     });
     registry.register("c1", { capabilities: [] });
-    registry.setVisibility("c1", { visible: true, active: "sid-A" });
+    registry.setVisibility("c1", ["sid-A"]);
 
     assert.equal(svcOff.isTaskVisibleToAnyClient("sid-A"), false);
   });
@@ -90,7 +90,7 @@ describe("PushService — visibility reads delegate to ClientRegistry (Plan C St
     registry.register("c1", { capabilities: [] });
     registry.register("c2", { capabilities: [] });
     // Only c1 is visible per registry.
-    registry.setVisibility("c1", { visible: true, active: "sid-A" });
+    registry.setVisibility("c1", ["sid-A"]);
 
     assert.equal(svc.isEndpointVisible("https://push.example/1"), true);
     assert.equal(svc.isEndpointVisible("https://push.example/2"), false);
@@ -106,7 +106,7 @@ describe("PushService — visibility reads delegate to ClientRegistry (Plan C St
 
   it("registry TTL expiry flows through pushService reads", () => {
     registry.register("c1", { capabilities: [] });
-    registry.setVisibility("c1", { visible: true, active: "sid-A" });
+    registry.setVisibility("c1", ["sid-A"]);
     assert.equal(svc.isTaskVisibleToAnyClient("sid-A"), true);
 
     // Jump past TTL.

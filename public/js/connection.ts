@@ -1,4 +1,7 @@
-// SSE + REST connection lifecycle (passive WS kept for backward-compat send)
+// Browser sync transport: connects to the shared SyncHub (via static same-origin
+// SharedWorker, or transparent in-Tab fallback), drives the per-task
+// SyncFeedConsumer (liveness: "external", catchUpOnConnect: true), and owns
+// visibility lease renewal, BFCache pageshow/pagehide, and auth-gen sync.
 
 import {
   state,
@@ -6,29 +9,40 @@ import {
   getHashTaskId,
   requestBootstrapTask,
   resetTaskUI,
+  onTaskReset,
   setConnectionStatus,
   clearCancelTimer,
-  hydrateTaskRuntime,
+  applySnapshot,
   updateInboxCount,
   beginConnectionEpoch,
+  type TaskSnapshot,
 } from "./state.ts";
 import {
   addSystem,
-  finishThinking,
-  finishAssistant,
-  finishBash,
+  discardAssistantPreview,
+  discardThinkingPreview,
   scrollToBottom,
 } from "./render.ts";
 import {
   handleEvent,
+  applyPersistedEvent,
   drainNavigationEvents,
   loadHistory,
-  loadNewEvents,
   fallbackToNextTask,
   reconcileReplayedPendingTools,
   discardInFlightReplays,
+  markReplayCompletion,
+  previewReconciler,
+  setTaskFocusNotifier,
+  setStatePatchGapRecovery,
+  setRouteAnnouncer,
 } from "./events.ts";
 import * as api from "./api.ts";
+import {
+  getStoredToken,
+  handleUnauthorizedToken,
+  onStoredTokenChange,
+} from "./auth-fetch.ts";
 import { installAgentDirectory } from "./agent-directory.ts";
 import {
   beginTaskTopologyGeneration,
@@ -37,226 +51,633 @@ import {
   refreshTaskListBaseline,
   setViewedTaskArchived,
 } from "./task-topology.ts";
+import { handleHubControlEvent } from "./persisted-event.ts";
 import { applyConnectedLogLevel, log } from "./log.ts";
-
-const clog = log.scope("sse");
-import type { TaskDetail } from "../../src/types.ts";
+import type { AgentEvent, TaskDetail } from "../../src/types.ts";
 import {
   getStartupMessageIntent,
   processStartupMessageIntent,
 } from "./task-navigation.ts";
 import {
-  StreamSupervisor,
-  type StreamAttempt,
-} from "../../src/shared/stream-supervisor.ts";
+  SyncFeedConsumer,
+  SyncFeedTerminalError,
+  type SyncFeedEntry,
+} from "../../src/shared/sync/index.ts";
+import type { SyncHub, HubToTabMessage, TabToHubMessage } from "./sync-hub.ts";
+import {
+  connectToSyncHub,
+  postFallbackClearVisibilityBeacon,
+  type TabPortClient,
+} from "./sync-hub-client.ts";
+import { HTTP_STATUS } from "../../src/http-status.ts";
+
+const clog = log.scope("sse");
+
+const FOREGROUND_LEASE_RENEW_MS = 10_000;
+const CATCHUP_PAGE_SIZE = 200;
+
+let activePort: TabPortClient | null = null;
+let fallbackHub: SyncHub | null = null;
+let activeHubSession: { dispose(): void } | null = null;
+let hubConnected = false;
+let hubClientId: string | null = null;
+let hubAuthGen = 0;
+const admissionTokens = new Map<string, string | null>();
+let physicalConnectionGen = 0;
+let disconnectedDuringPendingNav = false;
+let desiredRouteTaskId: string | null = null;
+let focusGen = 0;
+let ackedFocusTaskId: string | null = null;
+let ackedFocusGen = 0;
+let initializedOnce = false;
+let leaseRenewTimer: ReturnType<typeof setInterval> | null = null;
+
+// Active per-task SyncFeedConsumer + watch hooks.
+let activeConsumer: SyncFeedConsumer<
+  api.StoredEventRow,
+  Record<string, unknown>
+> | null = null;
+let activeConsumerTaskId: string | null = null;
+let watchHooks: {
+  connected(): void;
+  activity(): void;
+  entry(entry: SyncFeedEntry<api.StoredEventRow>): void | Promise<void>;
+  ephemeral?(data: Record<string, unknown>): void | Promise<void>;
+} | null = null;
+let watchDualGateFired = false;
 
 /** If the browser has an active push subscription, tell the server which
  *  clientId owns it so per-subscription visibility filtering works. */
-async function registerPushEndpoint(clientId: string) {
+async function registerPushEndpoint(clientId: string): Promise<void> {
   try {
+    if (!("serviceWorker" in navigator)) return;
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
     if (!sub) return;
-    await fetch("/api/beta/push/register-client", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientId, endpoint: sub.endpoint }),
-    });
+    await api.registerPushClient(clientId, sub.endpoint);
   } catch {
     /* best-effort */
   }
 }
 
-const RECONNECT_DELAY_MS = 3_000;
+function sendToHub(msg: TabToHubMessage): void {
+  activePort?.postMessage(msg);
+}
 
-const streamSupervisor = new StreamSupervisor({
-  retryDelay: (_failures, failure) =>
-    failure.kind === "stalled" ? 0 : RECONNECT_DELAY_MS,
-  run: (attempt) => {
-    const connectionEpoch = beginConnectionEpoch();
-    const activeTaskId = state.taskId;
-    setConnectionStatus("connecting", "connecting");
-    return openStream(attempt, connectionEpoch, activeTaskId);
-  },
-  onFailure: ({ kind, silentMs }) => {
-    if (kind !== "stalled") return;
-    // Rendered inline in the conversation flow at `/log warn`, which is the only
-    // way to observe this on a device with no DevTools (iOS PWA). If a user
-    // reports the transcript freezing, the presence or absence of this line says
-    // whether the transport died or the render pipeline did.
-    clog.warn("stream silent, reconnecting", { silentMs: silentMs ?? 0 });
-    const dead = state.eventSource;
-    if (dead) {
-      // Drop the handler first — a close() that synchronously fires onerror
-      // would schedule a second, competing reconnect.
-      dead.onerror = null;
-      dead.close();
-    }
-    cleanup();
-  },
+function recordAdmissionToken(token: string | null): string {
+  const admissionId = api.newOpId();
+  admissionTokens.set(admissionId, token);
+  if (admissionTokens.size > 16) {
+    const oldest = admissionTokens.keys().next().value;
+    if (oldest !== undefined) admissionTokens.delete(oldest);
+  }
+  return admissionId;
+}
+
+function sendHello(): void {
+  const token = getStoredToken();
+  const admissionId = recordAdmissionToken(token);
+  sendToHub({
+    type: "hello",
+    token,
+    visible: !document.hidden,
+    taskId: state.taskId,
+    expectedAuthGen: hubAuthGen,
+    admissionId,
+  });
+}
+
+function sendVisibility(taskId: string | null = state.taskId): void {
+  sendToHub({
+    type: "visibility",
+    visible: !document.hidden,
+    taskId,
+  });
+}
+
+function sendFocus(taskId: string | null): number {
+  desiredRouteTaskId = taskId;
+  focusGen += 1;
+  ackedFocusTaskId = null;
+  ackedFocusGen = 0;
+  watchDualGateFired = false;
+  sendToHub({
+    type: "focus",
+    taskId,
+    gen: focusGen,
+    visible: !document.hidden,
+  });
+  return focusGen;
+}
+
+function isDualGateReady(): boolean {
+  return (
+    hubConnected &&
+    hubClientId !== null &&
+    watchHooks !== null &&
+    activeConsumerTaskId !== null &&
+    ackedFocusTaskId === activeConsumerTaskId &&
+    ackedFocusGen === focusGen &&
+    watchDualGateFired
+  );
+}
+
+function maybeFireDualGate(): void {
+  if (
+    !hubConnected ||
+    hubClientId === null ||
+    !watchHooks ||
+    !activeConsumerTaskId ||
+    ackedFocusTaskId !== activeConsumerTaskId ||
+    ackedFocusGen !== focusGen ||
+    watchDualGateFired
+  ) {
+    return;
+  }
+  watchDualGateFired = true;
+  watchHooks.connected();
+}
+
+function startTaskFeedConsumer(
+  taskId: string,
+  opts: { needTailLoad: boolean; forceRestart?: boolean },
+): void {
+  if (!opts.forceRestart && activeConsumerTaskId === taskId && activeConsumer) {
+    return;
+  }
+  stopTaskFeedConsumer();
+  activeConsumerTaskId = taskId;
+  let needTailLoad = opts.needTailLoad;
+  let catchingUp = false;
+  const consumerConnGen = physicalConnectionGen;
+  const consumerFocusGen = sendFocus(taskId);
+  const isCurrentRecovery = (signal: AbortSignal): boolean =>
+    !signal.aborted &&
+    consumerConnGen === physicalConnectionGen &&
+    consumerFocusGen === focusGen &&
+    state.taskId === taskId;
+
+  const consumer = new SyncFeedConsumer<
+    api.StoredEventRow,
+    Record<string, unknown>
+  >({
+    liveness: "external",
+    catchUpOnConnect: true,
+    retryDelay: (failures) => Math.min(5_000, 300 * 2 ** Math.min(failures, 4)),
+    port: {
+      applied: () => state.lastEventSeq,
+      apply: (entry) => {
+        if (
+          consumerConnGen !== physicalConnectionGen ||
+          consumerFocusGen !== focusGen ||
+          state.taskId !== taskId
+        ) {
+          return false;
+        }
+        return applyPersistedEvent(
+          {
+            feed: taskId,
+            pos: entry.pos,
+            prev: entry.prev,
+            data: entry.data,
+          },
+          { catchingUp },
+        );
+      },
+      applyEphemeral: (event) => {
+        if (
+          consumerConnGen !== physicalConnectionGen ||
+          consumerFocusGen !== focusGen
+        ) {
+          return;
+        }
+        // Buffer task_runtime_warmed even while state.taskId is still null
+        // during navigation; events.ts stores it in pendingWarmByTask until activation.
+        if (event.type !== "task_runtime_warmed" && state.taskId !== taskId) {
+          return;
+        }
+        handleEvent(event as unknown as AgentEvent);
+      },
+      beforeCatchUp: async (signal) => {
+        catchingUp = true;
+        if (!isCurrentRecovery(signal)) {
+          catchingUp = false;
+          return;
+        }
+        if (needTailLoad) {
+          const ok = await loadHistory(taskId);
+          if (!isCurrentRecovery(signal)) {
+            catchingUp = false;
+            return;
+          }
+          if (!ok) {
+            catchingUp = false;
+            throw new Error("initial history load failed");
+          }
+          needTailLoad = false;
+        }
+        let snap: TaskSnapshot;
+        try {
+          snap = (await api.getSnapshot(taskId, {
+            warm: true,
+            signal,
+          })) as unknown as TaskSnapshot;
+        } catch (err) {
+          catchingUp = false;
+          if (
+            err instanceof api.ApiError &&
+            err.status === HTTP_STATUS.NOT_FOUND
+          ) {
+            throw new SyncFeedTerminalError("Task not found", 404);
+          }
+          throw err;
+        }
+        if (!isCurrentRecovery(signal)) {
+          catchingUp = false;
+          return;
+        }
+        const targetPos =
+          typeof snap.task.lastEventSeq === "number"
+            ? snap.task.lastEventSeq
+            : state.lastEventSeq;
+        return {
+          targetPos,
+          commit: () => {
+            catchingUp = false;
+            if (!isCurrentRecovery(signal)) return;
+            // applySnapshot invokes snapshotExtrasApplier (streaming, imageReferences, pendingPermissions).
+            applySnapshot(snap);
+            reconcileReplayedPendingTools();
+            markReplayCompletion();
+            scrollToBottom(false);
+          },
+        };
+      },
+    },
+    transport: {
+      read: async (after, signal, readOpts) => {
+        try {
+          // Pass upTo ONLY when supplied by bounded catch-up; live gap reads stay uncapped.
+          const res = await api.getTaskEvents(taskId, {
+            after,
+            ...(readOpts?.upTo !== undefined ? { upTo: readOpts.upTo } : {}),
+            limit: CATCHUP_PAGE_SIZE,
+            signal,
+          });
+          const rawList = Array.isArray(res) ? res : res.events;
+          return rawList.map((e: unknown) => {
+            const item = e as Record<string, unknown>;
+            if (typeof item.pos === "number" && typeof item.prev === "number") {
+              return {
+                pos: item.pos,
+                prev: item.prev,
+                data: item.data as api.StoredEventRow,
+              };
+            }
+            const row = item as unknown as api.StoredEventRow;
+            return { pos: row.seq, prev: row.seq - 1, data: row };
+          });
+        } catch (err) {
+          if (
+            err instanceof api.ApiError &&
+            err.status === HTTP_STATUS.NOT_FOUND
+          ) {
+            throw new SyncFeedTerminalError("Task not found", 404);
+          }
+          throw err;
+        }
+      },
+      watch: async (input) => {
+        watchHooks = input;
+        watchDualGateFired = false;
+        maybeFireDualGate();
+        await new Promise<void>((_resolve, reject) => {
+          input.signal.addEventListener(
+            "abort",
+            () => {
+              if (watchHooks === input) watchHooks = null;
+              reject(new Error("aborted"));
+            },
+            { once: true },
+          );
+        });
+      },
+    },
+    onTerminalError: (err) => {
+      if (err.status === HTTP_STATUS.NOT_FOUND && state.taskId === taskId) {
+        void fallbackToNextTask(
+          taskId,
+          state.taskCwd ?? undefined,
+          undefined,
+          undefined,
+          state.connectionEpoch,
+        );
+      }
+    },
+    onProtocolError: (err) => {
+      clog.warn("feed protocol error", { taskId, error: err.message });
+      addSystem(`warn: sync protocol error (${err.message}) — reload page`);
+    },
+  });
+
+  activeConsumer = consumer;
+  consumer.start();
+}
+
+function stopTaskFeedConsumer(): void {
+  activeConsumer?.stop();
+  activeConsumer = null;
+  activeConsumerTaskId = null;
+  watchHooks = null;
+  watchDualGateFired = false;
+}
+
+export function focusTask(
+  taskId: string,
+  opts: { needTailLoad?: boolean } = {},
+): void {
+  startTaskFeedConsumer(taskId, { needTailLoad: opts.needTailLoad ?? false });
+}
+
+export function triggerCatchUp(): Promise<void> {
+  if (!activeConsumer || !isDualGateReady()) return Promise.resolve();
+  return activeConsumer.catchUp();
+}
+
+let navigationOwnerTaskId: string | null = null;
+
+onTaskReset(() => {
+  sendVisibility(null);
 });
 
-export function connect() {
-  streamSupervisor.start();
+setTaskFocusNotifier((taskId) => {
+  sendVisibility();
+  // Synthetic task_created from installTaskFromDetail is owned by resumeAndLoad /
+  // switchToTask; only auto-start a consumer for newly created tasks (/new).
+  if (navigationOwnerTaskId === taskId) return;
+  focusTask(taskId, { needTailLoad: false });
+});
+
+setRouteAnnouncer((taskId) => {
+  stopTaskFeedConsumer();
+  sendFocus(taskId);
+});
+
+setStatePatchGapRecovery(() => triggerCatchUp());
+
+function handleControlEvent(raw: Record<string, unknown>): void {
+  handleHubControlEvent(raw, handleEvent);
+}
+
+function handleHubConnected(
+  msg: Extract<HubToTabMessage, { type: "connected" }>,
+): void {
+  const prevClientId = hubClientId;
+  const clientChanged = prevClientId !== null && msg.clientId !== prevClientId;
+  hubConnected = true;
+  hubClientId = msg.clientId;
+  hubAuthGen = msg.authGen;
+  state.clientId = msg.clientId;
+  if (clientChanged) {
+    // Each newly registered server clientId owns a fresh watch/recovery attempt.
+    physicalConnectionGen += 1;
+    watchDualGateFired = false;
+    activeConsumer?.stop();
+    activeConsumer = null;
+    watchHooks = null;
+  }
+  applyConnectedLogLevel(msg.debugLevel);
+  updateInboxCount(msg.pendingCount);
+  if (msg.clientId !== prevClientId) {
+    void registerPushEndpoint(msg.clientId);
+  }
+  void refreshTaskListBaseline().catch(() => {});
+  if (!initializedOnce) initializedOnce = true;
+  setConnectionStatus("connected", "connected");
+  // R3: If a physical disconnect interrupted an initial navigation before
+  // state.taskId was activated, resume that pending navigation now.
+  const resumeInterruptedNav = disconnectedDuringPendingNav;
+  disconnectedDuringPendingNav = false;
+  if (
+    resumeInterruptedNav &&
+    state.taskId === null &&
+    state.pendingNavigationTaskId !== null
+  ) {
+    const pendingId = state.pendingNavigationTaskId;
+    void resumeAndLoad(
+      pendingId,
+      false,
+      state.taskSwitchGen,
+      state.connectionEpoch,
+    );
+    return;
+  }
+  const resumeTaskId = activeConsumerTaskId ?? state.taskId;
+  if (resumeTaskId && state.taskId === resumeTaskId) {
+    sendVisibility();
+    if (!activeConsumer || clientChanged) {
+      startTaskFeedConsumer(resumeTaskId, {
+        needTailLoad: false,
+        forceRestart: true,
+      });
+    } else {
+      watchDualGateFired = false;
+      maybeFireDualGate();
+    }
+  }
+}
+
+function handleHubDisconnected(): void {
+  hubConnected = false;
+  hubClientId = null;
+  watchDualGateFired = false;
+  physicalConnectionGen += 1;
+  disconnectedDuringPendingNav =
+    state.taskId === null && state.pendingNavigationTaskId !== null;
+  const savedTaskId = activeConsumerTaskId;
+  activeConsumer?.stop();
+  activeConsumer = null;
+  watchHooks = null;
+  activeConsumerTaskId = savedTaskId;
+  cleanup();
+}
+
+function handleHubAuthInvalid(
+  msg: Extract<HubToTabMessage, { type: "auth_invalid" }>,
+): void {
+  if (msg.admissionId === undefined || !admissionTokens.has(msg.admissionId)) {
+    return;
+  }
+  const admittedToken = admissionTokens.get(msg.admissionId) ?? null;
+  admissionTokens.delete(msg.admissionId);
+  handleUnauthorizedToken(admittedToken);
+}
+
+function handleHubAuthGen(authGen: number): void {
+  if (authGen <= hubAuthGen) return;
+  hubAuthGen = authGen;
+  const token = getStoredToken();
+  const admissionId = recordAdmissionToken(token);
+  sendToHub({
+    type: "auth_update",
+    token,
+    expectedAuthGen: hubAuthGen,
+    admissionId,
+  });
+}
+
+function handleHubFocusAck(
+  msg: Extract<HubToTabMessage, { type: "focus_ack" }>,
+): void {
+  if (msg.gen !== focusGen) return;
+  ackedFocusTaskId = msg.taskId;
+  ackedFocusGen = msg.gen;
+  if (msg.sseConnected) {
+    hubConnected = true;
+    if (msg.clientId) {
+      hubClientId = msg.clientId;
+      state.clientId = msg.clientId;
+    }
+  }
+  maybeFireDualGate();
+}
+
+function handleHubMessage(msg: HubToTabMessage): void {
+  switch (msg.type) {
+    case "ready":
+      return;
+    case "connected":
+      handleHubConnected(msg);
+      return;
+    case "disconnected":
+      handleHubDisconnected();
+      return;
+    case "focus_ack":
+      handleHubFocusAck(msg);
+      return;
+    case "feed_entry":
+      if (
+        !isDualGateReady() ||
+        activeConsumerTaskId !== msg.entry.feed ||
+        !watchHooks
+      ) {
+        return;
+      }
+      watchHooks.activity();
+      void watchHooks.entry({
+        pos: msg.entry.pos,
+        prev: msg.entry.prev,
+        data: msg.entry.data,
+      });
+      return;
+    case "ephemeral":
+      if (msg.event.type === "task_runtime_warmed" && !isDualGateReady()) {
+        handleEvent(msg.event as unknown as AgentEvent);
+        return;
+      }
+      if (!isDualGateReady() || !watchHooks) return;
+      watchHooks.activity();
+      void watchHooks.ephemeral?.(msg.event);
+      return;
+    case "control":
+      handleControlEvent(msg.event);
+      return;
+    case "auth_invalid":
+      handleHubAuthInvalid(msg);
+      return;
+    case "auth_gen":
+      handleHubAuthGen(msg.authGen);
+      return;
+  }
+}
+
+function startSharedWorkerOrFallback(): void {
+  activeHubSession = connectToSyncHub({
+    onReady(port, fbHub) {
+      activePort = port;
+      fallbackHub = fbHub;
+      sendHello();
+      if (activeConsumerTaskId) {
+        startTaskFeedConsumer(activeConsumerTaskId, {
+          needTailLoad: false,
+          forceRestart: true,
+        });
+      } else if (desiredRouteTaskId !== null) {
+        sendFocus(desiredRouteTaskId);
+      }
+    },
+    onMessage(msg) {
+      handleHubMessage(msg);
+    },
+  });
+}
+
+function ensureLeaseRenewal(): void {
+  if (leaseRenewTimer !== null) return;
+  leaseRenewTimer = setInterval(() => {
+    if (!document.hidden && activePort) {
+      sendToHub({
+        type: "visibility",
+        visible: true,
+        taskId: state.taskId,
+      });
+    }
+  }, FOREGROUND_LEASE_RENEW_MS);
+  (leaseRenewTimer as { unref?: () => void } | null)?.unref?.();
+}
+
+let tokenSubInstalled = false;
+
+export function connect(): void {
+  stopTaskFeedConsumer();
+  activeHubSession?.dispose();
+  activeHubSession = null;
+  fallbackHub = null;
+  activePort = null;
+  hubConnected = false;
+  hubClientId = null;
+  hubAuthGen = 0;
+  admissionTokens.clear();
+  physicalConnectionGen += 1;
+  disconnectedDuringPendingNav = false;
+  desiredRouteTaskId = null;
+  initializedOnce = false;
+  navigationOwnerTaskId = null;
+  ackedFocusTaskId = null;
+  ackedFocusGen = 0;
+
+  setConnectionStatus("connecting", "connecting");
+  if (!tokenSubInstalled) {
+    tokenSubInstalled = true;
+    onStoredTokenChange((nextToken) => {
+      const admissionId = recordAdmissionToken(nextToken);
+      sendToHub({
+        type: "auth_update",
+        token: nextToken,
+        expectedAuthGen: hubAuthGen,
+        admissionId,
+      });
+    });
+  }
+  ensureLeaseRenewal();
+  startSharedWorkerOrFallback();
+  const connectionEpoch = beginConnectionEpoch();
+  void initializeTaskAndIntent(connectionEpoch);
 }
 
 /** Probe on resume when a suspended browser runtime froze watchdog timers. */
 export function checkStreamLiveness(): void {
-  streamSupervisor.checkLiveness();
-}
-
-async function openStream(
-  attempt: StreamAttempt,
-  connectionEpoch: number,
-  activeTaskId: string | null,
-) {
-  // Arm before ticket mint is owned by StreamSupervisor, covering a stream
-  // that never opens just like NAT rebind and HTTP/3 stalls after handshake.
-  const { ticket } = await api.mintSseTicket();
-  // A newer attempt started while we were awaiting the mint; this ticket and
-  // everything downstream of it belongs to a connection nobody is waiting for.
-  if (!attempt.isCurrent() || connectionEpoch !== state.connectionEpoch) {
-    return;
-  }
-
-  const es = new EventSource(
-    `/api/v1/events/stream?ticket=${encodeURIComponent(ticket)}`,
-  );
-  state.eventSource = es;
-
-  es.onmessage = (e: MessageEvent) => {
-    if (!attempt.isCurrent() || connectionEpoch !== state.connectionEpoch) {
-      es.close();
-      return;
-    }
-    streamSupervisor.noteActivity(attempt);
-    const msg = JSON.parse(e.data as string) as {
-      type: string;
-      clientId?: string;
-      agent?: unknown;
-      debugLevel?: string;
-      pendingCount?: number;
-    };
-    // SSE initial handshake: server assigns clientId (no agent field)
-    if (msg.type === "connected" && msg.clientId) {
-      streamSupervisor.connected(attempt);
-      state.clientId = msg.clientId;
-      // The stream is registered from this frame on. The startup list read ran
-      // in parallel with the registration, so a task created in that window is
-      // missing from it and its `task_created` was never delivered — the row
-      // that names it would be marked exited while the task is live. Take a
-      // baseline now: before-registration tasks are in the list, later ones
-      // arrive as events on this stream.
-      void refreshTaskListBaseline().catch(() => {
-        // A failed baseline stays "not loaded", and the pre-registration read
-        // it superseded cannot apply either: nothing is claimed from a list
-        // that may predate tasks this client was never told about.
-      });
-      if (activeTaskId && state.taskId === activeTaskId) {
-        setConnectionStatus("connected", "connected");
-        void recoverAfterHandshake(activeTaskId, connectionEpoch);
-      }
-      if (typeof msg.pendingCount === "number") {
-        updateInboxCount(msg.pendingCount);
-      }
-      applyConnectedLogLevel(msg.debugLevel);
-      void api.postVisibility(
-        msg.clientId,
-        !document.hidden,
-        state.taskId ?? undefined,
-      );
-      void registerPushEndpoint(msg.clientId);
-      // Bridge-originated connected events also carry agent info — pass through
-      if (!msg.agent) return;
-    }
-    handleEvent(msg as unknown as import("../../src/types.ts").AgentEvent);
-  };
-
-  es.onerror = () => {
-    es.close();
-    if (!attempt.isCurrent() || connectionEpoch !== state.connectionEpoch) {
-      return;
-    }
-    cleanup();
-    streamSupervisor.reconnect(attempt);
-  };
-
-  // SSE "heartbeat" named event — server emits one every 15s, plus one
-  // immediately on (re)connect. Refreshing /visibility on each tick keeps
-  // the server-side visibility TTL fresh: as long as this SSE is alive,
-  // the server knows we're still focused on state.taskId. When the
-  // connection silently dies (Cloudflare HTTP/3 stall, iOS suspension),
-  // heartbeats stop, we stop refreshing, and within the TTL window the
-  // server correctly expires the ghost. Binding INSIDE connect() pins the
-  // listener to this specific EventSource — on reconnect the old one is
-  // GC'd with its parent; we install a fresh listener on the fresh `es`.
-  es.addEventListener("heartbeat", () => {
-    if (!attempt.isCurrent() || connectionEpoch !== state.connectionEpoch) {
-      return;
-    }
-    streamSupervisor.noteActivity(attempt);
-    if (!state.clientId) return;
-    if (document.hidden) return; // visibilitychange owns the hidden path
-    void api.postVisibility(state.clientId, true, state.taskId ?? undefined);
-  });
-
-  // Load the task once the stream exists (after the ticket mint), alongside
-  // its registration. Every activated task carries its hash, so the URL alone
-  // says which task to restore. Starting earlier would read history before the
-  // stream registers; see the boot waterfall entry in docs/known-issues.md.
-  void initializeTaskAndIntent(connectionEpoch);
-}
-
-async function recoverAfterHandshake(
-  taskId: string,
-  connectionEpoch: number,
-): Promise<void> {
-  const hydrationPromise = hydrateTaskRuntime(taskId, () => {
-    return connectionEpoch === state.connectionEpoch && state.taskId === taskId;
-  });
-  await loadNewEvents(taskId);
-  if (connectionEpoch !== state.connectionEpoch || state.taskId !== taskId)
-    return;
-
-  // The first call may have joined a pre-handshake request. Even a successful
-  // result can be stale if an event was persisted after its query but before
-  // the replacement stream registered, so always follow it with a fresh load.
-  await Promise.resolve();
-  let loaded = await loadNewEvents(taskId);
-  if (
-    !loaded &&
-    connectionEpoch === state.connectionEpoch &&
-    state.taskId === taskId
-  ) {
-    await Promise.resolve();
-    loaded = await loadNewEvents(taskId);
-  }
-  const hydrated = await hydrationPromise;
-  if (
-    !hydrated ||
-    connectionEpoch !== state.connectionEpoch ||
-    state.taskId !== taskId
-  )
-    return;
-  reconcileReplayedPendingTools();
-  if (loaded) scrollToBottom(false);
+  sendToHub({ type: "check_liveness" });
 }
 
 async function initializeTaskAndIntent(connectionEpoch: number): Promise<void> {
   const navigationGeneration = state.taskSwitchGen;
   try {
     const config = await api.getConfig();
-    // The directory belongs to the connection that requested it, so the
-    // connection guard comes first: a superseded stream's config must not
-    // install a directory (and default) that let the client parse coordinates
-    // against a configuration it no longer has. A stale *navigation* within
-    // this same connection is fine — the directory is not navigation state.
     if (connectionEpoch !== state.connectionEpoch) return;
     installAgentDirectory(config.agents, config.defaultAgentId);
     if (navigationGeneration !== state.taskSwitchGen) return;
   } catch {
-    // A failed config only costs the agent directory; the task this client
-    // lands on is chosen from the hash and the task list, not from config.
     if (
       connectionEpoch !== state.connectionEpoch ||
       navigationGeneration !== state.taskSwitchGen
@@ -264,16 +685,7 @@ async function initializeTaskAndIntent(connectionEpoch: number): Promise<void> {
       return;
     }
   }
-  // Establish the workspace-wide baseline independently of which task this
-  // client lands on: the status bar's reference binding and the list-row
-  // baseline both need tasks this client is not viewing, and a hash or a
-  // reconnect may skip the task-list navigation path. Its own request, not
-  // `loadTaskList`: the handshake takes a second one (that is what makes the
-  // baseline provably post-registration), and the two must not collapse into
-  // a single read whose timing decides whether it counts.
-  void loadStartupTaskList().catch(() => {
-    // A failed baseline stays "not loaded"; nothing is claimed from it.
-  });
+  void loadStartupTaskList().catch(() => {});
   await initTask(connectionEpoch);
   if (
     connectionEpoch !== state.connectionEpoch ||
@@ -290,7 +702,6 @@ async function resumeFromTaskList(
   isCurrent: () => boolean,
 ): Promise<boolean> {
   try {
-    // Startup lands in the active tree; archived trees are reached explicitly.
     const tasks = await loadTaskList();
     if (!isCurrent()) return true;
     if (tasks.length === 0) return false;
@@ -308,7 +719,7 @@ async function resumeFromTaskList(
   }
 }
 
-async function initTask(connectionEpoch: number) {
+async function initTask(connectionEpoch: number): Promise<void> {
   setConnectionStatus("connecting", "task loading");
   const gen = state.taskSwitchGen;
   const isCurrent = () =>
@@ -317,7 +728,6 @@ async function initTask(connectionEpoch: number) {
 
   const existingId = getHashTaskId();
 
-  // Incremental reconnect: same task still in memory — skip DOM wipe
   if (existingId && existingId === state.taskId) {
     await resumeAndLoad(existingId, true, gen, connectionEpoch);
     if (!isCurrent()) return;
@@ -325,7 +735,6 @@ async function initTask(connectionEpoch: number) {
     return;
   }
 
-  // Full load: different task in hash, or first connect to a hash
   if (existingId) {
     resetTaskUI({
       preserveNavigationTarget: state.pendingNavigationTaskId === existingId,
@@ -336,21 +745,14 @@ async function initTask(connectionEpoch: number) {
     return;
   }
 
-  // No task in URL — resume the most recent task with user-originated input.
-  // The API list is ordered by last_active_at; Root is only the fallback when
-  // there is no user history to restore.
   const resumed = await resumeFromTaskList(gen, connectionEpoch, isCurrent);
   if (!isCurrent() || resumed) return;
 
-  // No previous tasks — create new
   if (getStartupMessageIntent()) return;
   requestBootstrapTask();
 }
 
-/** Adopt one task detail response as the current task's creation event. */
 function installTaskFromDetail(task: TaskDetail): void {
-  // The detail carries the parent link and the parent's binding, so the status
-  // bar's reference costs no request at all.
   handleEvent({
     type: "task_created",
     taskId: task.id,
@@ -370,184 +772,110 @@ async function resumeAndLoad(
   incremental: boolean,
   gen: number,
   connectionEpoch: number,
-) {
+): Promise<void> {
   const isCurrent = () =>
     gen === state.taskSwitchGen && connectionEpoch === state.connectionEpoch;
   if (!isCurrent()) return;
-  if (incremental) {
-    // Incremental: need task details first (for config), then catch-up events
-    try {
-      const task = await api.getTask(taskId, { warm: true });
-      if (!isCurrent()) return;
-      installTaskFromDetail(task);
-    } catch {
-      if (!isCurrent()) return;
-      await fallbackToNextTask(
-        taskId,
-        state.taskCwd ?? undefined,
-        undefined,
-        undefined,
-        connectionEpoch,
-      );
-      return;
-    }
-    if (!isCurrent()) return;
-    // Load snapshot in parallel with catch-up events (runtime state vs history)
-    const [hydrated] = await Promise.all([
-      hydrateTaskRuntime(taskId, isCurrent),
-      loadNewEvents(taskId),
-    ]);
-    if (!isCurrent()) return;
-    if (!hydrated) {
-      await fallbackToNextTask(
-        taskId,
-        state.taskCwd ?? undefined,
-        undefined,
-        undefined,
-        connectionEpoch,
-      );
-    } else {
-      reconcileReplayedPendingTools();
-    }
-  } else {
-    // Full load: fetch task details and history in parallel.
+
+  if (!incremental) {
     state.taskId = null;
     state.pendingNavigationTaskId = taskId;
-    const historyPromise = loadHistory(taskId);
-    try {
-      const [s, loaded] = await Promise.all([
-        api.getTask(taskId, { warm: true }),
-        historyPromise,
-      ]);
-      // History replay drains queued live patches while taskId is null.
-      // Fetch afterward so the authoritative snapshot includes that state.
-      const hydrated = await hydrateTaskRuntime(taskId, isCurrent);
-      if (!isCurrent()) return;
-      if (!hydrated) {
-        await fallbackToNextTask(
-          taskId,
-          state.taskCwd ?? undefined,
-          undefined,
-          undefined,
-          connectionEpoch,
-        );
-        return;
-      }
-      reconcileReplayedPendingTools();
-      if (!loaded) {
-        addSystem("warn: Failed to load history.");
-      }
-      if (!isCurrent()) return;
-      installTaskFromDetail(s);
-      drainNavigationEvents(taskId);
-    } catch {
-      if (!isCurrent()) return;
-      await fallbackToNextTask(
-        taskId,
-        state.taskCwd ?? undefined,
-        undefined,
-        undefined,
-        connectionEpoch,
-      );
-      return;
-    }
+  }
+
+  // Single owner: route focus at navigation intent BEFORE warm: true, load tail
+  // once (when non-incremental), install task metadata, then start the single
+  // SyncFeedConsumer for bounded snapshot+delta recovery.
+  navigationOwnerTaskId = taskId;
+  sendFocus(taskId);
+  try {
+    const [task] = await Promise.all([
+      api.getTask(taskId, { warm: true }),
+      incremental ? Promise.resolve(true) : loadHistory(taskId),
+    ]);
+    if (!isCurrent()) return;
+    installTaskFromDetail(task);
+    drainNavigationEvents(taskId);
+    navigationOwnerTaskId = null;
+    // Start consumer; bounded recovery runs only once BOTH focus_ack AND connected are ready.
+    startTaskFeedConsumer(taskId, {
+      needTailLoad: false,
+      forceRestart: true,
+    });
+  } catch {
+    if (navigationOwnerTaskId === taskId) navigationOwnerTaskId = null;
+    if (!isCurrent()) return;
+    await fallbackToNextTask(
+      taskId,
+      state.taskCwd ?? undefined,
+      undefined,
+      undefined,
+      connectionEpoch,
+    );
   }
 }
 
-function cleanup() {
+function cleanup(): void {
   beginConnectionEpoch();
-  // A dropped stream ends this connection's collection: whatever it told us
-  // must not survive as the next connection's baseline.
   beginTaskTopologyGeneration();
-  // A replay still in flight belongs to the stream that just died. Its queued
-  // live events and its history response describe that collection, not the one
-  // the new connection is about to establish.
   discardInFlightReplays();
   setConnectionStatus("disconnected", "disconnected");
   state.eventSource = null;
   state.clientId = null;
-  finishThinking();
-  finishAssistant();
+  // Discard unsealed preview DOM on disconnect without creating duplicate transcript rows.
+  previewReconciler.clearActive();
+  discardThinkingPreview();
+  discardAssistantPreview();
   if (state.currentBashEl) {
-    finishBash(state.currentBashEl, null, "disconnected");
+    // Keep the rendered command block addressable across disconnect so
+    // bash_result on recovery fills canonical output & exit status.
+    state.currentBashEl.dataset.bashDisconnected = "1";
   }
   state.pendingToolCallIds.clear();
   state.pendingPermissionRequestIds.clear();
   state.pendingPromptDone = false;
   state.turnEnded = false;
-  // Reconnect re-establishes identity from the snapshot; a value held across
-  // the gap could outlive its turn and drop the next one's terminator.
   state.currentPromptId = null;
-  // Runtime patch sequences are scoped to one server process. Reconnect
-  // establishes a fresh snapshot baseline, including after server restart.
   state.lastStateSeq = 0;
   clearCancelTimer();
   setBusy(false);
 }
 
-// Visibility reporting via REST. On going-hidden iOS PWA may suspend the JS
-// runtime mid-flight, so we use `fetch({ keepalive: true })` which the browser
-// commits to the network stack before suspension. We can't use sendBeacon here
-// because it doesn't support custom headers — and our Authorization: Bearer
-// header is required by the auth middleware. If the keepalive fetch gets
-// killed (rare), the SSE heartbeat (15s) and server-side visibility TTL act as
-// a backstop: a stuck "visible" flag self-clears when the SSE drops.
-function postHiddenBeacon(clientId: string, taskId: string | null): void {
-  const url = `/api/beta/clients/${encodeURIComponent(clientId)}/visibility`;
-  const payload = JSON.stringify({ visible: false, taskId });
-  try {
-    void fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: payload,
-      keepalive: true,
-    }).catch(() => {});
-  } catch {
-    /* best-effort */
-  }
-}
-
 document.addEventListener("visibilitychange", () => {
-  if (state.clientId) {
-    if (document.hidden) {
-      postHiddenBeacon(state.clientId, state.taskId ?? null);
-    } else {
-      void api.postVisibility(state.clientId, true, state.taskId ?? undefined);
+  if (document.hidden) {
+    sendToHub({ type: "visibility", visible: false, taskId: state.taskId });
+    postFallbackClearVisibilityBeacon(fallbackHub);
+  } else {
+    sendToHub({ type: "visibility", visible: true, taskId: state.taskId });
+    checkStreamLiveness();
+    if (state.taskId) {
+      void triggerCatchUp();
     }
-  }
-  // Probe liveness on resume: a suspended runtime freezes its own timers, so
-  // the watchdog interval may not have run while we were away, and the stream
-  // most likely died exactly during that gap.
-  if (!document.hidden) checkStreamLiveness();
-  // Sync missed events + runtime state when returning from background (iOS
-  // can keep connections alive while suspending event delivery, silently
-  // losing server messages). Reload snapshot is cheap and authoritative for
-  // runtime fields (busy).
-  //
-  // Deliberately NOT gated on `state.lastEventSeq > 0`. Live SSE events never
-  // advance that frontier (only loadHistory/loadNewEvents do), and a task
-  // created via /new never calls loadHistory — so it sits at 0 for its entire
-  // lifetime. Gating on it disabled this recovery on the most common path.
-  // `after=0` is a well-formed catch-up: the server returns the full persisted
-  // transcript and _loadNewEventsImpl replays it from sequence zero.
-  if (!document.hidden && state.taskId && !state.replayInProgress) {
-    const sid = state.taskId;
-    void Promise.all([
-      hydrateTaskRuntime(sid, () => state.taskId === sid),
-      loadNewEvents(sid),
-    ]).then(([hydrated]) => {
-      if (!hydrated || state.taskId !== sid) return;
-      reconcileReplayedPendingTools();
-      scrollToBottom(false);
-    });
   }
 });
 
-// pagehide: secondary best-effort signal for bfcache/navigation. Not
-// relied on for iOS cold-kill (WebKit doesn't fire pagehide on OS-level
-// process termination), but cheap extra coverage for normal navigations.
 window.addEventListener("pagehide", () => {
-  if (state.clientId) {
-    postHiddenBeacon(state.clientId, state.taskId ?? null);
+  // Reset readiness before bye so BFCache pageshow waits for real current
+  // connected + focus_ack (even if the 5s grace elapsed and SSE tore down).
+  hubConnected = false;
+  hubClientId = null;
+  watchDualGateFired = false;
+  physicalConnectionGen += 1;
+  const savedTaskId = activeConsumerTaskId;
+  activeConsumer?.stop();
+  activeConsumer = null;
+  watchHooks = null;
+  activeConsumerTaskId = savedTaskId;
+  sendToHub({ type: "bye" });
+  postFallbackClearVisibilityBeacon(fallbackHub);
+});
+
+window.addEventListener("pageshow", (event: PageTransitionEvent) => {
+  if (!event.persisted) return;
+  sendHello();
+  if (state.taskId) {
+    startTaskFeedConsumer(state.taskId, {
+      needTailLoad: false,
+      forceRestart: true,
+    });
   }
 });

@@ -17,6 +17,7 @@ function makeRequest(
   method: string,
   path: string,
   body?: string,
+  extraHeaders?: Record<string, string>,
 ): Promise<{
   status: number;
   body: string;
@@ -29,7 +30,7 @@ function makeRequest(
         port,
         path,
         method,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...extraHeaders },
       },
       (res) => {
         let data = "";
@@ -432,10 +433,27 @@ describe("SSE REST API", () => {
         port,
         "POST",
         `/api/beta/clients/${clientId}/visibility`,
-        JSON.stringify({ visible: true }),
+        JSON.stringify({ taskIds: [] }),
+        { "X-Visibility-Rev": "1" },
       );
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), { ok: true });
+    });
+
+    it("returns 400 when X-Visibility-Rev header is missing", async () => {
+      const sse = openSse(port, "/api/v1/events/stream");
+      sseCleanups.push(sse.close);
+      await sse.response;
+      await waitFor(() => sse.events.length >= 1);
+      const clientId = JSON.parse(sse.events[0]).clientId;
+
+      const res = await makeRequest(
+        port,
+        "POST",
+        `/api/beta/clients/${clientId}/visibility`,
+        JSON.stringify({ taskIds: [] }),
+      );
+      assert.equal(res.status, 400);
     });
 
     it("returns 404 for unknown clientId", async () => {
@@ -443,12 +461,12 @@ describe("SSE REST API", () => {
         port,
         "POST",
         "/api/beta/clients/unknown/visibility",
-        JSON.stringify({ visible: true }),
+        JSON.stringify({ taskIds: [] }),
       );
       assert.equal(res.status, 404);
     });
 
-    it("returns 400 for missing visible field", async () => {
+    it("returns 400 for missing taskIds field", async () => {
       const sse = openSse(port, "/api/v1/events/stream");
       sseCleanups.push(sse.close);
       await sse.response;
@@ -480,7 +498,7 @@ describe("SSE REST API", () => {
       assert.equal(res.status, 400);
     });
 
-    it("accepts optional taskId in visibility update", async () => {
+    it("accepts taskIds list in visibility update", async () => {
       const sse = openSse(port, "/api/v1/events/stream");
       sseCleanups.push(sse.close);
       await sse.response;
@@ -491,7 +509,8 @@ describe("SSE REST API", () => {
         port,
         "POST",
         `/api/beta/clients/${clientId}/visibility`,
-        JSON.stringify({ visible: true, taskId: "task-123" }),
+        JSON.stringify({ taskIds: ["task-123"] }),
+        { "X-Visibility-Rev": "1" },
       );
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), { ok: true });

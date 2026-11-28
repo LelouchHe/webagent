@@ -96,7 +96,8 @@ function handleMessageChunk(
   tasks: TaskManager,
 ): void {
   tasks.flushThinkingBuffer(event.taskId);
-  tasks.appendAssistant(event.taskId, event.text);
+  const coords = tasks.appendAssistant(event.taskId, event.text);
+  Object.assign(event, coords);
   tasks.state.patch(event.taskId, {
     runtime: { streaming: { assistant: true, thinking: false } },
   });
@@ -107,16 +108,16 @@ function handleMessageChunk(
  *
  * Both outcomes are transcript content, in the position the image arrived: the
  * pending text is flushed first, then either the stored record or the visible
- * placeholder takes the image's place. Returns the event to broadcast — the
- * stored descriptor, or a text chunk — because the raw base64 block must never
- * leave this function.
+ * placeholder takes the image's place. Returns an ephemeral `message_chunk`
+ * only when the image was refused; stored images publish automatically on
+ * `store.saveEvent` commit.
  */
 function handleAgentImage(
   event: AgentImageEvent,
   tasks: TaskManager,
   store: Store,
   config: EventHandlerConfig,
-): AgentEvent {
+): AgentEvent | null {
   const taskId = event.taskId;
   tasks.flushThinkingBuffer(taskId);
   // Text before the image is its own record, so a replay keeps
@@ -132,23 +133,26 @@ function handleAgentImage(
     limitBytes: config.imageUploadLimit,
   });
   if ("stored" in result) {
+    // Invalidate BEFORE saveEvent commits so the synchronous outer-commit
+    // egress projection immediately rebuilds the label map with this row.
+    tasks.invalidateLabelCache(taskId);
     store.saveEvent(
       taskId,
       "agent_image",
       { attachment: result.stored },
       { from_ref: "agent" },
     );
-    // The new row must be visible to the label/URL egress of this very event.
-    tasks.invalidateLabelCache(taskId);
-    return { type: "agent_image", taskId, attachment: result.stored };
+    return null;
   }
 
   // A refused image is still part of the reply: say so, in its own place.
-  handleMessageChunk(
-    { type: "message_chunk", taskId, text: result.omitted },
-    tasks,
-  );
-  return { type: "message_chunk", taskId, text: result.omitted };
+  const chunkEvent: MessageChunkEvent = {
+    type: "message_chunk",
+    taskId,
+    text: result.omitted,
+  };
+  handleMessageChunk(chunkEvent, tasks);
+  return chunkEvent;
 }
 
 function handleThoughtChunk(
@@ -156,7 +160,8 @@ function handleThoughtChunk(
   tasks: TaskManager,
 ): void {
   tasks.flushAssistantBuffer(event.taskId);
-  tasks.appendThinking(event.taskId, event.text);
+  const coords = tasks.appendThinking(event.taskId, event.text);
+  Object.assign(event, coords);
   tasks.state.patch(event.taskId, {
     runtime: { streaming: { assistant: false, thinking: true } },
   });
@@ -222,8 +227,6 @@ function performAutoApprove(
   tasks: TaskManager,
   store: Store,
   bridge: AgentBridge,
-  sseManager: SseManager,
-  broadcastRequest: boolean,
 ): void {
   bridge.resolvePermission(event.requestId, opt.optionId);
   tasks.pendingPermissions.delete(event.requestId);
@@ -239,14 +242,6 @@ function performAutoApprove(
     },
     { from_ref: "system" },
   );
-  if (broadcastRequest) sseManager.broadcast(withoutLease(event));
-  sseManager.broadcast({
-    type: "permission_response" as const,
-    taskId: event.taskId,
-    requestId: event.requestId,
-    optionName,
-    denied: false,
-  });
 }
 
 /** The subset of a permission option the host answers with. */
@@ -274,17 +269,14 @@ function answerDelegatedPermission(
   tasks: TaskManager,
   store: Store,
   bridge: AgentBridge,
-  sseManager: SseManager,
 ): void {
   const allow =
     findAllowOption(event.options, "allow_once") ??
     findAllowOption(event.options, "allow_always");
   if (allow) {
-    performAutoApprove(event, allow, tasks, store, bridge, sseManager, true);
+    performAutoApprove(event, allow, tasks, store, bridge);
     return;
   }
-  // Chronological order for the transcript: the request is broadcast first,
-  // then the collapse frame that answers it, exactly like the mode gate above.
   bridge.denyPermission(event.requestId);
   tasks.pendingPermissions.delete(event.requestId);
   tasks.syncPendingPermissions(event.taskId);
@@ -301,14 +293,6 @@ function answerDelegatedPermission(
     },
     { from_ref: "system" },
   );
-  sseManager.broadcast(withoutLease(event));
-  sseManager.broadcast({
-    type: "permission_response" as const,
-    taskId: event.taskId,
-    requestId: event.requestId,
-    optionName: "cancelled",
-    denied: true,
-  });
 }
 
 function maybeAutoApprovePermission(
@@ -316,7 +300,6 @@ function maybeAutoApprovePermission(
   tasks: TaskManager,
   store: Store,
   bridge: AgentBridge,
-  sseManager: SseManager,
 ): boolean {
   // Two independent branches. This one is the whole P5-b authorization rule:
   // a *live* turn whose origin is `delegated` answers for itself. Both halves
@@ -324,7 +307,7 @@ function maybeAutoApprovePermission(
   // reservation, compaction or rotation must not be read as one.
   const turn = tasks.getTurn(event.taskId);
   if (turn !== null && turn.origin === "delegated") {
-    answerDelegatedPermission(event, tasks, store, bridge, sseManager);
+    answerDelegatedPermission(event, tasks, store, bridge);
     return true;
   }
   // The other branch is the human turn, unchanged: `mode` is the setting a
@@ -334,7 +317,7 @@ function maybeAutoApprovePermission(
   if (!isAutopilotMode(mode)) return false;
   const opt = findAllowOption(event.options, "allow_once");
   if (!opt) return false;
-  performAutoApprove(event, opt, tasks, store, bridge, sseManager, true);
+  performAutoApprove(event, opt, tasks, store, bridge);
   return true;
 }
 
@@ -343,7 +326,6 @@ function maybeAutoApproveAttachmentRead(
   tasks: TaskManager,
   store: Store,
   bridge: AgentBridge,
-  sseManager: SseManager,
   config: EventHandlerConfig,
 ): void {
   // Plan §1.4 — async attachment-read auto-approve runs *after* the
@@ -397,7 +379,7 @@ function maybeAutoApproveAttachmentRead(
         currentTurn?.promptId !== promptIdAtArrival
       )
         return;
-      performAutoApprove(event, opt, tasks, store, bridge, sseManager, false);
+      performAutoApprove(event, opt, tasks, store, bridge);
     },
     (err: unknown) => {
       ailog.warn("unexpected error", { error: (err as Error).message });
@@ -410,7 +392,6 @@ function handlePermissionRequest(
   tasks: TaskManager,
   store: Store,
   bridge: AgentBridge,
-  sseManager: SseManager,
   config: EventHandlerConfig,
 ): boolean {
   tasks.flushBuffers(event.taskId);
@@ -435,31 +416,24 @@ function handlePermissionRequest(
     taskId: event.taskId,
     title: event.title,
     options: event.options.map(
-      (o: { optionId: string; label?: string; name?: string }) => ({
+      (o: {
+        optionId: string;
+        label?: string;
+        name?: string;
+        kind?: string;
+      }) => ({
         optionId: o.optionId,
         label: o.label ?? o.name ?? o.optionId,
+        ...(o.kind ? { kind: o.kind } : {}),
       }),
     ),
     ...(agentId && lease ? { execution: { agentId, lease } } : {}),
   });
   tasks.syncPendingPermissions(event.taskId);
-  const autopiloted = maybeAutoApprovePermission(
-    event,
-    tasks,
-    store,
-    bridge,
-    sseManager,
-  );
+  const autopiloted = maybeAutoApprovePermission(event, tasks, store, bridge);
   if (autopiloted) return true;
-  // Async attachment-read auto-approve runs after the request broadcasts.
-  maybeAutoApproveAttachmentRead(
-    event,
-    tasks,
-    store,
-    bridge,
-    sseManager,
-    config,
-  );
+  // Async attachment-read auto-approve runs after the request commits.
+  maybeAutoApproveAttachmentRead(event, tasks, store, bridge, config);
   return false;
 }
 
@@ -581,6 +555,81 @@ function handleError(
   }
 }
 
+type DispatchOutcome = {
+  /** True when the event was persisted (published by store commit), so skip raw broadcast. */
+  persisted: boolean;
+  /** True when push notifications should be suppressed (e.g. auto-approved permission). */
+  suppressPush: boolean;
+};
+
+function handleToolCallUpdate(
+  event: Extract<AgentEvent, { type: "tool_call_update" }>,
+  tasks: TaskManager,
+  store: Store,
+  config: EventHandlerConfig,
+  sseManager: SseManager,
+): DispatchOutcome {
+  let content = event.content;
+  let storedImage = false;
+  if (Array.isArray(content)) {
+    const stored = storeToolResultImages(
+      {
+        store,
+        dataDir: config.dataDir,
+        taskId: event.taskId,
+        limitBytes: config.imageUploadLimit,
+      },
+      content,
+    );
+    content = stored.content;
+    storedImage = stored.inserted > 0;
+    const recovered = recoverCopilotImagePath({
+      store,
+      dataDir: config.dataDir,
+      taskId: event.taskId,
+      toolCall: { id: event.id, title: event.title ?? "" },
+      text: toolResultText(content),
+      limitBytes: config.imageUploadLimit,
+    });
+    if (recovered) {
+      event.recoveredCopilotImage = {
+        sourceUri: recovered.sourceUri,
+        attachment: recovered.attachment,
+      };
+      if (recovered.inserted) storedImage = true;
+    }
+  }
+  if (content) event.content = content;
+  if (storedImage) tasks.invalidateLabelCache(event.taskId);
+  const hasRawOutput = Object.hasOwn(event, "rawOutput");
+  const rawOutput = hasRawOutput
+    ? stripRawOutputImageData(event.rawOutput)
+    : undefined;
+  if (
+    hasRawOutput &&
+    rawOutput !== undefined &&
+    typeof sseManager.stageToolCallRawOutput === "function"
+  ) {
+    sseManager.stageToolCallRawOutput(event.taskId, event.id, rawOutput);
+  }
+  store.saveEvent(
+    event.taskId,
+    event.type,
+    {
+      id: event.id,
+      status: event.status,
+      content: event.content,
+      title: event.title,
+      kind: event.kind,
+      rawInput: event.rawInput,
+      locations: event.locations,
+      recoveredCopilotImage: event.recoveredCopilotImage,
+    },
+    { from_ref: "agent" },
+  );
+  return { persisted: true, suppressPush: false };
+}
+
 function dispatchAgentEvent(
   event: AgentEvent,
   tasks: TaskManager,
@@ -588,116 +637,48 @@ function dispatchAgentEvent(
   bridge: AgentBridge,
   config: EventHandlerConfig,
   sseManager: SseManager,
-): boolean {
+): DispatchOutcome {
   // eslint-disable-next-line @typescript-eslint/switch-exhaustiveness-check -- only handles events with side effects
   switch (event.type) {
     case "connected":
       handleConnected(event, tasks, config);
-      return false;
+      return { persisted: false, suppressPush: false };
     case "task_created":
     case "config_option_update":
       handleConfigLikeEvent(event, tasks);
-      return false;
+      return { persisted: false, suppressPush: false };
     case "message_chunk":
       handleMessageChunk(event, tasks);
-      return false;
+      return { persisted: false, suppressPush: false };
     case "thought_chunk":
       handleThoughtChunk(event, tasks);
-      return false;
+      return { persisted: false, suppressPush: false };
     case "tool_call":
       handleToolCall(event, tasks, store);
-      return false;
-    case "tool_call_update": {
-      // ACP defines an image content block in a tool result, so this is the
-      // normal path: store every block and replace it with its descriptor, so
-      // no inline payload is persisted or broadcast.
-      let content = event.content;
-      let storedImage = false;
-      if (Array.isArray(content)) {
-        const stored = storeToolResultImages(
-          {
-            store,
-            dataDir: config.dataDir,
-            taskId: event.taskId,
-            limitBytes: config.imageUploadLimit,
-          },
-          content,
-        );
-        content = stored.content;
-        // Ingest reports the rows it inserted, wherever in the item tree they
-        // landed. A cached label map cannot name them, so it must be
-        // invalidated; a refusal placeholder inserts nothing and does not. The
-        // handler must not sniff shapes again — a nested descriptor would be
-        // invisible to a top-level scan.
-        storedImage = stored.inserted > 0;
-        // Temporary: recover an image one agent only names by path.
-        const recovered = recoverCopilotImagePath({
-          store,
-          dataDir: config.dataDir,
-          taskId: event.taskId,
-          toolCall: { id: event.id, title: event.title ?? "" },
-          text: toolResultText(content),
-          limitBytes: config.imageUploadLimit,
-        });
-        if (recovered) {
-          event.recoveredCopilotImage = {
-            sourceUri: recovered.sourceUri,
-            attachment: recovered.attachment,
-          };
-          // A content-hash duplicate reuses the existing row: there is nothing
-          // new for a cached label map to learn.
-          if (recovered.inserted) storedImage = true;
-        }
-      }
-      if (content) event.content = content;
-      // An earlier SSE for this task may already have cached an empty label
-      // map. The newly stored attachment must be nameable on the very next
-      // egress, exactly like a message image (`handleAgentImage`).
-      if (storedImage) tasks.invalidateLabelCache(event.taskId);
-      // `rawOutput` is forwarded as received, but it is not persisted, so the
-      // live SSE frame is its only egress. An agent may repeat the tool's
-      // content there, image blocks included: drop those payloads too, or the
-      // frame would carry the base64 this branch just removed from `content`.
-      if (Object.hasOwn(event, "rawOutput")) {
-        event.rawOutput = stripRawOutputImageData(event.rawOutput);
-      }
-      store.saveEvent(
-        event.taskId,
-        event.type,
-        {
-          id: event.id,
-          status: event.status,
-          content: event.content,
-          title: event.title,
-          kind: event.kind,
-          rawInput: event.rawInput,
-          locations: event.locations,
-          recoveredCopilotImage: event.recoveredCopilotImage,
-        },
-        { from_ref: "agent" },
-      );
-      return false;
-    }
+      return { persisted: true, suppressPush: false };
+    case "tool_call_update":
+      return handleToolCallUpdate(event, tasks, store, config, sseManager);
     case "plan":
       handlePlan(event, tasks, store);
-      return false;
-    case "permission_request":
-      return handlePermissionRequest(
+      return { persisted: true, suppressPush: false };
+    case "permission_request": {
+      const autopiloted = handlePermissionRequest(
         event,
         tasks,
         store,
         bridge,
-        sseManager,
         config,
       );
+      return { persisted: true, suppressPush: autopiloted };
+    }
     case "prompt_done":
       handlePromptDone(event, tasks, store, bridge);
-      return false;
+      return { persisted: true, suppressPush: false };
     case "error":
       handleError(event, tasks, store, bridge);
-      return false;
+      return { persisted: Boolean(event.taskId), suppressPush: false };
   }
-  return false;
+  return { persisted: false, suppressPush: false };
 }
 
 function maybePushNotify(event: AgentEvent, pushService: PushService): void {
@@ -759,6 +740,20 @@ function completeParentFields(
     parentId === null ? null : (store.getBindingAgent(parentId) ?? null);
 }
 
+function handleAgentLifecycleReset(
+  agentId: string,
+  tasks: TaskManager,
+  sseManager: SseManager,
+): void {
+  for (const snapshot of tasks.clearAgentCommands(agentId)) {
+    sseManager.broadcast({
+      type: "available_commands_update",
+      ...snapshot,
+    });
+  }
+  tasks.clearAgentRuntime(agentId);
+}
+
 export function handleAgentEvent(
   event: AgentEvent,
   tasks: TaskManager,
@@ -800,16 +795,7 @@ export function handleAgentEvent(
     return;
   }
   if (event.type === "agent_reloading" || event.type === "agent_disconnected") {
-    // Agent lifecycle events only affect the tasks that agent carries. Another
-    // agent's streaming, plans and usage are untouched. Command snapshots are
-    // cleared and announced before the process state that holds them is reset.
-    for (const snapshot of tasks.clearAgentCommands(event.agentId)) {
-      sseManager.broadcast({
-        type: "available_commands_update",
-        ...snapshot,
-      });
-    }
-    tasks.clearAgentRuntime(event.agentId);
+    handleAgentLifecycleReset(event.agentId, tasks, sseManager);
   }
   if (
     "taskId" in event &&
@@ -818,14 +804,12 @@ export function handleAgentEvent(
   )
     return;
   if (event.type === "agent_image") {
-    // The incoming event only carries base64; what goes out is the stored
-    // descriptor (or the placeholder that stands in for a refused image).
-    sseManager.broadcast(
-      withoutLease(handleAgentImage(event, tasks, store, config)),
-    );
+    // Stored images publish via outer-commit feed; refused images emit a text chunk.
+    const fallback = handleAgentImage(event, tasks, store, config);
+    if (fallback) sseManager.broadcast(withoutLease(fallback));
     return;
   }
-  const suppress = dispatchAgentEvent(
+  const outcome = dispatchAgentEvent(
     event,
     tasks,
     store,
@@ -833,7 +817,9 @@ export function handleAgentEvent(
     config,
     sseManager,
   );
-  if (suppress) return;
-  sseManager.broadcast(withoutLease(event));
-  if (pushService) maybePushNotify(withoutLease(event), pushService);
+  const clean = withoutLease(event);
+  if (!outcome.persisted) sseManager.broadcast(clean);
+  if (!outcome.suppressPush) {
+    if (pushService) maybePushNotify(clean, pushService);
+  }
 }

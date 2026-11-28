@@ -96,18 +96,18 @@ describe("raw request URL handling", () => {
 
   it("does not reinterpret a literal question mark inside the query", async () => {
     store.createTask("t1", root, "auto", "agent-a");
-    tasks.assistantBuffers.set("t1", "buffered");
-    const beforeSeq = store.getLastEventSeq("t1");
+    store.saveEvent("t1", "user_message", { text: "a" }, { from_ref: "user" });
+    store.saveEvent("t1", "user_message", { text: "b" }, { from_ref: "user" });
 
     const response = await request(
       port,
-      "/api/v1/tasks/t1/events?ignored?&flush=1",
+      "/api/v1/tasks/t1/events?ignored?&limit=1",
       token,
     );
 
     assert.equal(response.status, 200);
-    assert.equal(store.getLastEventSeq("t1"), beforeSeq + 1);
-    assert.equal(tasks.assistantBuffers.has("t1"), false);
+    const body = JSON.parse(response.body) as { events: unknown[] };
+    assert.equal(body.events.length, 1);
   });
 
   it("does not turn a double-slash request into a server error", async () => {
