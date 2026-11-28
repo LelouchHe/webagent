@@ -8,6 +8,7 @@ import { AgentBridge } from "../src/bridge.ts";
 import { Store } from "../src/store.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
+import { createMcpSessionCapabilities } from "../src/mcp/server.ts";
 import type { AgentEvent, ConfigSelectOption } from "../src/types.ts";
 
 async function startGroupedAgent(t: TestContext, profile = "grouped-model") {
@@ -19,8 +20,10 @@ async function startGroupedAgent(t: TestContext, profile = "grouped-model") {
     store,
     dir,
     dir,
-    new CapabilityStore(),
-    "http://127.0.0.1:6800",
+    createMcpSessionCapabilities(
+      new CapabilityStore(),
+      "http://127.0.0.1:6800",
+    ),
     "grouped-config-test",
   );
   const fixture = fileURLToPath(

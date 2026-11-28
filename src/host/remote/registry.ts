@@ -3,6 +3,8 @@ import type {
   RemoteTaskCreateInput,
   RemoteTaskCreateTransport,
   RemoteTaskDeleteAttempt,
+} from "../api.ts";
+import type {
   TaskListItem,
   TaskCreateResult,
   TaskQueryInput,

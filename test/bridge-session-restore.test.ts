@@ -10,6 +10,7 @@ import { Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
+import { createMcpSessionCapabilities } from "../src/mcp/server.ts";
 import { MCP_SERVER_NAME } from "../src/mcp/server.ts";
 import { abbreviateHomePath } from "../src/home-path.ts";
 import type { AgentEvent } from "../src/types.ts";
@@ -66,8 +67,7 @@ async function startAgent(t: TestContext, profile: string) {
     store,
     dir,
     dir,
-    capabilities,
-    "http://127.0.0.1:6800",
+    createMcpSessionCapabilities(capabilities, "http://127.0.0.1:6800"),
     "session-fixture",
   );
   resources.tasks = tasks;

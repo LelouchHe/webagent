@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { AgentBridge } from "../src/bridge.ts";
 import { handleAgentEvent } from "../src/event-handler.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
+import { createMcpSessionCapabilities } from "../src/mcp/server.ts";
 import { Store } from "../src/store.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import type { AgentEvent } from "../src/types.ts";
@@ -38,8 +39,10 @@ async function startHarness(t: TestContext) {
     store,
     dir,
     dir,
-    new CapabilityStore(),
-    "http://127.0.0.1:6800",
+    createMcpSessionCapabilities(
+      new CapabilityStore(),
+      "http://127.0.0.1:6800",
+    ),
     "stream-agent",
   );
   const bridge = new AgentBridge(

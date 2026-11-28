@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { AgentBridge } from "../src/bridge.ts";
 import { AgentRegistry } from "../src/agent-registry.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
+import { createMcpSessionCapabilities } from "../src/mcp/server.ts";
 import { ExecutionAuthority } from "../src/execution-authority.ts";
 import { emptyExecutionSlot, Store } from "../src/store.ts";
 import { TaskStateManager } from "../src/task-state.ts";
@@ -89,8 +90,10 @@ function createHarness(
     store,
     defaultCwd: dir,
     dataDir: dir,
-    capabilities,
-    mcpBaseUrl: "http://127.0.0.1:6800",
+    sessionCapabilities: createMcpSessionCapabilities(
+      capabilities,
+      "http://127.0.0.1:6800",
+    ),
     state: new TaskStateManager(),
     authority,
     agents: registry,

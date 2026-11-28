@@ -37,8 +37,6 @@ import {
   type StreamingSnapshot,
 } from "./streaming-buffers.ts";
 import type { AgentBridge } from "./bridge.ts";
-import { buildMcpServerEntry } from "./mcp/server.ts";
-import type { CapabilityStore } from "./mcp/capability.ts";
 import type { McpServer as AcpMcpServer } from "@agentclientprotocol/sdk";
 import {
   errorMessage,
@@ -581,19 +579,31 @@ export interface TaskExecution {
   bridge: DeliveryBridge;
 }
 
+export interface SessionCapabilityPort {
+  issue(input: {
+    taskId: string;
+    agentId: string;
+    mode: "attach" | "replace" | "restore";
+    generation: number | null;
+  }): { token: string; servers: AcpMcpServer[] };
+  promote(token: string, generation: number): void;
+  revoke(token: string): void;
+  revokeByTask(taskId: string): void;
+  revokeOtherTokens(taskId: string, keepToken: string): void;
+}
+
 export interface TaskManagerOptions {
   store: Store;
   defaultCwd: string;
   dataDir: string;
   /**
-   * Optional MCP capability store. When provided together with `mcpBaseUrl`,
-   * every created/restored task is given a uniquely named MCP server entry
-   * whose Authorization header carries a freshly minted capability — the MCP
-   * control plane for ACP tasks. Lifecycle here is the single source of truth:
-   * mint happens next to `liveTasks.add`, revoke next to `liveTasks.delete`.
+   * Optional session capability port injected by server assembly. When
+   * provided, every created/restored task receives a freshly minted capability
+   * and its MCP server entry. Lifecycle here is the single source of truth:
+   * issue happens before session creation, promote after binding commit, and
+   * revoke on failure/rotation/deletion.
    */
-  capabilities?: CapabilityStore;
-  mcpBaseUrl?: string;
+  sessionCapabilities?: SessionCapabilityPort;
   /** Shared per-task runtime state ledger (owner of the monotonic `seq`). */
   state: TaskStateManager;
   /** Shared execution write authority (binding facts + generation ledger). */
@@ -664,16 +674,14 @@ export function createTaskManager(
   store: Store,
   defaultCwd: string,
   dataDir: string,
-  capabilities?: CapabilityStore,
-  mcpBaseUrl?: string,
+  sessionCapabilities?: SessionCapabilityPort,
   agentId: string = "test-agent",
 ): TaskManager {
   return new TaskManager({
     store,
     defaultCwd,
     dataDir,
-    capabilities,
-    mcpBaseUrl,
+    sessionCapabilities,
     state: new TaskStateManager(),
     authority: new ExecutionAuthority(),
     agents: new SingleAgentEnvironment(agentId),
@@ -792,15 +800,13 @@ export class TaskManager implements ObligationHost {
   private readonly store: Store;
   private readonly defaultCwd: string;
   private readonly dataDir: string;
-  private readonly capabilities?: CapabilityStore;
-  private readonly mcpBaseUrl?: string;
+  private readonly sessionCapabilities?: SessionCapabilityPort;
 
   constructor(options: TaskManagerOptions) {
     this.store = options.store;
     this.defaultCwd = options.defaultCwd;
     this.dataDir = options.dataDir;
-    this.capabilities = options.capabilities;
-    this.mcpBaseUrl = options.mcpBaseUrl;
+    this.sessionCapabilities = options.sessionCapabilities;
     this.state = options.state;
     this.authority = options.authority;
     this.agents = options.agents;
@@ -946,22 +952,19 @@ export class TaskManager implements ObligationHost {
     agentId: string,
     mode: "attach" | "replace" | "restore",
   ): { servers: AcpMcpServer[]; token: string } | undefined {
-    if (!this.capabilities || !this.mcpBaseUrl) return undefined;
+    if (!this.sessionCapabilities) return undefined;
     // A token minted for a session that does not exist yet starts
     // `initializing`: the handshake works, business tools do not. A restore
     // of an existing binding is already authorized, so it starts active.
-    const token =
-      mode === "restore"
-        ? this.capabilities.mint(
-            taskId,
-            agentId,
-            this.authority.leaseFor(taskId)?.generation ?? null,
-          )
-        : this.capabilities.mintInitializing(taskId, agentId);
-    return {
-      token,
-      servers: [buildMcpServerEntry(token, this.mcpBaseUrl)],
-    };
+    return this.sessionCapabilities.issue({
+      taskId,
+      agentId,
+      mode,
+      generation:
+        mode === "restore"
+          ? (this.authority.leaseFor(taskId)?.generation ?? null)
+          : null,
+    });
   }
 
   private buildMcpServers(
@@ -980,7 +983,7 @@ export class TaskManager implements ObligationHost {
     if (!token) return;
     const generation = this.authority.leaseFor(taskId)?.generation;
     if (generation === undefined) return;
-    this.capabilities?.promote(token, generation);
+    this.sessionCapabilities?.promote(token, generation);
   }
 
   /**
@@ -1369,8 +1372,8 @@ export class TaskManager implements ObligationHost {
       return await bridge.newSession(cwd, options);
     } catch (error) {
       this.endCreatingClaim(taskId);
-      if (capabilityToken) this.capabilities?.revoke(capabilityToken);
-      else this.capabilities?.revokeByTask(taskId);
+      if (capabilityToken) this.sessionCapabilities?.revoke(capabilityToken);
+      else this.sessionCapabilities?.revokeByTask(taskId);
       throw error;
     }
   }
@@ -1846,7 +1849,7 @@ export class TaskManager implements ObligationHost {
       });
       bridge.discardUnboundSession?.(agentSessionId);
       this.endCreatingClaim(taskId);
-      if (execution?.token) this.capabilities?.revoke(execution.token);
+      if (execution?.token) this.sessionCapabilities?.revoke(execution.token);
       throw err;
     }
     try {
@@ -2089,14 +2092,14 @@ export class TaskManager implements ObligationHost {
     } catch (error) {
       bridge.discardUnboundSession?.(created.sessionId);
       this.endCreatingClaim(taskId);
-      if (execution?.token) this.capabilities?.revoke(execution.token);
+      if (execution?.token) this.sessionCapabilities?.revoke(execution.token);
       throw error;
     }
 
     this.liveTasks.add(taskId);
     this.endCreatingClaim(taskId);
     if (execution?.token) {
-      this.capabilities?.revokeOtherTokens(taskId, execution.token);
+      this.sessionCapabilities?.revokeOtherTokens(taskId, execution.token);
     }
     const lease = this.currentLease(taskId);
     // `task` was read before the rotation; a replacement owned by a different
@@ -2842,7 +2845,7 @@ export class TaskManager implements ObligationHost {
       // rotation that is the replacement's token, which is not this failed
       // restore's to revoke.
       if (this.leaseCurrent(startLease)) {
-        this.capabilities?.revokeByTask(taskId);
+        this.sessionCapabilities?.revokeByTask(taskId);
       }
       slog.error("restore failed", { error: err });
       throw err;
@@ -2897,13 +2900,13 @@ export class TaskManager implements ObligationHost {
     } catch (error) {
       bridge.discardUnboundSession?.(created.sessionId);
       this.endCreatingClaim(taskId);
-      if (execution?.token) this.capabilities?.revoke(execution.token);
+      if (execution?.token) this.sessionCapabilities?.revoke(execution.token);
       throw error;
     }
     this.liveTasks.add(taskId);
     this.endCreatingClaim(taskId);
     if (execution?.token) {
-      this.capabilities?.revokeOtherTokens(taskId, execution.token);
+      this.sessionCapabilities?.revokeOtherTokens(taskId, execution.token);
     }
     const lease = this.currentLease(taskId);
     bridge.sessionMapped?.(created.sessionId, taskId);
@@ -3340,7 +3343,7 @@ export class TaskManager implements ObligationHost {
     mode: "hard" | "soft",
     externalParent?: DeletedExternalParent,
   ): void {
-    this.capabilities?.revokeByTask(id);
+    this.sessionCapabilities?.revokeByTask(id);
     this.publishedWarmIdentity.delete(id);
     this.liveTasks.delete(id);
     this.streamingBuffers.deleteTask(id);

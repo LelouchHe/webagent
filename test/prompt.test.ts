@@ -8,7 +8,7 @@ import { Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/http/routes.ts";
-import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import { createLocalTaskOps } from "./fixtures.ts";
 import { getLogLevel, setLogLevel, setLogSink } from "../src/log.ts";
 import type { ConfigOption, AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";

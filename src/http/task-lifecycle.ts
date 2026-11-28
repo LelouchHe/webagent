@@ -1,10 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
 import {
-  cancelHttpStatus,
   MAX_HOST_CANCEL_SOURCE_LABEL_LENGTH,
   TaskRemoteCancelError,
   type TaskCancelCommand,
+  type TaskCancelOutcome,
   type TaskOps,
 } from "../api/tasks.ts";
 import type { TokenRecord } from "../auth-store.ts";
@@ -22,6 +22,12 @@ import {
   type TaskManager,
 } from "../task-manager.ts";
 import type { SseManager } from "../sse-manager.ts";
+
+export function cancelHttpStatus(status: TaskCancelOutcome["status"]): number {
+  return status === "cancelling" || status === "superseded"
+    ? HTTP_STATUS.ACCEPTED
+    : HTTP_STATUS.OK;
+}
 
 const HostCancelBodySchema = z.union([
   z.object({ kind: z.literal("user") }).strict(),

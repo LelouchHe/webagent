@@ -197,48 +197,20 @@ export default tseslint.config(
       "src/server.ts",
       "src/http/**/*.ts",
       "src/mcp/**/*.ts",
-      "src/task-manager.ts",
+      "src/api/**/*.ts",
+      "src/host/**/*.ts",
+      "src/shared/sync/**/*.ts",
     ],
     rules: {
       "no-restricted-imports": [
         "error",
         {
-          patterns: [noEntrypointDependency],
-        },
-      ],
-    },
-  },
-
-  {
-    files: ["src/task-manager.ts"],
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          paths: [
-            {
-              name: "./mcp/server.ts",
-              allowImportNames: ["buildMcpServerEntry"],
-              message:
-                "TaskManager may use only its legacy buildMcpServerEntry import.",
-            },
-            {
-              name: "./mcp/capability.ts",
-              allowImportNames: ["CapabilityStore"],
-              message:
-                "TaskManager may use only its legacy CapabilityStore type import.",
-            },
-          ],
           patterns: [
+            noEntrypointDependency,
             {
-              group: [
-                "**/http/**",
-                "**/mcp/**",
-                "!**/mcp/server.ts",
-                "!**/mcp/capability.ts",
-              ],
+              group: ["**/host/**", "!**/host/api.ts"],
               message:
-                "TaskManager has only two named MCP legacy dependencies and cannot depend on HTTP entrypoints.",
+                "Core code may import only the neutral Host port from host/api.ts, not concrete Host implementations.",
             },
           ],
         },
@@ -266,7 +238,19 @@ export default tseslint.config(
   },
 
   {
-    files: ["src/task-ops.ts"],
+    files: ["src/host/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [noEntrypointDependency],
+        },
+      ],
+    },
+  },
+
+  {
+    files: ["src/host/api.ts"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -274,9 +258,20 @@ export default tseslint.config(
           patterns: [
             noEntrypointDependency,
             {
-              group: ["**/host/**"],
+              group: [
+                "./local/**",
+                "./remote/**",
+                "./tasks.ts",
+                "./link-sync.ts",
+                "**/host/local/**",
+                "**/host/remote/**",
+                "**/host/tasks.ts",
+                "**/host/link-sync.ts",
+                "**/store.ts",
+                "**/task-manager.ts",
+              ],
               message:
-                "Core code must use the neutral Host port from api/**, not concrete Host implementations.",
+                "host/api.ts is a thin Host port contract and cannot import or re-export concrete Host implementations or local services.",
             },
           ],
         },
@@ -297,7 +292,7 @@ export default tseslint.config(
                 "**/store.ts",
                 "**/task-manager.ts",
                 "**/host/local/**",
-                "../local/**",
+                "**/local/**",
               ],
               message:
                 "Remote host code cannot depend on local task persistence, runtime services, or local adapters.",
@@ -317,7 +312,7 @@ export default tseslint.config(
           patterns: [
             noEntrypointDependency,
             {
-              group: ["**/host/remote/**", "../remote/**"],
+              group: ["**/host/remote/**", "**/remote/**"],
               message:
                 "Local host code cannot depend on remote host implementations.",
             },
@@ -334,6 +329,7 @@ export default tseslint.config(
         "error",
         {
           patterns: [
+            noEntrypointDependency,
             {
               group: [
                 "node:*",

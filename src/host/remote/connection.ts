@@ -13,11 +13,9 @@ import type { HostConfig } from "../../config.ts";
 import { errorMessage } from "../../types.ts";
 import { resolveHostToken, TokenCommandError } from "./credentials.ts";
 import type { HostUnreachableReason } from "./state.ts";
+import type { RemoteTaskCreateInput, RemoteTaskDeleteAttempt } from "../api.ts";
 import {
-  cancelHttpStatus,
   TaskRemoteCancelError,
-  type RemoteTaskCreateInput,
-  type RemoteTaskDeleteAttempt,
   type TaskCancelOutcome,
   type TaskReadInput,
   type TaskReadResult,
@@ -454,7 +452,11 @@ export class HostConnection {
         reason: "Remote returned an incomplete task-cancel response",
       });
     }
-    if (outcome.status !== cancelHttpStatus(parsed.data.status)) {
+    const expectedStatus =
+      parsed.data.status === "cancelling" || parsed.data.status === "superseded"
+        ? HTTP_STATUS.ACCEPTED
+        : HTTP_STATUS.OK;
+    if (outcome.status !== expectedStatus) {
       throw new TaskRemoteCancelError(host, {
         kind: "unknown",
         reason: `Unexpected HTTP ${outcome.status} for cancel status ${parsed.data.status}`,

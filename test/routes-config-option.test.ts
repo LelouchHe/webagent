@@ -61,7 +61,6 @@ describe("config option route authority", () => {
       dir,
       dir,
       undefined,
-      undefined,
       "config-route-test",
     );
     tasks.attachExecutionBridge({

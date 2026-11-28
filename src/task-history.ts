@@ -193,7 +193,7 @@ function projected(
   title?: string;
   text?: string;
   field?: string;
-  content_shape?: "unknown";
+  contentShape?: "unknown";
 } {
   if (!isObject(data)) return {};
   const title = [
@@ -241,7 +241,7 @@ function projected(
       const mark =
         (content.kind === "content" || content.kind === "diff") &&
         content.unrecognized
-          ? { content_shape: "unknown" as const }
+          ? { contentShape: "unknown" as const }
           : {};
       if (content.kind === "content" && content.text) {
         return { title, text: content.text, field: content.field, ...mark };
@@ -250,7 +250,7 @@ function projected(
         return { title, text: content.path, field: content.field, ...mark };
       }
       if (content.kind === "unknown") {
-        return { title, content_shape: "unknown" };
+        return { title, contentShape: "unknown" };
       }
       return { title, text: stringField(data.status), field: "status" };
     }
@@ -298,8 +298,8 @@ export function projectTaskHistoryRow(
   }
   const projection = projected(data, record.type);
   if (projection.title !== undefined) row.title = truncate(projection.title);
-  if (projection.content_shape !== undefined)
-    row.content_shape = projection.content_shape;
+  if (projection.contentShape !== undefined)
+    row.contentShape = projection.contentShape;
   if (query !== undefined) {
     const match = findMatch(data, query);
     if (!match) return row;
@@ -364,15 +364,74 @@ export function normalizeTaskHistoryRange(
   return a <= b ? [a, b] : [b, a];
 }
 
+export interface McpTaskHistoryRowWire {
+  seq: number;
+  type: string;
+  bytes: number;
+  group?: string;
+  title?: string;
+  content_shape?: "unknown";
+  field?: string;
+  text?: string;
+  unprojected?: true;
+}
+
+export interface McpTaskQueryWire {
+  task_id: string;
+  max_seq: number;
+  rows: McpTaskHistoryRowWire[];
+}
+
+export interface McpTaskReadWire {
+  task_id: string;
+  rows: import("./api/tasks.ts").TaskReadRow[];
+}
+
+export function toTaskHistoryRowWire(
+  row: TaskHistoryRow,
+): McpTaskHistoryRowWire {
+  const wire: McpTaskHistoryRowWire = {
+    seq: row.seq,
+    type: row.type,
+    bytes: row.bytes,
+  };
+  if (row.group !== undefined) wire.group = row.group;
+  if (row.title !== undefined) wire.title = row.title;
+  if (row.contentShape !== undefined) wire.content_shape = row.contentShape;
+  if (row.field !== undefined) wire.field = row.field;
+  if (row.text !== undefined) wire.text = row.text;
+  if (row.unprojected !== undefined) wire.unprojected = row.unprojected;
+  return wire;
+}
+
+export function toTaskQueryWire(
+  result: import("./api/tasks.ts").TaskQueryResult,
+): McpTaskQueryWire {
+  return {
+    task_id: result.taskId,
+    max_seq: result.maxSeq,
+    rows: result.rows.map(toTaskHistoryRowWire),
+  };
+}
+
+export function toTaskReadWire(
+  result: import("./api/tasks.ts").TaskReadResult,
+): McpTaskReadWire {
+  return {
+    task_id: result.taskId,
+    rows: result.rows,
+  };
+}
+
 function taskHistoryTooLarge(
-  value: unknown,
+  wireValue: unknown,
   limitBytes: number,
   extra: Record<string, unknown>,
 ): never {
   throw new Error(
     JSON.stringify({
       error: "response_too_large",
-      required_bytes: Buffer.byteLength(JSON.stringify(value), "utf8"),
+      required_bytes: Buffer.byteLength(JSON.stringify(wireValue), "utf8"),
       limit_bytes: limitBytes,
       ...extra,
     }),
@@ -387,19 +446,20 @@ export function buildTaskHistoryQuery(input: {
   text?: string;
 }): import("./api/tasks.ts").TaskQueryResult {
   const [start, end] = normalizeTaskHistoryRange(input.range, input.maxSeq);
-  const result = {
-    task_id: input.taskId,
-    max_seq: input.maxSeq,
+  const result: import("./api/tasks.ts").TaskQueryResult = {
+    taskId: input.taskId,
+    maxSeq: input.maxSeq,
     rows: input.events
       .filter((event) => event.seq >= start && event.seq <= end)
       .map((event) => projectTaskHistoryRow(event, input.text))
       .filter((row) => input.text === undefined || row.field !== undefined),
   };
+  const wire = toTaskQueryWire(result);
   if (
-    Buffer.byteLength(JSON.stringify(result), "utf8") >
+    Buffer.byteLength(JSON.stringify(wire), "utf8") >
     TASK_HISTORY_LIMITS.queryBytes
   ) {
-    taskHistoryTooLarge(result, TASK_HISTORY_LIMITS.queryBytes, {
+    taskHistoryTooLarge(wire, TASK_HISTORY_LIMITS.queryBytes, {
       max_seq: input.maxSeq,
       hint: { range: [-Math.min(50, input.maxSeq), -1] },
     });
@@ -431,8 +491,8 @@ export function buildTaskHistoryRead(input: {
   if (missing.length > 0) {
     throw new Error(JSON.stringify({ error: "unknown_seq", missing }));
   }
-  const result = {
-    task_id: input.taskId,
+  const result: import("./api/tasks.ts").TaskReadResult = {
+    taskId: input.taskId,
     rows: uniqueSeqs.map((seq) => {
       const event = bySeq.get(seq)!;
       return {
@@ -444,12 +504,13 @@ export function buildTaskHistoryRead(input: {
       };
     }),
   };
+  const wire = toTaskReadWire(result);
   const limit =
     uniqueSeqs.length === 1
       ? TASK_HISTORY_LIMITS.readSingleBytes
       : TASK_HISTORY_LIMITS.readBytes;
-  if (Buffer.byteLength(JSON.stringify(result), "utf8") > limit) {
-    taskHistoryTooLarge(result, limit, { seqs: uniqueSeqs });
+  if (Buffer.byteLength(JSON.stringify(wire), "utf8") > limit) {
+    taskHistoryTooLarge(wire, limit, { seqs: uniqueSeqs });
   }
   return result;
 }

@@ -6,10 +6,13 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { CapabilityStore } from "../../src/mcp/capability.ts";
-import { createMcpEndpoint } from "../../src/mcp/server.ts";
-import { createLocalTaskOps } from "../../src/host/local/adapter.ts";
+import {
+  createMcpEndpoint,
+  createMcpSessionCapabilities,
+} from "../../src/mcp/server.ts";
+import { createLocalTaskHost } from "../../src/host/local/adapter.ts";
 import { createTaskOpsCore } from "../../src/task-ops.ts";
-import { createRoutedTaskOps, createTaskHost } from "../../src/host/tasks.ts";
+import { createTaskHost } from "../../src/host/tasks.ts";
 import { HostRegistry } from "../../src/host/remote/registry.ts";
 import type { TaskOps } from "../../src/api/tasks.ts";
 import { TaskManager, type DeliveryBridge } from "../../src/task-manager.ts";
@@ -171,8 +174,10 @@ export async function startHarness(options: HarnessOptions): Promise<Harness> {
     store,
     defaultCwd: dir,
     dataDir: dir,
-    capabilities,
-    mcpBaseUrl: "http://127.0.0.1:1",
+    sessionCapabilities: createMcpSessionCapabilities(
+      capabilities,
+      "http://127.0.0.1:1",
+    ),
     state: new TaskStateManager(),
     authority,
     agents: env,
@@ -198,22 +203,18 @@ export async function startHarness(options: HarnessOptions): Promise<Harness> {
   };
 
   const createCalls: Array<"user" | "agent" | "host"> = [];
-  const localTaskOps = createLocalTaskOps({ store, tasks });
   const emptyRemote = new HostRegistry({}, { listLinks: () => [] });
   const core = createTaskOpsCore({
-    host: createTaskHost({ local: localTaskOps, remote: emptyRemote }),
+    host: createTaskHost({
+      local: createLocalTaskHost({ store, tasks }),
+      remote: emptyRemote,
+      store,
+    }),
     store,
     tasks,
   });
   const host: TaskOps = {
-    ...localTaskOps,
     ...core,
-    ...createRoutedTaskOps({
-      local: localTaskOps,
-      remote: emptyRemote,
-      store,
-      tasks,
-    }),
     async create(caller, input) {
       createCalls.push(caller.kind);
       return core.create(caller, input);

@@ -148,11 +148,7 @@ function sendHello(): void {
 }
 
 function sendVisibility(taskId: string | null = state.taskId): void {
-  sendToHub({
-    type: "visibility",
-    visible: !document.hidden,
-    taskId,
-  });
+  sendToHub({ type: "visibility", visible: !document.hidden, taskId });
 }
 
 function sendFocus(taskId: string | null): number {
@@ -546,6 +542,9 @@ function handleHubMessage(msg: HubToTabMessage): void {
   switch (msg.type) {
     case "ready":
       return;
+    case "connection_status":
+      setConnectionStatus(msg.status, msg.status);
+      return;
     case "connected":
       handleHubConnected(msg);
       return;
@@ -720,7 +719,6 @@ async function resumeFromTaskList(
 }
 
 async function initTask(connectionEpoch: number): Promise<void> {
-  setConnectionStatus("connecting", "task loading");
   const gen = state.taskSwitchGen;
   const isCurrent = () =>
     gen === state.taskSwitchGen && connectionEpoch === state.connectionEpoch;

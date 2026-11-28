@@ -21,7 +21,10 @@ import {
   createTaskManager,
 } from "../src/task-manager.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
-import { createMcpEndpoint } from "../src/mcp/server.ts";
+import {
+  createMcpEndpoint,
+  createMcpSessionCapabilities,
+} from "../src/mcp/server.ts";
 import type { ConfigOption } from "../src/types.ts";
 
 async function startMcpTestServer(
@@ -302,8 +305,7 @@ describe("TaskManager", () => {
         store,
         tmpDir,
         tmpDir,
-        capabilities,
-        mcpServer.baseUrl,
+        createMcpSessionCapabilities(capabilities, mcpServer.baseUrl),
       );
       mcpTaskManagerRef.current = mcpTaskManager;
 
@@ -354,8 +356,7 @@ describe("TaskManager", () => {
         store,
         tmpDir,
         tmpDir,
-        capabilities,
-        mcpServer.baseUrl,
+        createMcpSessionCapabilities(capabilities, mcpServer.baseUrl),
       );
       mcpTaskManagerRef.current = mcpTaskManager;
 
@@ -401,8 +402,7 @@ describe("TaskManager", () => {
         store,
         tmpDir,
         tmpDir,
-        capabilities,
-        "http://127.0.0.1:1",
+        createMcpSessionCapabilities(capabilities, "http://127.0.0.1:1"),
       );
       const bridge = {
         async newSession(_cwd: string, options?: { mcpServers?: any[] }) {
@@ -1486,8 +1486,7 @@ describe("TaskManager", () => {
         store,
         tmpDir,
         tmpDir,
-        capabilities,
-        "http://127.0.0.1:6800",
+        createMcpSessionCapabilities(capabilities, "http://127.0.0.1:6800"),
       );
 
       const bridge = {
@@ -1549,8 +1548,7 @@ describe("TaskManager", () => {
         store,
         tmpDir,
         tmpDir,
-        capabilities,
-        "http://127.0.0.1:6800",
+        createMcpSessionCapabilities(capabilities, "http://127.0.0.1:6800"),
       );
 
       const bridge = {

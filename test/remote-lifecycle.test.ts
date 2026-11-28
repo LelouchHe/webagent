@@ -8,9 +8,9 @@ import { describe, it } from "node:test";
 import { TaskRemoteCancelError } from "../src/api/tasks.ts";
 import { AuthStore } from "../src/auth-store.ts";
 import { isHostScopeAllowedPath } from "../src/auth-middleware.ts";
-import { createLocalTaskOps } from "../src/host/local/adapter.ts";
 import { HostRegistry } from "../src/host/remote/registry.ts";
-import { createRoutedTaskOps, resolveCancelTarget } from "../src/host/tasks.ts";
+import { resolveCancelTarget } from "../src/host/tasks.ts";
+import { createLocalTaskOps } from "./fixtures.ts";
 import { createRequestHandler } from "../src/http/routes.ts";
 import {
   isDeliveryLinkCategory,
@@ -298,14 +298,8 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       const agentRoute = resolveCancelTarget(
         {
           kind: "agent",
-          principal: {
-            taskId: "p1",
-            agentId: "pi",
-            generation: 1,
-            initializing: false,
-          },
+          sourceTaskId: "p1",
           targetTaskId: "r1",
-          reason: "stop",
         },
         store,
         registry,
@@ -315,14 +309,8 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
         resolveCancelTarget(
           {
             kind: "agent",
-            principal: {
-              taskId: root.id,
-              agentId: "pi",
-              generation: 1,
-              initializing: false,
-            },
+            sourceTaskId: root.id,
             targetTaskId: "r1",
-            reason: "stop",
           },
           store,
           registry,
@@ -332,11 +320,8 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
 
       // Regression guard: host cancel never forwards
       assert.equal(
-        resolveCancelTarget(
-          { kind: "host", taskId: "r1", actor: { kind: "user" } },
-          store,
-          registry,
-        ).kind,
+        resolveCancelTarget({ kind: "host", taskId: "r1" }, store, registry)
+          .kind,
         "local",
       );
     } finally {
@@ -376,20 +361,12 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
         creationAnchor: { kind: "task_created", taskId: "r1" },
       });
 
-      const ownerLocalOps = createLocalTaskOps({
+      const ownerRemote = new HostRegistry({}, { listLinks: () => [] });
+      const ownerTaskOps = createLocalTaskOps({
         store: owner.store,
         tasks: owner.tasks,
+        remote: ownerRemote,
       });
-      const ownerRemote = new HostRegistry({}, { listLinks: () => [] });
-      const ownerTaskOps = {
-        ...ownerLocalOps,
-        ...createRoutedTaskOps({
-          local: ownerLocalOps,
-          remote: ownerRemote,
-          store: owner.store,
-          tasks: owner.tasks,
-        }),
-      };
       ownerServer = await startTestServer(
         createRequestHandler({
           attachmentSecret: Buffer.alloc(32, 7),
@@ -445,19 +422,11 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
             })),
         },
       );
-      const hubLocalOps = createLocalTaskOps({
+      const hubTaskOps = createLocalTaskOps({
         store: hub.store,
         tasks: hub.tasks,
+        remote: hubRegistry,
       });
-      const hubTaskOps = {
-        ...hubLocalOps,
-        ...createRoutedTaskOps({
-          local: hubLocalOps,
-          remote: hubRegistry,
-          store: hub.store,
-          tasks: hub.tasks,
-        }),
-      };
       hubServer = await startTestServer(
         createRequestHandler({
           attachmentSecret: Buffer.alloc(32, 7),
@@ -547,10 +516,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       const agentRes = await hubTaskOps.cancel({
         kind: "agent",
         principal: {
+          kind: "agent",
           taskId: "p1",
           agentId: "pi",
           generation: p1Lease.generation,
-          initializing: false,
         },
         targetTaskId: "r1",
         reason: "no longer needed",
@@ -576,10 +545,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
           hubTaskOps.cancel({
             kind: "agent",
             principal: {
+              kind: "agent",
               taskId: "p2",
               agentId: "pi",
               generation: p2Lease.generation,
-              initializing: false,
             },
             targetTaskId: "r1",
             reason: "not my child",
@@ -597,10 +566,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
           hubTaskOps.cancel({
             kind: "agent",
             principal: {
+              kind: "agent",
               taskId: "p1",
               agentId: "pi",
               generation: staleGen,
-              initializing: false,
             },
             targetTaskId: "r1",
             reason: "stale before",
@@ -620,10 +589,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
           hubTaskOps.cancel({
             kind: "agent",
             principal: {
+              kind: "agent",
               taskId: "p1",
               agentId: "pi",
               generation: freshLease.generation,
-              initializing: false,
             },
             targetTaskId: "r1",
             reason: "rotated mid-flight",
@@ -642,10 +611,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       const recovered = await hubTaskOps.cancel({
         kind: "agent",
         principal: {
+          kind: "agent",
           taskId: "p1",
           agentId: "pi",
           generation: activeLease.generation,
-          initializing: false,
         },
         targetTaskId: "r1",
         reason: "response dropped once",
@@ -666,10 +635,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
           hubTaskOps.cancel({
             kind: "agent",
             principal: {
+              kind: "agent",
               taskId: "p1",
               agentId: "pi",
               generation: activeLease.generation,
-              initializing: false,
             },
             targetTaskId: "r1",
             reason: "response dropped persistently",
@@ -751,28 +720,20 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
             })),
         },
       );
-      const hubLocalOps = createLocalTaskOps({
+      const hubTaskOps = createLocalTaskOps({
         store: hub.store,
         tasks: hub.tasks,
+        remote: hubRegistry,
       });
-      const hubTaskOps = {
-        ...hubLocalOps,
-        ...createRoutedTaskOps({
-          local: hubLocalOps,
-          remote: hubRegistry,
-          store: hub.store,
-          tasks: hub.tasks,
-        }),
-      };
 
       const lease = hub.tasks.authority.leaseFor("p1")!;
       const pendingCancel = hubTaskOps.cancel({
         kind: "agent",
         principal: {
+          kind: "agent",
           taskId: "p1",
           agentId: "pi",
           generation: lease.generation,
-          initializing: false,
         },
         targetTaskId: "r1",
         reason: "rotated while resolving token",
@@ -819,19 +780,11 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
         title: "Remote Worker",
         creationAnchor: { kind: "task_created", taskId: "r1" },
       });
-      const ownerLocalOps = createLocalTaskOps({
+      const ownerTaskOps = createLocalTaskOps({
         store: owner.store,
         tasks: owner.tasks,
+        remote: new HostRegistry({}, { listLinks: () => [] }),
       });
-      const ownerTaskOps = {
-        ...ownerLocalOps,
-        ...createRoutedTaskOps({
-          local: ownerLocalOps,
-          remote: new HostRegistry({}, { listLinks: () => [] }),
-          store: owner.store,
-          tasks: owner.tasks,
-        }),
-      };
       ownerServer = await startTestServer(
         createRequestHandler({
           attachmentSecret: Buffer.alloc(32, 7),
@@ -877,29 +830,21 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
             })),
         },
       );
-      const hubLocalOps = createLocalTaskOps({
+      const hubTaskOps = createLocalTaskOps({
         store: hub.store,
         tasks: hub.tasks,
+        remote: hubRegistry,
       });
-      const hubTaskOps = {
-        ...hubLocalOps,
-        ...createRoutedTaskOps({
-          local: hubLocalOps,
-          remote: hubRegistry,
-          store: hub.store,
-          tasks: hub.tasks,
-        }),
-      };
 
       const lease = hub.tasks.authority.leaseFor("p1")!;
       // Fix 2: 257-character title is bounded to 256 chars and succeeds (not 400).
       const ok = await hubTaskOps.cancel({
         kind: "agent",
         principal: {
+          kind: "agent",
           taskId: "p1",
           agentId: "pi",
           generation: lease.generation,
-          initializing: false,
         },
         targetTaskId: "r1",
         reason: "long title test",
@@ -916,10 +861,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       const okEmoji = await hubTaskOps.cancel({
         kind: "agent",
         principal: {
+          kind: "agent",
           taskId: "p1",
           agentId: "pi",
           generation: lease.generation,
-          initializing: false,
         },
         targetTaskId: "r1",
         reason: "surrogate pair boundary",
@@ -935,10 +880,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       await hubTaskOps.cancel({
         kind: "agent",
         principal: {
+          kind: "agent",
           taskId: "p1",
           agentId: "pi",
           generation: lease.generation,
-          initializing: false,
         },
         targetTaskId: "r1",
         reason: "exact 256 surrogate pair",
@@ -959,10 +904,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
             hubTaskOps.cancel({
               kind: "agent",
               principal: {
+                kind: "agent",
                 taskId: "p1",
                 agentId: "pi",
                 generation: lease.generation,
-                initializing: false,
               },
               targetTaskId: "r1",
               reason: "mismatched status pair",

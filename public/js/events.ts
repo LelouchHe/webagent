@@ -18,7 +18,6 @@ import {
   setHashTaskId,
   installTaskAgentId,
   updateTaskInfo,
-  setConnectionStatus,
   syncInputEnabled,
   clearCancelTimer,
   onTaskReset,
@@ -2132,7 +2131,6 @@ export function handleEvent(
       setHashTaskId(state.taskId);
       taskFocusNotifier?.(state.taskId);
       updateTaskInfo(state.taskId, state.taskTitle);
-      setConnectionStatus("connected", "connected");
       syncInputEnabled();
       dom.sendBtn.disabled = false;
       // Placeholder is owned by updateModeUI (called above). No literal here.

@@ -9,9 +9,7 @@ import { createRequestHandler } from "../src/http/routes.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
-import { createLocalTaskOps } from "../src/host/local/adapter.ts";
-import { createTaskOpsCore } from "../src/task-ops.ts";
-import { createTaskHost } from "../src/host/tasks.ts";
+import { createLocalTaskOps } from "./fixtures.ts";
 import { buildTaskCreatedSystemMessage } from "../src/task-created-message.ts";
 import { mockBridgeStubs, waitFor } from "./fixtures.ts";
 import type { ConfigOption } from "../src/types.ts";
@@ -110,28 +108,18 @@ describe("S3 collaboration write routes", () => {
       },
     };
     tasks.attachExecutionBridge(bridge);
-    const localTaskOps = createLocalTaskOps({
+    const taskOps = createLocalTaskOps({
       store,
       tasks,
-    });
-    const taskOps = {
-      ...localTaskOps,
-      ...createTaskOpsCore({
-        host: createTaskHost({
-          local: localTaskOps,
-          remote: {
-            create: async () => {
-              throw new Error("unexpected remote create");
-            },
-          },
-        }),
-        store,
-        tasks,
-        broadcastConfigUpdate: (event) => {
-          broadcasts.push(event);
+      remote: {
+        create: async () => {
+          throw new Error("unexpected remote create");
         },
-      }),
-    };
+      },
+      broadcastConfigUpdate: (event) => {
+        broadcasts.push(event);
+      },
+    });
     const handler = createRequestHandler({
       attachmentSecret: Buffer.alloc(32, 7),
       sseManager: Object.assign(new SseManager(), {
@@ -272,43 +260,33 @@ describe("S3 collaboration write routes", () => {
 
     // The agent path writes into the same stream through the same builder, so
     // both initiators produce one identical row shape.
-    const localHost = createLocalTaskOps({
+    const host = createLocalTaskOps({
       store,
       tasks,
-    });
-    const host = createTaskOpsCore({
-      host: createTaskHost({
-        local: localHost,
-        remote: {
-          create: async () => ({
-            task: {
-              id: "unexpected",
-              title: null,
-              agentId: "unexpected",
-              cwd: tmpDir,
-              model: null,
-              thinking: null,
-              parentId: null,
-              workflowStatus: "idle" as const,
-              source: "agent",
-            },
-          }),
-        },
-      }),
-      store,
-      tasks,
+      remote: {
+        create: async () => ({
+          task: {
+            id: "unexpected",
+            title: null,
+            agentId: "unexpected",
+            cwd: tmpDir,
+            model: null,
+            thinking: null,
+            parentId: null,
+            workflowStatus: "idle" as const,
+            source: "agent",
+          },
+        }),
+      },
     });
     const parentLease = tasks.authority.leaseFor("parent");
     assert.ok(parentLease, "the parent task must have a generation");
     await host.create(
       {
         kind: "agent",
-        principal: {
-          taskId: "parent",
-          agentId: "test-agent",
-          generation: parentLease.generation,
-          initializing: false,
-        },
+        taskId: "parent",
+        agentId: "test-agent",
+        generation: parentLease.generation,
       },
       {
         title: "agent-child",

@@ -14,7 +14,7 @@ import { Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/http/routes.ts";
-import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import { createLocalTaskHost } from "../src/host/local/adapter.ts";
 import { createTaskHost } from "../src/host/tasks.ts";
 import { createTaskOpsCore } from "../src/task-ops.ts";
 import type { ConfigOption, AgentEvent } from "../src/types.ts";
@@ -144,25 +144,22 @@ describe("Task REST API", () => {
     bodyReadStarted = new Promise<string>((resolve) => {
       markBodyReadStarted = resolve;
     });
-    const localTaskOps = createLocalTaskOps({ store, tasks });
-    const taskOps = {
-      ...localTaskOps,
-      ...createTaskOpsCore({
-        host: createTaskHost({
-          local: localTaskOps,
-          remote: {
-            async create() {
-              throw new Error("unexpected remote create");
-            },
+    const taskOps = createTaskOpsCore({
+      host: createTaskHost({
+        local: createLocalTaskHost({ store, tasks }),
+        remote: {
+          async create() {
+            throw new Error("unexpected remote create");
           },
-        }),
-        store,
-        tasks,
-        broadcastConfigUpdate: (event) => {
-          broadcastEvents.push(event);
         },
+        store,
       }),
-    };
+      store,
+      tasks,
+      broadcastConfigUpdate: (event) => {
+        broadcastEvents.push(event);
+      },
+    });
 
     const handler = createRequestHandler({
       attachmentSecret: Buffer.alloc(32, 7),

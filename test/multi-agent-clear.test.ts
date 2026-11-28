@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { AgentBridge } from "../src/bridge.ts";
 import { AgentRegistry } from "../src/agent-registry.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
+import { createMcpSessionCapabilities } from "../src/mcp/server.ts";
 import { ExecutionAuthority } from "../src/execution-authority.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { Store } from "../src/store.ts";
@@ -102,8 +103,10 @@ describe("clear onto another agent", () => {
       store,
       defaultCwd: dir,
       dataDir: dir,
-      capabilities: new CapabilityStore(),
-      mcpBaseUrl: "http://127.0.0.1:6800",
+      sessionCapabilities: createMcpSessionCapabilities(
+        new CapabilityStore(),
+        "http://127.0.0.1:6800",
+      ),
       state: new TaskStateManager(),
       authority,
       agents: registry,

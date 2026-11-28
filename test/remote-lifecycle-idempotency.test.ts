@@ -9,19 +9,18 @@ import { TaskRemoteCancelError } from "../src/api/tasks.ts";
 import { AgentRegistry } from "../src/agent-registry.ts";
 import { AuthStore } from "../src/auth-store.ts";
 import { ExecutionAuthority } from "../src/execution-authority.ts";
-import { createLocalTaskOps } from "../src/host/local/adapter.ts";
 import { HostConnection } from "../src/host/remote/connection.ts";
 import { HostRegistry } from "../src/host/remote/registry.ts";
-import { createRoutedTaskOps } from "../src/host/tasks.ts";
 import { createRequestHandler } from "../src/http/routes.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
+import { createMcpSessionCapabilities } from "../src/mcp/server.ts";
 import { withRequestErrorBoundary } from "../src/request-boundary.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { Store } from "../src/store.ts";
 import { TaskRemoteDeleteError } from "../src/task-delete.ts";
 import { TaskManager } from "../src/task-manager.ts";
 import { TaskStateManager } from "../src/task-state.ts";
-import { mockBridgeStubs } from "./fixtures.ts";
+import { createLocalTaskOps, mockBridgeStubs } from "./fixtures.ts";
 
 interface HostNode {
   dir: string;
@@ -62,8 +61,10 @@ async function createNode(prefix: string): Promise<HostNode> {
     store,
     defaultCwd: dir,
     dataDir: dir,
-    capabilities: new CapabilityStore(),
-    mcpBaseUrl: "http://127.0.0.1:0",
+    sessionCapabilities: createMcpSessionCapabilities(
+      new CapabilityStore(),
+      "http://127.0.0.1:0",
+    ),
     state: new TaskStateManager(),
     authority: new ExecutionAuthority(),
     agents,
@@ -225,19 +226,11 @@ describe("Remote lifecycle idempotency: HostConnection single-hop retries, befor
     hub.tasks.setRemoteTaskDeleter((host, taskId, beforeSend) =>
       hubRegistry.deleteRemote(host, taskId, beforeSend),
     );
-    const hubLocalOps = createLocalTaskOps({
+    const hubTaskOps = createLocalTaskOps({
       store: hub.store,
       tasks: hub.tasks,
+      remote: hubRegistry,
     });
-    const hubTaskOps = {
-      ...hubLocalOps,
-      ...createRoutedTaskOps({
-        local: hubLocalOps,
-        remote: hubRegistry,
-        store: hub.store,
-        tasks: hub.tasks,
-      }),
-    };
     const hubHttp = await startHttp(
       createRequestHandler({
         attachmentSecret: Buffer.alloc(32, 7),
@@ -298,10 +291,10 @@ describe("Remote lifecycle idempotency: HostConnection single-hop retries, befor
     const mcpCancelRes = await hubTaskOps.cancel({
       kind: "agent",
       principal: {
+        kind: "agent",
         taskId: "p1",
         agentId: "mock",
         generation: lease.generation,
-        initializing: false,
       },
       targetTaskId: "r2",
       reason: "mcp cancel drop recovery",
@@ -396,28 +389,20 @@ describe("Remote lifecycle idempotency: HostConnection single-hop retries, befor
           })),
       },
     );
-    const cancelLocalOps = createLocalTaskOps({
+    const cancelHubOps = createLocalTaskOps({
       store: cancelHub.store,
       tasks: cancelHub.tasks,
+      remote: cancelHubRegistry,
     });
-    const cancelHubOps = {
-      ...cancelLocalOps,
-      ...createRoutedTaskOps({
-        local: cancelLocalOps,
-        remote: cancelHubRegistry,
-        store: cancelHub.store,
-        tasks: cancelHub.tasks,
-      }),
-    };
     await assert.rejects(
       () =>
         cancelHubOps.cancel({
           kind: "agent",
           principal: {
+            kind: "agent",
             taskId: "p1",
             agentId: "mock",
             generation: leaseBeforeRotate.generation,
-            initializing: false,
           },
           targetTaskId: "r1",
           reason: "stop after rotation",

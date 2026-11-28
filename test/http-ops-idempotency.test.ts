@@ -11,10 +11,11 @@ import { AgentRegistry } from "../src/agent-registry.ts";
 import { AuthStore } from "../src/auth-store.ts";
 import { ExecutionAuthority } from "../src/execution-authority.ts";
 import { LinkSyncOwner } from "../src/host/link-sync.ts";
-import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import { createLocalTaskHost } from "../src/host/local/adapter.ts";
 import { createTaskHost } from "../src/host/tasks.ts";
 import { createRequestHandler } from "../src/http/routes.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
+import { createMcpSessionCapabilities } from "../src/mcp/server.ts";
 import {
   OPS_NAMESPACE,
   opIdentity,
@@ -119,8 +120,10 @@ async function createHarness(
     store,
     defaultCwd: dir,
     dataDir: dir,
-    capabilities: new CapabilityStore(),
-    mcpBaseUrl: "http://127.0.0.1:0",
+    sessionCapabilities: createMcpSessionCapabilities(
+      new CapabilityStore(),
+      "http://127.0.0.1:0",
+    ),
     state: new TaskStateManager(),
     authority: new ExecutionAuthority(),
     agents,
@@ -137,22 +140,19 @@ async function createHarness(
     return origEnsureResumed(bridge, taskId);
   };
 
-  const local = createLocalTaskOps({ store, tasks });
-  const taskOps = {
-    ...local,
-    ...createTaskOpsCore({
-      host: createTaskHost({
-        local,
-        remote: {
-          async create() {
-            throw new Error("no remote relay");
-          },
+  const taskOps = createTaskOpsCore({
+    host: createTaskHost({
+      local: createLocalTaskHost({ store, tasks }),
+      remote: {
+        async create() {
+          throw new Error("no remote relay");
         },
-      }),
+      },
       store,
-      tasks,
     }),
-  };
+    store,
+    tasks,
+  });
 
   const authStore = new AuthStore(join(dir, "auth.json"));
   await authStore.load();

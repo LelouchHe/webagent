@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 import { Store } from "../src/store.ts";
 import { createTaskManager } from "../src/task-manager.ts";
-import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import { createLocalTaskOps } from "./fixtures.ts";
 import type { AgentEvent, StoredEvent } from "../src/types.ts";
 
 /* eslint-disable @typescript-eslint/no-unsafe-function-type -- Promise resolver pattern uses generic Function type */
@@ -123,8 +123,9 @@ describe("events", () => {
         assert.equal(state.taskCwd, "/home");
         assert.equal(state.taskTitle, "Test Task");
         assert.equal(state.awaitingNewTask, false);
-        assert.equal(dom.status.dataset.state, "connected");
-        assert.equal(dom.status.getAttribute("aria-label"), "connected");
+        // Connection indicator is owned exclusively by the SSE lifecycle,
+        // not by task_created / REST task bootstrap.
+        assert.equal(dom.status.dataset.state, "disconnected");
       });
 
       it("recovers a committed create when its HTTP response is interrupted", async () => {
@@ -3140,10 +3141,10 @@ describe("events", () => {
         await host.cancel({
           kind: "agent",
           principal: {
+            kind: "agent",
             taskId: source.id,
             agentId: "test-agent",
             generation: lease.generation,
-            initializing: false,
           },
           targetTaskId: child.id,
           reason: "no longer needed",

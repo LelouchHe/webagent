@@ -4,14 +4,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import { createLocalTaskOps, waitFor } from "./fixtures.ts";
 import {
   LinkSyncHubConsumer,
   LinkSyncHubPusher,
   LinkSyncOwner,
 } from "../src/host/link-sync.ts";
 import { HostRegistry } from "../src/host/remote/registry.ts";
-import { createRoutedTaskOps } from "../src/host/tasks.ts";
 import { ObligationController } from "../src/obligation-controller.ts";
 import type {
   SyncFeedEntry,
@@ -478,22 +477,17 @@ describe("local vs linked delivery parity (Scenario 9)", () => {
       "failed",
     );
 
-    const ownerLocalOps = createLocalTaskOps({
+    const ownerRouted = createLocalTaskOps({
       store: ownerStore,
       tasks: ownerTasks,
-    });
-    const ownerRouted = createRoutedTaskOps({
-      local: ownerLocalOps,
       remote: new HostRegistry({}, { listLinks: () => [] }),
-      store: ownerStore,
-      tasks: ownerTasks,
     });
     const revOut = await ownerRouted.send(
       {
+        kind: "agent",
         taskId: "c-owner",
         agentId: "test-agent",
         generation: ownerTasks.authority.leaseFor("c-owner")!.generation,
-        initializing: false,
       },
       "p-hub",
       "reverse",
@@ -539,35 +533,29 @@ describe("local vs linked delivery parity (Scenario 9)", () => {
     });
     await localOps.send(
       {
+        kind: "agent",
         taskId: "c-local",
         agentId: "test-agent",
         generation: localTasks.authority.leaseFor("c-local")!.generation,
-        initializing: false,
       },
       "p-local",
       "hello parent",
     );
-    assert.equal(
-      await localTasks.drainCollaborationDeliveries("p-local", localBridge),
-      true,
-    );
-
-    const ownerLocalOps = createLocalTaskOps({
-      store: ownerStore,
-      tasks: ownerTasks,
+    await waitFor(() => localPrompts.length === 1, {
+      message: "local send must drain through the attached bridge",
     });
-    const ownerRouted = createRoutedTaskOps({
-      local: ownerLocalOps,
-      remote: new HostRegistry({}, { listLinks: () => [] }),
+
+    const ownerRouted = createLocalTaskOps({
       store: ownerStore,
       tasks: ownerTasks,
+      remote: new HostRegistry({}, { listLinks: () => [] }),
     });
     const sent = await ownerRouted.send(
       {
+        kind: "agent",
         taskId: "c-owner",
         agentId: "test-agent",
         generation: ownerTasks.authority.leaseFor("c-owner")!.generation,
-        initializing: false,
       },
       "p-hub",
       "hello parent",

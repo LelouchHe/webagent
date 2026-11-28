@@ -79,7 +79,7 @@ describe("background warm-up", () => {
     dir = mkdtempSync(join(tmpdir(), "webagent-warm-"));
     store = new Store(dir);
     store.ensureRootTask(dir);
-    tasks = createTaskManager(store, dir, dir, undefined, undefined, "agent-a");
+    tasks = createTaskManager(store, dir, dir, undefined, "agent-a");
     warmed = [];
     tasks.setRuntimeWarmBroadcast((event) => warmed.push(event));
   });

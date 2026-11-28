@@ -2,9 +2,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServer as AcpMcpServer } from "@agentclientprotocol/sdk";
-import type { TaskCaller, TaskOps } from "../api/tasks.ts";
+import type { AgentCaller, TaskOps } from "../api/tasks.ts";
 import type { CapabilityStore } from "./capability.ts";
-import { registerMcpTools } from "./tools.ts";
+import { registerMcpTools, type McpToolPrincipal } from "./tools.ts";
 import { HTTP_STATUS } from "../http-status.ts";
 
 /**
@@ -65,6 +65,52 @@ export function buildMcpServerEntry(
     // generic direct-tools hint into the adapter's internal setting; agents
     // that do not understand it can safely ignore the metadata.
     _meta: { directTools: true },
+  };
+}
+
+/**
+ * Assemble the narrow session-capability port injected into `TaskManager`.
+ * Shares the same `CapabilityStore` with `createMcpEndpoint` while keeping
+ * `TaskManager` free of direct `mcp/` imports.
+ */
+export function createMcpSessionCapabilities(
+  capabilities: CapabilityStore,
+  mcpBaseUrl: string,
+): {
+  issue(input: {
+    taskId: string;
+    agentId: string;
+    mode: "attach" | "replace" | "restore";
+    generation: number | null;
+  }): { token: string; servers: AcpMcpServer[] };
+  promote(token: string, generation: number): void;
+  revoke(token: string): void;
+  revokeByTask(taskId: string): void;
+  revokeOtherTokens(taskId: string, keepToken: string): void;
+} {
+  return {
+    issue({ taskId, agentId, mode, generation }) {
+      const token =
+        mode === "restore"
+          ? capabilities.mint(taskId, agentId, generation)
+          : capabilities.mintInitializing(taskId, agentId);
+      return {
+        token,
+        servers: [buildMcpServerEntry(token, mcpBaseUrl)],
+      };
+    },
+    promote(token, generation) {
+      capabilities.promote(token, generation);
+    },
+    revoke(token) {
+      capabilities.revoke(token);
+    },
+    revokeByTask(taskId) {
+      capabilities.revokeByTask(taskId);
+    },
+    revokeOtherTokens(taskId, keepToken) {
+      capabilities.revokeOtherTokens(taskId, keepToken);
+    },
   };
 }
 
@@ -175,10 +221,14 @@ export function createMcpEndpoint(
     // one the *token* was minted for, never the task's current value — an old
     // token must not ride a newer execution. The host owns the validation
     // (it has the store and the authority); this layer only builds the value.
-    const principal: TaskCaller = Object.freeze({
+    const caller: AgentCaller = Object.freeze({
+      kind: "agent",
       taskId: grant.taskId,
       agentId: grant.agentId,
       generation: grant.generation,
+    });
+    const principal: McpToolPrincipal = Object.freeze({
+      caller,
       initializing,
     });
     const server = new McpServer(

@@ -11,9 +11,12 @@ import { TaskStateManager } from "./task-state.ts";
 import { AgentRegistry } from "./agent-registry.ts";
 import { ExecutionAuthority } from "./execution-authority.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
-import { createMcpEndpoint } from "./mcp/server.ts";
-import { createLocalTaskOps } from "./host/local/adapter.ts";
-import { createRoutedTaskOps, createTaskHost } from "./host/tasks.ts";
+import {
+  createMcpEndpoint,
+  createMcpSessionCapabilities,
+} from "./mcp/server.ts";
+import { createLocalTaskHost } from "./host/local/adapter.ts";
+import { createTaskHost } from "./host/tasks.ts";
 import {
   LinkSyncHubConsumer,
   LinkSyncHubPusher,
@@ -159,8 +162,7 @@ const tasks = new TaskManager({
   store,
   defaultCwd: config.default_cwd,
   dataDir: config.data_dir,
-  capabilities,
-  mcpBaseUrl,
+  sessionCapabilities: createMcpSessionCapabilities(capabilities, mcpBaseUrl),
   state: taskState,
   authority: executionAuthority,
   agents: agentRegistry,
@@ -306,15 +308,15 @@ tasks.setRuntimeWarmBroadcast((event) => {
 tasks.setTaskCreatedBroadcast((event) => {
   sseManager.broadcast(event);
 });
-const localTaskOps = createLocalTaskOps({
-  store,
-  tasks,
-  cancelTimeoutMs: config.limits.cancel_timeout,
-});
-const taskOps = createTaskOpsCore({
+const taskOps: TaskOps = createTaskOpsCore({
   host: createTaskHost({
-    local: localTaskOps,
+    local: createLocalTaskHost({
+      store,
+      tasks,
+      cancelTimeoutMs: config.limits.cancel_timeout,
+    }),
     remote: hostRegistry,
+    store,
   }),
   store,
   tasks,
@@ -322,16 +324,6 @@ const taskOps = createTaskOpsCore({
     sseManager.broadcast(event);
   },
 });
-const routedTaskOps: TaskOps = {
-  ...localTaskOps,
-  ...taskOps,
-  ...createRoutedTaskOps({
-    local: localTaskOps,
-    remote: hostRegistry,
-    store,
-    tasks,
-  }),
-};
 tasks.setRemoteChildWakeSource((taskId) => hostRegistry.hasRemoteChild(taskId));
 if (hostRegistry.hasConnections()) {
   tasks.setRemoteTaskDeleter((host, taskId, beforeSend) =>
@@ -352,7 +344,7 @@ let sharePreviewCleanup: SharePreviewCleanupHandle | null = null;
 const requestHandler = createRequestHandler({
   store,
   tasks,
-  taskOps: routedTaskOps,
+  taskOps,
   linkSyncOwner,
   sseManager,
   clientRegistry,
@@ -371,7 +363,7 @@ const requestHandler = createRequestHandler({
   mcpEndpoint: createMcpEndpoint({
     capabilities,
     isTaskActive: (taskId) => tasks.isMcpSessionActive(taskId),
-    taskTools: routedTaskOps,
+    taskTools: taskOps,
     // Discovery for `task_create(agent: …)` comes from the running
     // configuration, not from a static schema that would have to be rebuilt by
     // hand whenever an agent is added.

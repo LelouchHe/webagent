@@ -7,9 +7,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { CapabilityStore } from "../src/mcp/capability.ts";
-import { createMcpEndpoint } from "../src/mcp/server.ts";
-import type { TaskCaller, TaskOps } from "../src/api/tasks.ts";
-import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import {
+  createMcpEndpoint,
+  createMcpSessionCapabilities,
+} from "../src/mcp/server.ts";
+import type { AgentCaller, TaskOps } from "../src/api/tasks.ts";
+import { createLocalTaskOps } from "./fixtures.ts";
 import { TaskManager, type DeliveryBridge } from "../src/task-manager.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { StaticAgentEnvironment } from "../src/agent-registry.ts";
@@ -178,8 +181,10 @@ describe("mcp authority over the production host", () => {
       store,
       defaultCwd: dir,
       dataDir: dir,
-      capabilities,
-      mcpBaseUrl: "http://127.0.0.1:1",
+      sessionCapabilities: createMcpSessionCapabilities(
+        capabilities,
+        "http://127.0.0.1:1",
+      ),
       state: new TaskStateManager(),
       authority,
       agents: new StaticAgentEnvironment("agent-a"),
@@ -200,15 +205,15 @@ describe("mcp authority over the production host", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  /** The principal the endpoint builds for one token. */
-  function principalFor(token: string): TaskCaller {
+  /** The caller principal the endpoint builds for one token. */
+  function principalFor(token: string): AgentCaller {
     const grant = capabilities.resolve(token);
     assert.ok(grant, "the token must resolve");
     return Object.freeze({
+      kind: "agent",
       taskId: grant.taskId,
       agentId: grant.agentId,
       generation: grant.generation,
-      initializing: grant.state === "initializing",
     });
   }
 
@@ -529,16 +534,13 @@ describe("mcp authority over the production host", () => {
       return [modelOption];
     };
 
-    const pending = host.create(
-      { kind: "agent", principal: principalFor(token) },
-      {
-        title: "kept child",
-        parentId: source.taskId,
-        inheritFromTaskId: source.taskId,
-        source: "agent",
-        opId: null,
-      },
-    );
+    const pending = host.create(principalFor(token), {
+      title: "kept child",
+      parentId: source.taskId,
+      inheritFromTaskId: source.taskId,
+      source: "agent",
+      opId: null,
+    });
     await inInherit;
     // The source rotates while the child's inheritance is still in flight.
     await tasks.clearTask(bridge, source.taskId);

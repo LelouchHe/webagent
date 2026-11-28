@@ -795,6 +795,177 @@ describe("contract-08 browser sync mechanisms", () => {
       });
       assert.deepEqual(visPosts.at(-1), ["task-nav"]);
     });
+
+    it("broadcasts connecting on dial/reconnect, notifies late tabs joining mid-dial, and resets to disconnected on ticket failure", async () => {
+      let resolveTicket: ((res: Response) => void) | null = null;
+      let activeEs: {
+        onmessage?: ((ev: MessageEvent) => void) | null;
+        onerror?: (() => void) | null;
+        close: () => void;
+      } | null = null;
+      const scheduledTimers: Array<{ cb: () => void; ms: number }> = [];
+
+      class FakeES {
+        onmessage: ((ev: MessageEvent) => void) | null = null;
+        onerror: (() => void) | null = null;
+        constructor() {
+          // eslint-disable-next-line @typescript-eslint/no-this-alias
+          activeEs = this;
+        }
+        addEventListener() {}
+        close() {}
+      }
+
+      const hub = new SyncHub({
+        EventSourceImpl: FakeES as unknown as typeof EventSource,
+        fetchImpl: ((url: string) => {
+          if (url.includes("/sse-ticket")) {
+            return new Promise<Response>((resolve) => {
+              resolveTicket = resolve;
+            });
+          }
+          return Promise.resolve({
+            ok: true,
+            status: 204,
+            json: async () => ({}),
+          } as Response);
+        }) as typeof fetch,
+        clock: {
+          now: () => 1_000,
+          setTimeout: (cb, ms) => {
+            scheduledTimers.push({ cb, ms });
+            return scheduledTimers.length;
+          },
+          clearTimeout: () => {},
+          setInterval: () => 0,
+          clearInterval: () => {},
+        },
+      });
+
+      const tab1 = createDirectPortPair();
+      const tab1Msgs: HubToTabMessage[] = [];
+      tab1.tabPort.onMessage((m) => tab1Msgs.push(m));
+      hub.attach(tab1.hubPort);
+      tab1.tabPort.postMessage({
+        type: "hello",
+        token: "tok",
+        visible: true,
+        taskId: "t1",
+      });
+
+      // Dialing started -> tab1 sees connecting indicator.
+      assert.equal(
+        tab1Msgs.some(
+          (m) => m.type === "connection_status" && m.status === "connecting",
+        ),
+        true,
+        "initial dial must broadcast connecting status",
+      );
+
+      // A second tab joins while the first dial is still awaiting /sse-ticket.
+      const tab2 = createDirectPortPair();
+      const tab2Msgs: HubToTabMessage[] = [];
+      tab2.tabPort.onMessage((m) => tab2Msgs.push(m));
+      hub.attach(tab2.hubPort);
+      tab2.tabPort.postMessage({
+        type: "hello",
+        token: "tok",
+        visible: true,
+        taskId: "t1",
+      });
+      assert.equal(
+        tab2Msgs.filter(
+          (m) => m.type === "connection_status" && m.status === "connecting",
+        ).length,
+        1,
+        "tab joining while connecting must receive connecting immediately",
+      );
+
+      // First dial fails (500 before EventSource) -> indicator-only disconnected
+      // (NOT physical `disconnected` that would abort initial bootstrap).
+      resolveTicket!({
+        ok: false,
+        status: 500,
+        json: async () => ({}),
+      } as Response);
+      await new Promise((r) => setTimeout(r, 10));
+      assert.deepEqual(tab1Msgs.at(-1), {
+        type: "connection_status",
+        status: "disconnected",
+        authGen: 1,
+      });
+      assert.deepEqual(tab2Msgs.at(-1), {
+        type: "connection_status",
+        status: "disconnected",
+        authGen: 1,
+      });
+      assert.equal(
+        tab1Msgs.some((m) => m.type === "disconnected"),
+        false,
+        "failed /sse-ticket before handshake must not emit physical disconnected",
+      );
+
+      // A third tab joins during retry backoff -> immediately sees red (disconnected) indicator.
+      const tab3 = createDirectPortPair();
+      const tab3Msgs: HubToTabMessage[] = [];
+      tab3.tabPort.onMessage((m) => tab3Msgs.push(m));
+      hub.attach(tab3.hubPort);
+      tab3.tabPort.postMessage({
+        type: "hello",
+        token: "tok",
+        visible: true,
+        taskId: "t1",
+      });
+      assert.deepEqual(
+        tab3Msgs.at(-1),
+        {
+          type: "connection_status",
+          status: "disconnected",
+          authGen: 1,
+        },
+        "tab joining during retry backoff must immediately receive disconnected status",
+      );
+
+      // Backoff timer fires -> all tabs see connecting again.
+      const retry = scheduledTimers.pop();
+      assert.ok(retry, "backoff timer must be scheduled after failed ticket");
+      retry.cb();
+      assert.deepEqual(tab1Msgs.at(-1), {
+        type: "connection_status",
+        status: "connecting",
+        authGen: 1,
+      });
+      assert.deepEqual(tab2Msgs.at(-1), {
+        type: "connection_status",
+        status: "connecting",
+        authGen: 1,
+      });
+      assert.deepEqual(tab3Msgs.at(-1), {
+        type: "connection_status",
+        status: "connecting",
+        authGen: 1,
+      });
+
+      // Ticket resolves and handshake arrives -> all tabs see connected.
+      resolveTicket!({
+        ok: true,
+        status: 200,
+        json: async () => ({ ticket: "tk-2" }),
+      } as Response);
+      await new Promise((r) => setTimeout(r, 10));
+      activeEs!.onmessage?.({
+        data: JSON.stringify({
+          type: "connected",
+          clientId: "c-9",
+          pendingCount: 0,
+        }),
+      } as MessageEvent);
+      assert.equal(tab1Msgs.at(-1)?.type, "connected");
+      assert.equal(tab2Msgs.at(-1)?.type, "connected");
+      assert.equal(tab3Msgs.at(-1)?.type, "connected");
+
+      hub.dispose();
+    });
   });
 
   describe("feed and empty 201/200 body classification (F11, F12)", () => {
