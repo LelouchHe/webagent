@@ -258,7 +258,15 @@ export type AgentEvent =
       epoch?: string;
       revision?: number;
     }
-  | { type: "message_chunk"; taskId: string; text: string }
+  | {
+      type: "message_chunk";
+      taskId: string;
+      text: string;
+      epoch?: string;
+      segmentId?: number;
+      offset?: number;
+      endOffset?: number;
+    }
   | {
       /**
        * An image the agent returned with its message. `block` carries the raw
@@ -271,7 +279,21 @@ export type AgentEvent =
       block?: AgentImageBlock;
       attachment?: AgentImageAttachment;
     }
-  | { type: "thought_chunk"; taskId: string; text: string }
+  | {
+      type: "thought_chunk";
+      taskId: string;
+      text: string;
+      epoch?: string;
+      segmentId?: number;
+      offset?: number;
+      endOffset?: number;
+    }
+  | {
+      type: "tool_call_raw_output";
+      taskId: string;
+      id: string;
+      rawOutput: unknown;
+    }
   | {
       type: "tool_call";
       taskId: string;

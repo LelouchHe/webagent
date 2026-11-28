@@ -26,11 +26,7 @@ import {
   STREAM_STALL_TIMEOUT_MS,
 } from "./shared/stream-supervisor.ts";
 import { createTaskOpsCore } from "./task-ops.ts";
-import { buildTaskCreatedBroadcast } from "./task-created-message.ts";
-import {
-  buildCollaborationBroadcast,
-  type CollaborationBroadcastRequest,
-} from "./collaboration-message.ts";
+import type { CollaborationBroadcastRequest } from "./collaboration-message.ts";
 import { createRequestHandler } from "./http/routes.ts";
 import { withRequestErrorBoundary } from "./request-boundary.ts";
 import { handleAgentEvent } from "./event-handler.ts";
@@ -298,9 +294,11 @@ tasks.state.onPatch((event) => {
   sseManager.broadcast(event);
 });
 
-const broadcastCollaboration = (input: CollaborationBroadcastRequest): void => {
-  sseManager.broadcast(buildCollaborationBroadcast(input));
-};
+// Persisted collaboration and cancel transcript rows publish automatically via
+// Store outer-commit feed, so these legacy broadcast hooks are no-ops.
+const broadcastCollaboration = (
+  _input: CollaborationBroadcastRequest,
+): void => {};
 tasks.setCollaborationBroadcast(broadcastCollaboration);
 tasks.setDeliveryStatusBroadcast((event) => {
   sseManager.broadcast(event);
@@ -319,11 +317,7 @@ const localTaskOps = createLocalTaskOps({
   store,
   tasks,
   cancelTimeoutMs: config.limits.cancel_timeout,
-  broadcastTaskCancelNotice: (event) => {
-    // One record, one frame: the transcript row is the whole cancellation and
-    // rides the generic system-message path.
-    sseManager.broadcast(event);
-  },
+  broadcastTaskCancelNotice: () => {},
 });
 const taskOps = createTaskOpsCore({
   host: createTaskHost({
@@ -332,9 +326,7 @@ const taskOps = createTaskOpsCore({
   }),
   store,
   tasks,
-  broadcastTaskCreated: (event) => {
-    sseManager.broadcast(buildTaskCreatedBroadcast(event));
-  },
+  broadcastTaskCreated: () => {},
   broadcastConfigUpdate: (event) => {
     sseManager.broadcast(event);
   },
@@ -348,9 +340,7 @@ const routedTaskOps: TaskOps = {
     store,
     tasks,
     broadcastCollaboration,
-    broadcastTaskCancelNotice: (event) => {
-      sseManager.broadcast(event);
-    },
+    broadcastTaskCancelNotice: () => {},
   }),
 };
 tasks.setRemoteChildWakeSource((taskId) => hostRegistry.hasRemoteChild(taskId));

@@ -16,37 +16,29 @@
 export interface ClientEntry {
   id: string;
   capabilities: string[];
-  /** True iff the client most-recently reported the page as visible. */
-  visible: boolean;
-  /** Task the client is currently viewing (null = no task pane open). */
-  active: string | null;
+  /** Set of taskIds currently visible in foreground tabs for this client. */
+  visibleTaskIds: Set<string>;
+  /** Monotonic per-client visibility revision (from X-Visibility-Rev). */
+  lastVisibilityRev: number;
   /**
-   * ms timestamp (from injected `now()`) when `visible` last became true OR
-   * when `active` last changed while visible; 0 when not visible. Used by
-   * TTL-aware queries to ignore ghost records from iOS PWA suspension.
+   * ms timestamp (from injected `now()`) when `visibleTaskIds` was last
+   * refreshed as non-empty; 0 when empty. Used by TTL-aware queries to ignore
+   * ghost records from suspended clients.
    */
   visibleSince: number;
   lastSeen: number;
 }
 
-/** Patch input for setVisibility. `active` distinguishes preserve (omit) from
- *  clear (explicit null) from replace (string). */
-export interface VisibilityPatch {
-  visible?: boolean;
-  active?: string | null;
-}
-
-/** Edge-trigger flag for setVisibility callers (e.g. /visibility handler
- *  firing sendClose on first visible+task transition only, not on
- *  every 15s heartbeat). Mirrors PushService.UpdateClientResult. */
+/** Edge-trigger result for setVisibility callers (e.g. /visibility handler
+ *  firing sendClose only for newly added taskIds). */
 export interface SetVisibilityResult {
+  /** False when client is unknown or `rev <= lastVisibilityRev`. */
+  applied: boolean;
   /**
-   * Non-null iff this update transitioned the client into
-   * "visible + active=X" — either invisible→visible, or task-switch
-   * X→Y while visible. Repeated heartbeats with the same (visible, active)
-   * return null.
+   * Task IDs newly added to this client's fresh visible set by this update.
+   * Heartbeat refreshes with the same set return an empty array.
    */
-  becameVisibleFor: string | null;
+  newlyVisibleTaskIds: string[];
 }
 
 export interface ClientRegistryOptions {
@@ -77,8 +69,8 @@ export class ClientRegistry {
     const entry: ClientEntry = {
       id,
       capabilities: data.capabilities,
-      visible: false,
-      active: null,
+      visibleTaskIds: new Set(),
+      lastVisibilityRev: 0,
       visibleSince: 0,
       lastSeen: this.now(),
     };
@@ -91,54 +83,47 @@ export class ClientRegistry {
   }
 
   /**
-   * Atomic visibility setter. Mirrors PushService.updateClient semantics:
-   *   - `visible` omitted = preserve; bool = set (and stamp/clear visibleSince).
-   *   - `active`  omitted = preserve; null = clear; string = replace.
-   *   - Returns `becameVisibleFor=X` only on first transition into
-   *     (visible:true, active:X) — heartbeat refreshes return null so
-   *     callers can fire edge-triggered side effects exactly once.
-   *   - Task-switch while visible (active X→Y) restarts the TTL clock
-   *     even when the patch doesn't carry an explicit visible:true.
-   *
-   * No-op on unknown client.
+   * Declarative full-replacement visibility setter gated by monotonic revision.
+   * Only accepts updates with `rev > lastVisibilityRev` (when `rev` is
+   * provided). Returns `newlyVisibleTaskIds` for edge-triggered banner recall.
    */
-  setVisibility(id: string, patch: VisibilityPatch): SetVisibilityResult {
+  setVisibility(
+    id: string,
+    taskIds: readonly string[],
+    rev?: number,
+  ): SetVisibilityResult {
     const entry = this.clients.get(id);
-    if (!entry) return { becameVisibleFor: null };
-
-    const wasVisibleForTask =
-      entry.visible && entry.active != null ? entry.active : null;
-
-    if (patch.visible !== undefined) {
-      entry.visible = patch.visible;
-      entry.visibleSince = patch.visible ? this.now() : 0;
+    if (!entry) return { applied: false, newlyVisibleTaskIds: [] };
+    if (rev !== undefined && rev <= entry.lastVisibilityRev) {
+      return { applied: false, newlyVisibleTaskIds: [] };
     }
-    if (patch.active !== undefined) {
-      entry.active = patch.active;
+    if (rev !== undefined) {
+      entry.lastVisibilityRev = rev;
     }
 
-    const becameVisibleFor =
-      entry.visible &&
-      entry.active != null &&
-      entry.active !== wasVisibleForTask
-        ? entry.active
-        : null;
-    if (becameVisibleFor) {
-      // Any transition into "visible + active=X" restarts TTL — including
-      // task-switches that arrive without an explicit visible:true.
-      entry.visibleSince = this.now();
+    const now = this.now();
+    const wasFresh =
+      entry.visibleTaskIds.size > 0 &&
+      now - entry.visibleSince <= this.visibilityTtlMs;
+    const nextSet = new Set(taskIds);
+    const newlyVisibleTaskIds: string[] = [];
+    for (const taskId of nextSet) {
+      if (!wasFresh || !entry.visibleTaskIds.has(taskId)) {
+        newlyVisibleTaskIds.push(taskId);
+      }
     }
 
-    entry.lastSeen = this.now();
-    return { becameVisibleFor };
+    entry.visibleTaskIds = nextSet;
+    entry.visibleSince = nextSet.size > 0 ? now : 0;
+    entry.lastSeen = now;
+    return { applied: true, newlyVisibleTaskIds };
   }
 
   /** Is this specific client currently visible & viewing `taskId` & fresh? */
   isVisibleForTask(id: string, taskId: string): boolean {
     const entry = this.clients.get(id);
     if (!entry) return false;
-    if (!entry.visible) return false;
-    if (entry.active !== taskId) return false;
+    if (!entry.visibleTaskIds.has(taskId)) return false;
     if (this.now() - entry.visibleSince > this.visibilityTtlMs) return false;
     return true;
   }
@@ -147,8 +132,7 @@ export class ClientRegistry {
   isTaskVisibleToAnyClient(taskId: string): boolean {
     const now = this.now();
     for (const e of this.clients.values()) {
-      if (!e.visible) continue;
-      if (e.active !== taskId) continue;
+      if (!e.visibleTaskIds.has(taskId)) continue;
       if (now - e.visibleSince > this.visibilityTtlMs) continue;
       return true;
     }
@@ -159,7 +143,7 @@ export class ClientRegistry {
   isClientVisible(id: string): boolean {
     const entry = this.clients.get(id);
     if (!entry) return false;
-    if (!entry.visible) return false;
+    if (entry.visibleTaskIds.size === 0) return false;
     if (this.now() - entry.visibleSince > this.visibilityTtlMs) return false;
     return true;
   }
@@ -168,7 +152,7 @@ export class ClientRegistry {
   hasAnyVisibleClient(): boolean {
     const now = this.now();
     for (const e of this.clients.values()) {
-      if (!e.visible) continue;
+      if (e.visibleTaskIds.size === 0) continue;
       if (now - e.visibleSince > this.visibilityTtlMs) continue;
       return true;
     }

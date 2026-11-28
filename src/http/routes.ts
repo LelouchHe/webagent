@@ -49,11 +49,14 @@ import {
   isHostScopeAllowedPath,
   isWhitelistedPath,
 } from "../auth-middleware.ts";
-import { enrichStoredEventsForDisplay } from "../attachment-labels.ts";
+import {
+  projectImageReferences,
+  projectStoredEvents,
+  toEventFeedEntries,
+} from "../event-egress.ts";
 import { agentCommandToken, resolveAgentCommand } from "../agent-commands.ts";
 import { abbreviateHomePath } from "../home-path.ts";
 import { log } from "../log.ts";
-import { attachCollaborationDeliveryStatus } from "../collaboration-message.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../shared/time.ts";
 import { validateTaskTitle } from "../shared/task-title.ts";
 import type { TaskListItem, TaskOps } from "../api/tasks.ts";
@@ -164,12 +167,7 @@ function compactPreviousSeq(
 
 import type { AuthStore, Scope, TokenRecord } from "../auth-store.ts";
 import type { TicketStore } from "../sse-ticket.ts";
-import {
-  signAttachmentUrl,
-  verifyAttachmentSig,
-  reSignAttachmentUrlsInJson,
-} from "../auth.ts";
-import { projectMarkdownImageReferences } from "../markdown-image-references.ts";
+import { signAttachmentUrl, verifyAttachmentSig } from "../auth.ts";
 import {
   buildContentDisposition,
   classifyKind,
@@ -668,8 +666,27 @@ async function handleAttachmentUpload(
   });
 }
 
+const wiredCommittedEventManagers = new WeakSet<SseManager>();
+
 export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
   const { store, tasks, sseManager } = deps;
+  if (!wiredCommittedEventManagers.has(sseManager)) {
+    wiredCommittedEventManagers.add(sseManager);
+    store.onEventsCommitted((rows) => {
+      const projected = projectStoredEvents(rows, {
+        store,
+        tasks,
+        attachmentSecret: deps.attachmentSecret,
+      });
+      for (const entry of toEventFeedEntries(projected)) {
+        if (typeof sseManager.broadcastFeedEntry === "function") {
+          sseManager.broadcastFeedEntry(entry);
+        } else {
+          sseManager.broadcast(entry as unknown as AgentEvent);
+        }
+      }
+    });
+  }
   const opsAdapter = createOpsAdapter({
     ops: store.ops,
     getPrincipal,
@@ -1374,7 +1391,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
           tasks!.pendingPermissions.delete(requestId);
           tasks!.syncPendingPermissions(taskId);
 
-          // Store event and broadcast (same type so SSE drops are recoverable via sync)
+          // Store event (outer-commit observer publishes to SSE feed).
           const permEventData = { requestId, optionName, denied };
           store.saveEvent(
             perm.taskId,
@@ -1382,11 +1399,6 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
             { ...permEventData, optionId },
             { from_ref: "user" },
           );
-          sseManager.broadcast({
-            type: "permission_response",
-            taskId: perm.taskId,
-            ...permEventData,
-          });
 
           // Cross-device banner recall: close the permission banner on
           // every subscribed endpoint now that the permission has been
@@ -1499,6 +1511,12 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
                 lastEventSeq,
               },
               runtime: runtimeState.runtime,
+              streaming: tasks.getStreamingSnapshot(taskId),
+              imageReferences: projectImageReferences(
+                store,
+                taskId,
+                deps.attachmentSecret,
+              ),
               agentCommands: tasks.getAgentCommands(taskId),
             },
             req,
@@ -1859,14 +1877,6 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
             );
             store.updateTaskLastActive(taskId);
             store.touchRecentPath(task.cwd);
-            const userMsgEvent = {
-              type: "user_message",
-              taskId,
-              text: body.text,
-              clientOpId: eventClientOpId,
-              attachments: storedAttachments,
-            } as AgentEvent;
-            sseManager.broadcast(userMsgEvent);
 
             // Fire prompt asynchronously (don't await — response is 202)
             // The reservation→active transfer is synchronous: from here this route
@@ -1959,12 +1969,6 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
             { command: body.command },
             { from_ref: "user" },
           );
-          const bashCmdEvent = {
-            type: "bash_command",
-            taskId,
-            command: body.command,
-          } as AgentEvent;
-          sseManager.broadcast(bashCmdEvent);
 
           const shell = IS_WIN
             ? (process.env.COMSPEC ?? "cmd.exe")
@@ -2520,13 +2524,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
               ).trim();
               if (!summary) throw new Error("Agent returned an empty summary");
 
-              const summaryEvent = store.saveCompactSummary(taskId, summary);
-              sseManager.broadcast({
-                type: "assistant_message",
-                taskId,
-                text: summary,
-                seq: summaryEvent.seq,
-              });
+              store.saveCompactSummary(taskId, summary);
 
               const clearResult = await tasks.clearTask(
                 bridge,
@@ -2579,6 +2577,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
               // The task may have been deleted mid-compaction (cascade); the
               // FK rejects writes to a removed row, so make the error event
               // optional and keep the SSE broadcast authoritative.
+              let savedCompactError = false;
               try {
                 store.saveEvent(
                   taskId,
@@ -2588,14 +2587,17 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
                     from_ref: "system",
                   },
                 );
+                savedCompactError = true;
               } catch {
                 // Task is gone; nothing durable to write.
               }
-              sseManager.broadcast({
-                type: "error",
-                taskId,
-                message,
-              });
+              if (!savedCompactError) {
+                sseManager.broadcast({
+                  type: "error",
+                  taskId,
+                  message,
+                });
+              }
             } finally {
               // Close the turn here: compaction's busy sources are released in one
               // patch, so the slot itself must not re-project busy first.
@@ -2761,17 +2763,6 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
             return;
           }
-          if (result.status === "archived") {
-            if (result.message) {
-              sseManager.broadcast({
-                type: "system_message",
-                taskId,
-                kind: result.message.kind,
-                title: result.message.title,
-                body: result.message.body,
-              });
-            }
-          }
           json(res, HTTP_STATUS.OK, {
             status: result.status,
             taskId,
@@ -2829,13 +2820,6 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
             });
             return;
           }
-          sseManager.broadcast({
-            type: "system_message",
-            taskId,
-            kind: result.message.kind,
-            title: result.message.title,
-            body: result.message.body,
-          });
           json(res, HTTP_STATUS.OK, {
             status: result.status,
             taskId,
@@ -3105,16 +3089,20 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
           return;
         }
 
-        // GET /api/v1/tasks/:id/events?thinking=0|1&limit=N&before=SEQ&after=SEQ
+        // GET /api/v1/tasks/:id/events?thinking=0|1&limit=N&before=SEQ&after=SEQ&upTo=SEQ&text=...
         const eventsMatch = path.match(/^\/api\/v1\/tasks\/([^/]+)\/events$/);
         if (eventsMatch && req.method === "GET") {
           const taskId = decodeURIComponent(eventsMatch[1]);
-          const flush = requestParams.get("flush") === "1";
           const excludeThinking = requestParams.get("thinking") === "0";
           const afterRaw = requestParams.get("after");
           const afterSeq = afterRaw != null ? Number(afterRaw) : undefined;
           const beforeRaw = requestParams.get("before");
           const beforeSeq = beforeRaw != null ? Number(beforeRaw) : undefined;
+          const upToRaw = requestParams.get("upTo");
+          const upToSeq = upToRaw != null ? Number(upToRaw) : undefined;
+          const textRaw = requestParams.get("text");
+          const text =
+            textRaw !== null && textRaw.length > 0 ? textRaw : undefined;
           const limitRaw = requestParams.get("limit");
           const limit =
             limitRaw != null
@@ -3134,100 +3122,44 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
             return;
           }
-          // Flushing is explicit because it writes events and advances seq. Track
-          // whether each buffer was non-empty so the browser can keep the last
-          // thinking/assistant element open for continued live streaming.
-          let streamingThinking = false;
-          let streamingAssistant = false;
-          if (tasks && flush) {
-            const runtimeStreaming = tasks.state.peekStreaming(taskId);
-            streamingThinking =
-              runtimeStreaming.thinking ||
-              Boolean(tasks.thinkingBuffers.get(taskId));
-            streamingAssistant =
-              runtimeStreaming.assistant ||
-              Boolean(tasks.assistantBuffers.get(taskId));
-            tasks.flushThinkingBuffer(taskId);
-            tasks.flushAssistantBuffer(taskId);
-          }
-          const allEvents = store.getEvents(taskId);
-          const events = store.getEvents(taskId, {
+          const isForwardCatchUp =
+            afterSeq != null &&
+            beforeSeq == null &&
+            !excludeThinking &&
+            text === undefined;
+          const rawEvents = store.getEvents(taskId, {
             excludeThinking,
             afterSeq,
             beforeSeq,
+            upToSeq,
             limit,
+            direction: isForwardCatchUp ? "asc" : "desc",
+            text,
           });
-          // Derive the sender's delivery mark from the deliveries row. The event
-          // is never rewritten in storage.
-          attachCollaborationDeliveryStatus(events, (messageIds) => {
-            const rows =
-              store.getCollaborationDeliveriesForMessages(messageIds);
-            return new Map(
-              [...rows].map(([messageId, row]) => [
-                messageId,
-                {
-                  status: row.status,
-                  deliveredAt: row.delivered_at,
-                  failureReason: row.failure_reason,
-                },
-              ]),
-            );
+          const projectedEvents = projectStoredEvents(rawEvents, {
+            store,
+            tasks,
+            attachmentSecret: deps.attachmentSecret,
           });
-          // Replace internal uuid attachment paths with `<name> [#<id4>]`
-          // labels at egress (CLAUDE.md "Attachment label egress
-          // rewrite"). DB rows still hold raw paths.
-          if (tasks) {
-            enrichStoredEventsForDisplay(events, tasks.getLabelMap(taskId));
-          }
-          // Re-sign image URLs at egress so 1h-old stored URLs become valid
-          // again — the user can reload history days later and images still
-          // resolve. Mutates `data` in-place; safe because store.getEvents
-          // returns fresh records.
-          if (deps.attachmentSecret) {
-            for (const ev of events) {
-              if (
-                typeof ev.data === "string" &&
-                ev.data.includes("/attachments/")
-              ) {
-                ev.data = reSignAttachmentUrlsInJson(
-                  ev.data,
-                  deps.attachmentSecret,
-                );
-              }
-            }
-          }
           const envelope: Record<string, unknown> = {
-            events: events.map((event) => ({
-              ...event,
-              created_at: isoFromMillis(event.created_at),
-            })),
-            streaming: {
-              thinking: streamingThinking,
-              assistant: streamingAssistant,
-            },
-            imageReferences: (() => {
-              const projected = projectMarkdownImageReferences(
-                store,
-                taskId,
-                allEvents,
-              );
-              if (!deps.attachmentSecret) return projected;
-              return JSON.parse(
-                reSignAttachmentUrlsInJson(
-                  JSON.stringify(projected),
-                  deps.attachmentSecret,
-                ),
-              ) as unknown;
-            })(),
+            events: toEventFeedEntries(projectedEvents),
           };
-          if (limit != null) {
+          if (!isForwardCatchUp) {
+            envelope.imageReferences = projectImageReferences(
+              store,
+              taskId,
+              deps.attachmentSecret,
+            );
+          }
+          if (limit != null && !isForwardCatchUp) {
             const total = store.getEventCount(taskId, { excludeThinking });
             const hasMore =
-              events.length > 0
+              rawEvents.length > 0
                 ? store.getEvents(taskId, {
                     excludeThinking,
-                    beforeSeq: events[0].seq,
+                    beforeSeq: rawEvents[0].seq,
                     limit: 1,
+                    text,
                   }).length > 0
                 : false;
             envelope.total = total;
@@ -3803,17 +3735,28 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
         if (visMatch && req.method === "POST") {
           const clientId = decodeURIComponent(visMatch[1]);
 
-          // Trust boundary: accept if the client is (a) currently connected
-          // via SSE, or (b) known to the ClientRegistry (populated on /hello,
-          // persists across SSE disconnect). Registry check fixes the
-          // pagehide-beacon race where iOS PWA suspension drops the SSE TCP
-          // connection before the beacon egresses.
-          const clientKnown =
-            sseManager.clients.has(clientId) ||
-            deps.clientRegistry?.get(clientId) !== undefined;
-          if (!clientKnown) {
+          if (!sseManager.clients.has(clientId)) {
             json(res, HTTP_STATUS.NOT_FOUND, { error: "Client not found" });
             return;
+          }
+
+          let rev: number | undefined;
+          const revHeader = req.headers["x-visibility-rev"];
+          if (revHeader !== undefined) {
+            const rawRev = Array.isArray(revHeader) ? revHeader[0] : revHeader;
+            const parsedRev = Number(rawRev);
+            if (
+              typeof rawRev !== "string" ||
+              !/^\d+$/.test(rawRev.trim()) ||
+              !Number.isSafeInteger(parsedRev) ||
+              parsedRev < 1
+            ) {
+              json(res, HTTP_STATUS.BAD_REQUEST, {
+                error: "Invalid X-Visibility-Rev header",
+              });
+              return;
+            }
+            rev = parsedRev;
           }
 
           let body: Record<string, unknown>;
@@ -3824,60 +3767,45 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
             return;
           }
 
-          if (typeof body.visible !== "boolean") {
+          // Re-check liveness AFTER awaiting readBody so a client that
+          // disconnected while the body streamed in returns 404 and is never
+          // recreated in ClientRegistry.
+          if (!sseManager.clients.has(clientId)) {
+            json(res, HTTP_STATUS.NOT_FOUND, { error: "Client not found" });
+            return;
+          }
+
+          if (
+            !Array.isArray(body.taskIds) ||
+            !body.taskIds.every(
+              (id): id is string => typeof id === "string" && id.length > 0,
+            )
+          ) {
             json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: "Missing or invalid 'visible' field",
+              error: "Missing or invalid 'taskIds' array",
             });
             return;
           }
 
-          // taskId patch semantics: absent = preserve, null = clear,
-          // string = replace. Zod can't distinguish omitted from explicit
-          // null after parse, so branch on raw body key.
-          const hasTaskIdKey = Object.prototype.hasOwnProperty.call(
-            body,
-            "taskId",
-          );
-          let taskIdPatch: string | null | undefined;
-          if (!hasTaskIdKey) {
-            taskIdPatch = undefined;
-          } else if (body.taskId === null) {
-            taskIdPatch = null;
-          } else if (
-            typeof body.taskId === "string" &&
-            body.taskId.length > 0
-          ) {
-            taskIdPatch = body.taskId;
-          } else {
-            taskIdPatch = null;
-          }
-
           if (deps.clientRegistry) {
-            // setVisibility no-ops on unknown clients; auto-register here so
-            // SSE-only clients (which haven't sent /hello yet) still take
-            // effect. The trust boundary above already gated on identity.
             if (!deps.clientRegistry.get(clientId)) {
               deps.clientRegistry.register(clientId, { capabilities: [] });
             }
-            const { becameVisibleFor } = deps.clientRegistry.setVisibility(
+            const { newlyVisibleTaskIds } = deps.clientRegistry.setVisibility(
               clientId,
-              {
-                visible: body.visible,
-                active: taskIdPatch,
-              },
+              body.taskIds,
+              rev,
             );
-            // Edge-triggered only: heartbeat refreshes repeat the same
-            // (visible:true, taskId:X) POST every 15s — firing sendClose
-            // on each would hammer banner recall. Only the first such
-            // transition after a change should recall stale banners.
-            if (becameVisibleFor && deps.pushService) {
-              void deps.pushService.sendClose(`sess-${becameVisibleFor}-done`);
-              if (tasks) {
-                for (const perm of tasks.pendingPermissions.values()) {
-                  if (perm.taskId === becameVisibleFor) {
-                    void deps.pushService.sendClose(
-                      `sess-${becameVisibleFor}-perm-${perm.requestId}`,
-                    );
+            if (newlyVisibleTaskIds.length > 0 && deps.pushService) {
+              for (const taskId of newlyVisibleTaskIds) {
+                void deps.pushService.sendClose(`sess-${taskId}-done`);
+                if (tasks) {
+                  for (const perm of tasks.pendingPermissions.values()) {
+                    if (perm.taskId === taskId) {
+                      void deps.pushService.sendClose(
+                        `sess-${taskId}-perm-${perm.requestId}`,
+                      );
+                    }
                   }
                 }
               }

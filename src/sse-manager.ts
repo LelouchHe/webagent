@@ -4,6 +4,10 @@ import type { AgentEvent } from "./types.ts";
 import { reSignAttachmentUrlsInJson } from "./auth.ts";
 import { enrichEventForDisplay, type LabelMap } from "./attachment-labels.ts";
 import { log } from "./log.ts";
+import {
+  projectLegacyPerTaskEvent,
+  type EventFeedEntry,
+} from "./event-egress.ts";
 import { SSE_HEARTBEAT_INTERVAL_MS } from "./shared/stream-supervisor.ts";
 
 const slog = log.scope("sse");
@@ -175,6 +179,43 @@ export class SseManager {
       // Drop the client so we stop writing to it on every broadcast.
       slog.warn("write failed", { clientId: client.id, err: String(err) });
       this.remove(client.id, "write-failed");
+    }
+  }
+
+  /**
+   * Broadcast a committed persisted event feed entry to connected SSE clients.
+   * Global clients receive `{ feed, pos, prev, data }` with NO `id:` line;
+   * per-task clients receive the thin legacy event projection with `id: pos`.
+   */
+  broadcastFeedEntry(entry: EventFeedEntry): void {
+    const snapshot = [...this.clients.values()];
+    let feedFrame: string | null = null;
+    let legacyFrame: string | null = null;
+    for (const client of snapshot) {
+      if (client.res.writableEnded) continue;
+      if (client.receiveBusinessEvents === false) continue;
+      if (client.taskId) {
+        if (client.taskId !== entry.feed) continue;
+        if (legacyFrame === null) {
+          const legacy = projectLegacyPerTaskEvent(entry.data);
+          if (!legacy) continue;
+          legacyFrame = `id: ${entry.pos}\ndata: ${JSON.stringify(legacy)}\n\n`;
+        }
+        try {
+          client.res.write(legacyFrame);
+        } catch (err) {
+          slog.warn("write failed", { clientId: client.id, err: String(err) });
+          this.remove(client.id, "write-failed");
+        }
+      } else {
+        feedFrame ??= `data: ${JSON.stringify(entry)}\n\n`;
+        try {
+          client.res.write(feedFrame);
+        } catch (err) {
+          slog.warn("write failed", { clientId: client.id, err: String(err) });
+          this.remove(client.id, "write-failed");
+        }
+      }
     }
   }
 
