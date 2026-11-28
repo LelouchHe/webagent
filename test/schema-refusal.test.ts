@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -126,6 +127,43 @@ describe("pre-1.0 schema refusal", () => {
       db.exec("ALTER TABLE tasks ADD COLUMN brief TEXT");
       db.close();
       assertRefusedWithoutChanges(dir, dbPath, /legacy column tasks\.brief/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an old schema committed only to WAL without changing DB or WAL", () => {
+    const { dir, dbPath } = freshDatabase();
+    const db = new Database(dbPath);
+    try {
+      db.pragma("journal_mode = WAL");
+      db.exec("ALTER TABLE tasks ADD COLUMN brief TEXT");
+      assert.equal(existsSync(`${dbPath}-wal`), true);
+      const walHash = sha256(`${dbPath}-wal`);
+      const dbHash = sha256(dbPath);
+      const beforeFiles = readdirSync(dir).sort();
+
+      assert.throws(
+        () => new Store(dir),
+        (error: unknown) =>
+          error instanceof LegacyDatabaseError &&
+          /legacy column tasks\.brief/.test(error.message),
+      );
+
+      assert.equal(sha256(dbPath), dbHash);
+      assert.equal(sha256(`${dbPath}-wal`), walHash);
+      assert.deepEqual(readdirSync(dir).sort(), beforeFiles);
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("propagates non-schema SQLite preflight errors", () => {
+    const dir = mkdtempSync(join(tmpdir(), "webagent-schema-error-"));
+    try {
+      writeFileSync(join(dir, "webagent.db"), "not a sqlite database");
+      assert.throws(() => new Store(dir), /file is not a database/i);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -2170,9 +2170,8 @@ export class TaskManager implements ObligationHost {
   }
 
   /**
-   * The last write boundary of a rotation: the stored-config overlay may
-   * persist a canonical model value, so a generation that moved during the
-   * config replay must not produce it.
+   * The last read boundary of a rotation: a generation that moved during
+   * config replay must not publish stale values.
    *
    * `task` is the cleared pre-replay view that kept the old agent's choices
    * out of `restoreTaskConfig`. The response's read face is the row as it now
@@ -3038,14 +3037,13 @@ export class TaskManager implements ObligationHost {
 
   /** Build configOptions from cache, overriding currentValue with stored task values. */
   private buildConfigOptions(task: {
-    id?: string;
+    id: string;
     model: string | null;
     mode: string | null;
     reasoning_effort: string | null;
   }): ConfigOption[] {
-    const agentId = task.id
-      ? (this.store.getBindingAgent(task.id) ?? this.agents.defaultAgentId)
-      : this.agents.defaultAgentId;
+    const agentId =
+      this.store.getBindingAgent(task.id) ?? this.agents.defaultAgentId;
     return this.applyStoredConfig(this.configOptionsFor(agentId), task);
   }
 
@@ -3060,7 +3058,6 @@ export class TaskManager implements ObligationHost {
   applyStoredConfig(
     configOptions: ConfigOption[],
     task: {
-      id?: string;
       model: string | null;
       mode: string | null;
       reasoning_effort: string | null;
@@ -3082,11 +3079,7 @@ export class TaskManager implements ObligationHost {
             ? task.reasoning_effort
             : stored[opt.id];
       if (override && "options" in opt) {
-        const currentValue =
-          opt.category === "model" || opt.id === "model"
-            ? canonicalModelIdentity(override)
-            : override;
-        return { ...opt, currentValue };
+        return { ...opt, currentValue: override };
       }
       return opt;
     });
