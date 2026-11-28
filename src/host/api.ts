@@ -88,10 +88,49 @@ export interface TaskCancelHostOutcome {
   status: TaskCancelOutcome["status"];
 }
 
+export interface LocalTaskRelationFact {
+  id: string;
+  parentId: string | null;
+  title: string | null;
+}
+
+export interface TaskHistoryHostCommand<TInput> {
+  principal: AgentCaller;
+  input: TInput;
+  /** Synchronous Core relation-visibility check for local history targets. */
+  assertLocalTarget: (
+    source: LocalTaskRelationFact | undefined,
+    target: LocalTaskRelationFact | undefined,
+  ) => void;
+}
+
+export interface RemoteSendCandidateFact {
+  remoteRole: "child" | "parent";
+  remoteHost: string;
+  remoteTaskId: string;
+  sourceExists: boolean;
+  sourceTitle: string | null | undefined;
+  targetTitle: string | null;
+}
+
+export interface SendLabels {
+  sourceLabel: string;
+  targetLabel: string;
+}
+
 export interface TaskSendHostCommand {
   principal: AgentCaller;
   targetTaskId: string;
   body: string;
+  /** Core policy deciding whether an external-parent link matches the target. */
+  matchesExternalParent: (remoteTaskId: string) => boolean;
+  /** Core policy validating source existence and deriving remote send labels. */
+  prepareRemoteSend: (candidate: RemoteSendCandidateFact) => SendLabels;
+  /** Core policy validating local relation visibility and deriving labels. */
+  prepareLocalSend: (
+    source: LocalTaskRelationFact | undefined,
+    target: LocalTaskRelationFact | undefined,
+  ) => SendLabels;
   /** Synchronous audit + authorization callback invoked inside local's transaction. */
   recordLocalSend: (performed: TaskSendResult) => void;
 }
@@ -108,6 +147,14 @@ export interface TaskReportDelivery {
   sourceLabel: string;
   targetLabel: string;
   body: string;
+  /**
+   * Synchronous Core audit callback invoked inside the outer update transaction
+   * when a local report delivery is enqueued.
+   */
+  recordLocalReport: (delivered: {
+    messageId: string;
+    deliveryId: string;
+  }) => void;
 }
 
 export interface TaskReportDeliveryResult {
@@ -118,16 +165,15 @@ export interface TaskReportDeliveryResult {
  * Unified Host port consumed by Core (`src/task-ops.ts`).
  *
  * Core never chooses between local and remote execution: it passes structured
- * commands and synchronous audit/authorization callbacks to `TaskHost`, and
+ * commands and synchronous policy/audit callbacks to `TaskHost`, and
  * `src/host/` internally routes between `src/host/local/` and `src/host/remote/`.
  */
 export interface TaskHost {
   list(principal: AgentCaller): Promise<TaskListItem[]>;
   query(
-    principal: AgentCaller,
-    input: TaskQueryInput,
+    command: TaskHistoryHostCommand<TaskQueryInput>,
   ): Promise<TaskQueryResult>;
-  read(principal: AgentCaller, input: TaskReadInput): Promise<TaskReadResult>;
+  read(command: TaskHistoryHostCommand<TaskReadInput>): Promise<TaskReadResult>;
   create(command: TaskCreateHostCommand): Promise<TaskCreateHostOutcome>;
   cancel(command: TaskCancelHostCommand): Promise<TaskCancelHostOutcome>;
   send(command: TaskSendHostCommand): Promise<TaskSendHostOutcome>;

@@ -83,7 +83,8 @@ export function createTaskHost(deps: {
       return [...localItems, ...remoteItems];
     },
 
-    async query(principal, input) {
+    async query(command) {
+      const { principal, input } = command;
       const target = remote?.resolveRemoteChild?.(
         principal.taskId,
         input.taskId ?? principal.taskId,
@@ -91,10 +92,11 @@ export function createTaskHost(deps: {
       if (target && remote?.queryRemote) {
         return remote.queryRemote(target, input);
       }
-      return local.query(principal, input);
+      return local.query(command);
     },
 
-    async read(principal, input) {
+    async read(command) {
+      const { principal, input } = command;
       const target = remote?.resolveRemoteChild?.(
         principal.taskId,
         input.taskId ?? principal.taskId,
@@ -102,7 +104,7 @@ export function createTaskHost(deps: {
       if (target && remote?.readRemote) {
         return remote.readRemote(target, input);
       }
-      return local.read(principal, input);
+      return local.read(command);
     },
 
     async create(
@@ -202,7 +204,15 @@ export function createTaskHost(deps: {
     },
 
     async send(command) {
-      const { principal, targetTaskId, body, recordLocalSend } = command;
+      const {
+        principal,
+        targetTaskId,
+        body,
+        matchesExternalParent,
+        prepareRemoteSend,
+        prepareLocalSend,
+        recordLocalSend,
+      } = command;
       const target = remote?.resolveRemoteChild?.(
         principal.taskId,
         targetTaskId,
@@ -214,36 +224,42 @@ export function createTaskHost(deps: {
         ? {
             remoteRole: "child" as const,
             remoteHost: target.host,
-            targetTaskId: target.taskId,
-            targetLabel:
+            remoteTaskId: target.taskId,
+            targetTitle:
               store.getRemoteChildTitle(principal.taskId, target.taskId) ??
-              target.taskId.slice(0, 8),
+              null,
           }
-        : externalParent?.remote_task_id === targetTaskId
+        : externalParent && matchesExternalParent(externalParent.remote_task_id)
           ? {
               remoteRole: "parent" as const,
               remoteHost: externalParent.remote_host,
-              targetTaskId: externalParent.remote_task_id,
-              targetLabel:
+              remoteTaskId: externalParent.remote_task_id,
+              targetTitle:
                 store.getLatestInboundSourceLabel(
                   principal.taskId,
                   externalParent.remote_task_id,
                   "parent",
                   externalParent.remote_host,
-                ) ?? externalParent.remote_task_id.slice(0, 8),
+                ) ?? null,
             }
           : undefined;
       if (remoteLink) {
         const source = store.getTask(principal.taskId);
-        if (!source) throw new Error("execution_replaced");
-        const sourceLabel = source.title ?? principal.taskId.slice(0, 8);
+        const { sourceLabel, targetLabel } = prepareRemoteSend({
+          remoteRole: remoteLink.remoteRole,
+          remoteHost: remoteLink.remoteHost,
+          remoteTaskId: remoteLink.remoteTaskId,
+          sourceExists: Boolean(source),
+          sourceTitle: source?.title,
+          targetTitle: remoteLink.targetTitle,
+        });
         const row = store.enqueueLinkMessage({
           remoteRole: remoteLink.remoteRole,
           remoteHost: remoteLink.remoteHost,
           sourceTaskId: principal.taskId,
-          targetTaskId: remoteLink.targetTaskId,
+          targetTaskId: remoteLink.remoteTaskId,
           sourceLabel,
-          targetLabel: remoteLink.targetLabel,
+          targetLabel,
           body,
         });
         return {
@@ -251,8 +267,8 @@ export function createTaskHost(deps: {
           result: {
             messageId: row.entry_id,
             deliveryId: row.delivery_id ?? undefined,
-            targetTaskId: remoteLink.targetTaskId,
-            targetLabel: remoteLink.targetLabel,
+            targetTaskId: remoteLink.remoteTaskId,
+            targetLabel,
             sourceLabel,
           },
         };
@@ -261,6 +277,7 @@ export function createTaskHost(deps: {
         principal,
         targetTaskId,
         body,
+        prepareLocalSend,
         recordLocalSend,
       );
       return { kind: "local", result };

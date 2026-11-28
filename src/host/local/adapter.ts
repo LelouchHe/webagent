@@ -2,10 +2,7 @@ import { randomUUID } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { AgentUnavailableError } from "../../agent-registry.ts";
 import type { Store, TaskRow } from "../../store.ts";
-import {
-  isLocalCollaborationTarget,
-  collaborationRelation,
-} from "../../task-collaboration.ts";
+import { collaborationRelation } from "../../task-collaboration.ts";
 import {
   TaskConfigOverrideError,
   type DeliveryBridge,
@@ -35,7 +32,13 @@ import {
   TaskCreateInputError,
   TaskCreateConfigError,
 } from "../../api/tasks.ts";
-import type { TaskReportDelivery, TaskReportDeliveryResult } from "../api.ts";
+import type {
+  LocalTaskRelationFact,
+  SendLabels,
+  TaskHistoryHostCommand,
+  TaskReportDelivery,
+  TaskReportDeliveryResult,
+} from "../api.ts";
 import { opIdentity, TASK_CREATE_NAMESPACE } from "../../op-identity.ts";
 import {
   buildTaskHistoryQuery,
@@ -47,10 +50,9 @@ import {
 export interface LocalTaskHost {
   list(principal: AgentCaller): Promise<TaskListItem[]>;
   query(
-    principal: AgentCaller,
-    input: TaskQueryInput,
+    command: TaskHistoryHostCommand<TaskQueryInput>,
   ): Promise<TaskQueryResult>;
-  read(principal: AgentCaller, input: TaskReadInput): Promise<TaskReadResult>;
+  read(command: TaskHistoryHostCommand<TaskReadInput>): Promise<TaskReadResult>;
   create(
     caller: Caller,
     input: TaskCreateInput,
@@ -61,9 +63,21 @@ export interface LocalTaskHost {
     principal: AgentCaller,
     targetTaskId: string,
     body: string,
+    prepareLocalSend: (
+      source: LocalTaskRelationFact | undefined,
+      target: LocalTaskRelationFact | undefined,
+    ) => SendLabels,
     record: (performed: TaskSendResult) => void,
   ): Promise<TaskSendResult>;
   deliverReport(report: TaskReportDelivery): TaskReportDeliveryResult;
+}
+
+function toRelationFact(
+  task: TaskRow | undefined,
+): LocalTaskRelationFact | undefined {
+  return task
+    ? { id: task.id, parentId: task.parent_id, title: task.title }
+    : undefined;
 }
 
 function canonicalHistoryEvent(event: {
@@ -91,28 +105,6 @@ export function createLocalTaskHost(deps: {
     const task = store.getTask(taskId);
     if (!task) throw new Error("task_not_found");
     return task;
-  }
-
-  function requireLocalTarget(sourceTaskId: string, targetTaskId: string) {
-    const source = requireTask(sourceTaskId);
-    const target = requireTask(targetTaskId);
-    if (!isLocalCollaborationTarget(source, target)) {
-      throw new Error("target_not_allowed");
-    }
-    return { source, target };
-  }
-
-  function requireHistoryTarget(sourceTaskId: string, targetTaskId: string) {
-    const source = store.getTask(sourceTaskId);
-    const target = store.getTask(targetTaskId);
-    if (
-      !source ||
-      !target ||
-      (source.id !== target.id && !isLocalCollaborationTarget(source, target))
-    ) {
-      throw new Error("target_not_allowed");
-    }
-    return target;
   }
 
   async function cancelExecution(taskId: string) {
@@ -156,21 +148,25 @@ export function createLocalTaskHost(deps: {
       }));
     },
 
-    async query(principal, input): Promise<TaskQueryResult> {
+    async query(command): Promise<TaskQueryResult> {
+      const { principal, input, assertLocalTarget } = command;
       const sourceTaskId = principal.taskId;
       const targetId = input.taskId ?? sourceTaskId;
-      const target = requireHistoryTarget(sourceTaskId, targetId);
-      const maxSeq = store.getLastEventSeq(target.id);
+      const source = store.getTask(sourceTaskId);
+      const target = store.getTask(targetId);
+      assertLocalTarget(toRelationFact(source), toRelationFact(target));
+      const resolvedTargetId = target!.id;
+      const maxSeq = store.getLastEventSeq(resolvedTargetId);
       const [start, end] = normalizeTaskHistoryRange(input.range, maxSeq);
       const events =
         start > end
           ? []
-          : store.getEvents(target.id, {
+          : store.getEvents(resolvedTargetId, {
               afterSeq: start - 1,
               beforeSeq: end + 1,
             });
       return buildTaskHistoryQuery({
-        taskId: target.id,
+        taskId: resolvedTargetId,
         events: events.map(canonicalHistoryEvent),
         maxSeq,
         range: input.range,
@@ -178,20 +174,24 @@ export function createLocalTaskHost(deps: {
       });
     },
 
-    async read(principal, input): Promise<TaskReadResult> {
+    async read(command): Promise<TaskReadResult> {
+      const { principal, input, assertLocalTarget } = command;
       const sourceTaskId = principal.taskId;
-      const target = requireHistoryTarget(
-        sourceTaskId,
-        input.taskId ?? sourceTaskId,
-      );
+      const targetId = input.taskId ?? sourceTaskId;
+      const source = store.getTask(sourceTaskId);
+      const target = store.getTask(targetId);
+      assertLocalTarget(toRelationFact(source), toRelationFact(target));
+      const resolvedTargetId = target!.id;
       const uniqueSeqs = uniqueTaskHistorySeqs(input.seqs);
-      const events = uniqueSeqs.map((seq) => store.getEvent(target.id, seq));
+      const events = uniqueSeqs.map((seq) =>
+        store.getEvent(resolvedTargetId, seq),
+      );
       const missing = uniqueSeqs.filter((_, index) => !events[index]);
       if (missing.length > 0) {
         throw new Error(JSON.stringify({ error: "unknown_seq", missing }));
       }
       return buildTaskHistoryRead({
-        taskId: target.id,
+        taskId: resolvedTargetId,
         events: events.map((event) => canonicalHistoryEvent(event!)),
         seqs: uniqueSeqs,
       });
@@ -506,21 +506,26 @@ export function createLocalTaskHost(deps: {
       return result.status;
     },
 
-    async send(principal, targetTaskId, body, record) {
+    async send(principal, targetTaskId, body, prepareLocalSend, record) {
       const sourceTaskId = principal.taskId;
-      const { source, target } = requireLocalTarget(sourceTaskId, targetTaskId);
-      const targetLabel = target.title ?? target.id.slice(0, 8);
+      const source = store.getTask(sourceTaskId);
+      const target = store.getTask(targetTaskId);
+      const { sourceLabel, targetLabel } = prepareLocalSend(
+        toRelationFact(source),
+        toRelationFact(target),
+      );
+      const resolvedTargetId = target!.id;
       const result = {
         messageId: "",
         deliveryId: "",
-        targetTaskId: target.id,
+        targetTaskId: resolvedTargetId,
         targetLabel,
-        sourceLabel: source.title ?? source.id.slice(0, 8),
+        sourceLabel,
       };
       const created = store.enqueueTargetCollaboration(
         {
           sourceTaskId,
-          targetTaskId: target.id,
+          targetTaskId: resolvedTargetId,
           body,
         },
         ({ messageId, deliveryId }) => {
@@ -549,15 +554,7 @@ export function createLocalTaskHost(deps: {
       ) {
         return {};
       }
-      store.recordCallerSend({
-        id: messageId,
-        sourceTaskId: report.sourceTaskId,
-        directTargetTaskId: report.targetTaskId,
-        sourceLabel: report.sourceLabel,
-        targetLabel: report.targetLabel,
-        body: report.body,
-        deliveryId,
-      });
+      report.recordLocalReport({ messageId, deliveryId });
       return { drainLocalTargetTaskId: report.targetTaskId };
     },
   };

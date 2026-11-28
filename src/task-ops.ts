@@ -12,8 +12,13 @@ import {
   TaskCreateInputError,
   TaskRemoteCreatePartialSuccessError,
 } from "./api/tasks.ts";
-import type { TaskCreateTarget, TaskHost } from "./host/api.ts";
+import type {
+  LocalTaskRelationFact,
+  TaskCreateTarget,
+  TaskHost,
+} from "./host/api.ts";
 import { formatSilence } from "./obligation-controller.ts";
+import { isLocalCollaborationTarget } from "./task-collaboration.ts";
 import { recordTaskCancelEvent } from "./task-cancel-record.ts";
 import { buildTaskCreatedSystemMessage } from "./task-created-message.ts";
 import { formatTaskReport } from "./task-report.ts";
@@ -88,6 +93,23 @@ export function createTaskOpsCore(deps: {
     return task;
   }
 
+  function assertLocalHistoryTarget(
+    source: LocalTaskRelationFact | undefined,
+    target: LocalTaskRelationFact | undefined,
+  ): void {
+    if (
+      !source ||
+      !target ||
+      (source.id !== target.id &&
+        !isLocalCollaborationTarget(
+          { id: source.id, parent_id: source.parentId },
+          { id: target.id, parent_id: target.parentId },
+        ))
+    ) {
+      throw new Error("target_not_allowed");
+    }
+  }
+
   return {
     async list(principal) {
       authorizeAgent(principal);
@@ -102,12 +124,20 @@ export function createTaskOpsCore(deps: {
 
     async query(principal, input) {
       authorizeAgent(principal);
-      return host.query(principal, input);
+      return host.query({
+        principal,
+        input,
+        assertLocalTarget: assertLocalHistoryTarget,
+      });
     },
 
     async read(principal, input) {
       authorizeAgent(principal);
-      return host.read(principal, input);
+      return host.read({
+        principal,
+        input,
+        assertLocalTarget: assertLocalHistoryTarget,
+      });
     },
 
     // eslint-disable-next-line complexity -- one command authorizes, creates, links, and records one operation.
@@ -354,6 +384,30 @@ export function createTaskOpsCore(deps: {
         principal,
         targetTaskId,
         body,
+        matchesExternalParent: (remoteTaskId) => remoteTaskId === targetTaskId,
+        prepareRemoteSend: (candidate) => {
+          if (!candidate.sourceExists) throw new Error("execution_replaced");
+          return {
+            sourceLabel: candidate.sourceTitle ?? principal.taskId.slice(0, 8),
+            targetLabel:
+              candidate.targetTitle ?? candidate.remoteTaskId.slice(0, 8),
+          };
+        },
+        prepareLocalSend: (source, target) => {
+          if (!source || !target) throw new Error("task_not_found");
+          if (
+            !isLocalCollaborationTarget(
+              { id: source.id, parent_id: source.parentId },
+              { id: target.id, parent_id: target.parentId },
+            )
+          ) {
+            throw new Error("target_not_allowed");
+          }
+          return {
+            sourceLabel: source.title ?? source.id.slice(0, 8),
+            targetLabel: target.title ?? target.id.slice(0, 8),
+          };
+        },
         recordLocalSend: (performed) => {
           authorizeAgent(principal);
           store.recordCallerSend({
@@ -388,16 +442,29 @@ export function createTaskOpsCore(deps: {
           if (status === "waiting") return;
           authorizeAgent(principal);
           const text = formatTaskReport(status, body);
+          const sourceLabel =
+            store.getTask(sourceTaskId)?.title ?? sourceTaskId.slice(0, 8);
+          const targetLabel = targetIsLocal
+            ? (store.getTask(targetTaskId)?.title ?? targetTaskId.slice(0, 8))
+            : targetTaskId.slice(0, 8);
           const delivered = host.deliverReport({
             sourceTaskId,
             targetTaskId,
             targetIsLocal,
-            sourceLabel:
-              store.getTask(sourceTaskId)?.title ?? sourceTaskId.slice(0, 8),
-            targetLabel: targetIsLocal
-              ? (store.getTask(targetTaskId)?.title ?? targetTaskId.slice(0, 8))
-              : targetTaskId.slice(0, 8),
+            sourceLabel,
+            targetLabel,
             body: text,
+            recordLocalReport: ({ messageId, deliveryId }) => {
+              store.recordCallerSend({
+                id: messageId,
+                sourceTaskId,
+                directTargetTaskId: targetTaskId,
+                sourceLabel,
+                targetLabel,
+                body: text,
+                deliveryId,
+              });
+            },
           });
           if (delivered.drainLocalTargetTaskId) {
             drainTargetTaskId = delivered.drainLocalTargetTaskId;
