@@ -1209,7 +1209,7 @@ describe("slash menu — Tab vs Click behavior", () => {
     // Should have sent a config change via REST PUT
     const putCall = fetchCalls.find(
       (c) =>
-        c.url.split("?")[0] === "/api/v1/tasks/s1/model" &&
+        c.url.split("?")[0] === "/api/v1/tasks/s1/config/model" &&
         c.init?.method === "PUT",
     );
     assert.ok(putCall, "click should execute config change via REST");

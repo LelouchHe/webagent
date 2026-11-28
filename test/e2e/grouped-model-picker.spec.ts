@@ -58,7 +58,7 @@ test("grouped model writes return and broadcast the canonical identity", async (
   const wireValue = JSON.stringify(["vendor-a", "model-one"]);
   const result = await page.evaluate(
     async ({ id, value }) => {
-      const response = await fetch(`/api/v1/tasks/${id}/model`, {
+      const response = await fetch(`/api/v1/tasks/${id}/config/model`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ value }),

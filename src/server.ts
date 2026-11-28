@@ -26,7 +26,6 @@ import {
   STREAM_STALL_TIMEOUT_MS,
 } from "./shared/stream-supervisor.ts";
 import { createTaskOpsCore } from "./task-ops.ts";
-import type { CollaborationBroadcastRequest } from "./collaboration-message.ts";
 import { createRequestHandler } from "./http/routes.ts";
 import { withRequestErrorBoundary } from "./request-boundary.ts";
 import { handleAgentEvent } from "./event-handler.ts";
@@ -294,12 +293,6 @@ tasks.state.onPatch((event) => {
   sseManager.broadcast(event);
 });
 
-// Persisted collaboration and cancel transcript rows publish automatically via
-// Store outer-commit feed, so these legacy broadcast hooks are no-ops.
-const broadcastCollaboration = (
-  _input: CollaborationBroadcastRequest,
-): void => {};
-tasks.setCollaborationBroadcast(broadcastCollaboration);
 tasks.setDeliveryStatusBroadcast((event) => {
   sseManager.broadcast(event);
 });
@@ -308,8 +301,8 @@ tasks.setDeliveryStatusBroadcast((event) => {
 tasks.setRuntimeWarmBroadcast((event) => {
   sseManager.broadcast({ type: "task_runtime_warmed", ...event });
 });
-// Creation itself announces the new task: HTTP create, the quick prompt, and
-// the agent's `task_create` all pass through the same manager entry point.
+// Creation itself announces the new task: every manager entry point passes
+// through this hook.
 tasks.setTaskCreatedBroadcast((event) => {
   sseManager.broadcast(event);
 });
@@ -317,7 +310,6 @@ const localTaskOps = createLocalTaskOps({
   store,
   tasks,
   cancelTimeoutMs: config.limits.cancel_timeout,
-  broadcastTaskCancelNotice: () => {},
 });
 const taskOps = createTaskOpsCore({
   host: createTaskHost({
@@ -326,7 +318,6 @@ const taskOps = createTaskOpsCore({
   }),
   store,
   tasks,
-  broadcastTaskCreated: () => {},
   broadcastConfigUpdate: (event) => {
     sseManager.broadcast(event);
   },
@@ -339,8 +330,6 @@ const routedTaskOps: TaskOps = {
     remote: hostRegistry,
     store,
     tasks,
-    broadcastCollaboration,
-    broadcastTaskCancelNotice: () => {},
   }),
 };
 tasks.setRemoteChildWakeSource((taskId) => hostRegistry.hasRemoteChild(taskId));
@@ -353,7 +342,7 @@ const messageCleanup: CleanupHandle = startMessageCleanup(
   store,
   config.messages.unprocessed_ttl_days,
   (pendingCount) => {
-    sseManager.broadcastGlobal({ type: "inbox_count_changed", pendingCount });
+    sseManager.broadcast({ type: "inbox_count_changed", pendingCount });
   },
 );
 let sharePreviewCleanup: SharePreviewCleanupHandle | null = null;

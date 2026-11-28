@@ -487,7 +487,6 @@ describe("local vs linked delivery parity (Scenario 9)", () => {
       remote: new HostRegistry({}, { listLinks: () => [] }),
       store: ownerStore,
       tasks: ownerTasks,
-      broadcastCollaboration: () => {},
     });
     const revOut = await ownerRouted.send(
       {
@@ -562,7 +561,6 @@ describe("local vs linked delivery parity (Scenario 9)", () => {
       remote: new HostRegistry({}, { listLinks: () => [] }),
       store: ownerStore,
       tasks: ownerTasks,
-      broadcastCollaboration: () => {},
     });
     const sent = await ownerRouted.send(
       {

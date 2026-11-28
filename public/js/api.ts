@@ -424,7 +424,7 @@ export function getSnapshot(
   id: string,
   opts?: { warm?: boolean; signal?: AbortSignal },
 ): Promise<Record<string, unknown>> {
-  const warm = opts?.warm !== false ? "?warm=1" : "";
+  const warm = opts?.warm ? "?warm=1" : "";
   return request("/api/v1/tasks/" + id + "/snapshot" + warm, {
     signal: opts?.signal,
     timeoutMs: FAST_TIMEOUT_MS,
@@ -550,9 +550,8 @@ export function setConfig(
   value: string | boolean,
 ): Promise<void> {
   const urlId = configId.replace(/_/g, "-");
-  const path = typeof value === "boolean" ? "config/" + urlId : urlId;
   return putWrite(
-    "/api/v1/tasks/" + taskId + "/" + path,
+    "/api/v1/tasks/" + taskId + "/config/" + urlId,
     { value },
     undefined,
     true,

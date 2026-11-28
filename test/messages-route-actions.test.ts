@@ -146,16 +146,12 @@ describe("POST /api/v1/messages/:id/consume + ack + DELETE", () => {
       broadcasts.push(ev);
       orig(ev);
     };
-    const origGlobal = sseManager.broadcastGlobal.bind(sseManager);
-    sseManager.broadcastGlobal = (ev: AgentEvent) => {
-      broadcasts.push(ev);
-      origGlobal(ev);
-    };
     // Production installs the creation hook in `src/server.ts`; the harness
     // records it into the same stream so "no announcement" is observable.
     tasks.setTaskCreatedBroadcast((event) => broadcasts.push(event));
 
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       sseManager,
       store,
       tasks,

@@ -12,7 +12,7 @@ import { buildLabelMap } from "../src/attachment-labels.ts";
  * We don't need a real server; sendEvent + broadcast write to a fake
  * response object whose accumulated buffer we parse.
  */
-function makeFakeClient(id: string, taskId?: string) {
+function makeFakeClient(id: string) {
   const chunks: string[] = [];
   const res = {
     writableEnded: false,
@@ -24,7 +24,7 @@ function makeFakeClient(id: string, taskId?: string) {
       /* fake — no real socket events */
     },
   } as unknown as SseClient["res"];
-  const client: SseClient = { id, res, taskId };
+  const client: SseClient = { id, res };
   return { client, chunks };
 }
 

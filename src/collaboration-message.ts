@@ -1,7 +1,6 @@
 import { formatTaskReference } from "./shared/task-reference.ts";
 import { isoFromMillis } from "./shared/time.ts";
 import type { CollaborationDeliveryStatus } from "./shared/delivery-status.ts";
-import type { AgentEvent } from "./types.ts";
 
 export type CollaborationRole = "source" | "target";
 
@@ -115,57 +114,10 @@ export function buildCollaborationSystemMessage(
   };
 }
 
-/**
- * What one producer knows about one projection of a collaboration message.
- * `taskId`/`role` name the projection; the delivery fields, when present, are
- * live-only hints for the sender's mark.
- */
-export interface CollaborationBroadcastRequest extends CollaborationLabels {
-  messageId: string;
-  sourceTaskId: string;
-  targetTaskId: string;
-  body: string;
-  taskId: string;
-  role: CollaborationRole;
-  runtimeMessage?: RuntimeMessageKind;
-  deliveryStatus?: CollaborationDeliveryStatus;
-  deliveredAt?: string;
-  deliveryFailureReason?: string;
-}
-
 export interface CollaborationDeliverySnapshot {
   status: CollaborationDeliveryStatus;
   deliveredAt: number | null;
   failureReason: string | null;
-}
-
-/**
- * The single wire envelope for one projection of the row above. It carries the
- * raw labels as well as the title, because a live client anchors a reference in
- * that title by task id and cannot recover the reference text from the title
- * alone. Omitting them here is a silent behavior loss (no live mark), so the
- * builder is the only place that may spell the envelope out.
- */
-export function buildCollaborationBroadcast(
-  input: CollaborationBroadcastRequest,
-): Extract<AgentEvent, { type: "system_message" }> {
-  // The envelope is the persisted payload plus what only a live client needs,
-  // so which fields a runtime message drops is stated once, in the row builder.
-  const envelope: Extract<AgentEvent, { type: "system_message" }> = {
-    type: "system_message",
-    taskId: input.taskId,
-    ...buildCollaborationSystemMessage(input),
-  };
-  if (input.deliveryStatus !== undefined) {
-    envelope.deliveryStatus = input.deliveryStatus;
-  }
-  if (input.deliveredAt !== undefined) {
-    envelope.deliveredAt = input.deliveredAt;
-  }
-  if (input.deliveryFailureReason !== undefined) {
-    envelope.deliveryFailureReason = input.deliveryFailureReason;
-  }
-  return envelope;
 }
 
 /**

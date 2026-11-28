@@ -111,12 +111,12 @@ describe("POST /api/v1/tasks/:id/archive", () => {
     } as unknown as TaskManager;
 
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks: fakeTasks,
       authStore,
       sseManager: {
         broadcast: (event: AgentEvent) => broadcasts.push(event),
-        broadcastGlobal: () => {},
       } as never,
       publicDir: join(dir, "public"),
       dataDir: dir,

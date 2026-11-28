@@ -213,7 +213,6 @@ export async function startHarness(options: HarnessOptions): Promise<Harness> {
       remote: emptyRemote,
       store,
       tasks,
-      broadcastCollaboration: () => {},
     }),
     async create(caller, input) {
       createCalls.push(caller.kind);
@@ -228,6 +227,7 @@ export async function startHarness(options: HarnessOptions): Promise<Harness> {
   });
   const sseManager = Object.assign(new SseManager(), { broadcast() {} });
   const handler = createRequestHandler({
+    attachmentSecret: Buffer.alloc(32, 7),
     store,
     tasks,
     taskOps: host,

@@ -6,11 +6,7 @@ import { tmpdir } from "node:os";
 import { isEmptyExecutionSlot, Store } from "../src/store.ts";
 import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
-import {
-  createLocalTaskOps,
-  type TaskCancelNotice,
-  type TaskCreatedEvent,
-} from "../src/host/local/adapter.ts";
+import { createLocalTaskOps } from "../src/host/local/adapter.ts";
 import {
   TaskRemoteCreateConfigError,
   TaskRemoteCreatePartialSuccessError,
@@ -448,7 +444,6 @@ describe("MCP Task tool host", () => {
         remote: new HostRegistry({}, { listLinks: () => [] }),
         store,
         tasks,
-        broadcastCollaboration: () => {},
       }),
     };
     await host.update(principal("alpha-child"), "done", "local completion");
@@ -480,7 +475,6 @@ describe("MCP Task tool host", () => {
       remote: new HostRegistry({}, { listLinks: () => [] }),
       store,
       tasks,
-      broadcastCollaboration: () => {},
     });
     const original = store.recordCallerSend.bind(store);
     store.recordCallerSend = () => {
@@ -515,7 +509,6 @@ describe("MCP Task tool host", () => {
       remote: new HostRegistry({}, { listLinks: () => [] }),
       store,
       tasks,
-      broadcastCollaboration: () => {},
     });
     const original = store.recordCallerSend.bind(store);
     store.recordCallerSend = () => {
@@ -565,16 +558,12 @@ describe("MCP Task tool host", () => {
     });
     store.replaceAgentSession("r2", "test-agent", "session-r2");
 
-    const broadcasts: Array<Record<string, unknown>> = [];
     const local = createLocalTaskOps({ store, tasks });
     const routed = createRemoteRoutedTaskOps({
       local,
       remote: new HostRegistry({}, { listLinks: () => [] }),
       store,
       tasks,
-      broadcastCollaboration: (event) => {
-        broadcasts.push(event as unknown as Record<string, unknown>);
-      },
     });
     const r1Principal = () => principal("r1");
 
@@ -583,8 +572,6 @@ describe("MCP Task tool host", () => {
     assert.equal(first.targetTaskId, extParentId);
     assert.equal(first.targetLabel, extParentId.slice(0, 8));
     assert.equal(first.sourceLabel, "Worker R1");
-    assert.equal(broadcasts.length, 1);
-    assert.equal(broadcasts[0]?.deliveryStatus, "queued");
 
     // After two inbound messages, targetLabel uses the latest inbound sourceLabel by commit order.
     store.applyLinkPushOperation({
@@ -1068,7 +1055,6 @@ describe("MCP Task tool host", () => {
           remote: registry,
           store,
           tasks,
-          broadcastCollaboration: () => {},
         }),
       };
       await assert.rejects(
@@ -1093,7 +1079,6 @@ describe("MCP Task tool host", () => {
   });
 
   it("records a remote create from the Host result in Core", async () => {
-    const broadcasts: TaskCreatedEvent[] = [];
     const local = createLocalTaskOps({ store, tasks });
     const core = createTaskOpsCore({
       host: createTaskHost({
@@ -1122,7 +1107,6 @@ describe("MCP Task tool host", () => {
       }),
       store,
       tasks,
-      broadcastTaskCreated: (event) => broadcasts.push(event),
     });
     await core.create(
       { kind: "agent", principal: principal() },
@@ -1154,11 +1138,6 @@ describe("MCP Task tool host", () => {
       seqs: [rows[0].seq],
     });
     assert.equal((read.rows[0].data as Record<string, unknown>).host, "owner");
-    assert.equal(broadcasts.length, 1);
-    assert.equal(
-      broadcasts[0].body.includes("agent: owner-agent\nhost: owner"),
-      true,
-    );
   });
 
   it("does not retry unknown remote outcomes", async () => {
@@ -1748,12 +1727,10 @@ describe("MCP Task tool host", () => {
     );
   });
 
-  it("records one cancellation row per side and broadcasts both", async () => {
-    const broadcasted: TaskCancelNotice[] = [];
+  it("records one cancellation row per side", async () => {
     const host = createLocalTaskOps({
       store,
       tasks,
-      broadcastTaskCancelNotice: (event) => broadcasted.push(event),
     });
 
     await host.cancel({
@@ -1809,33 +1786,6 @@ describe("MCP Task tool host", () => {
       title: "Cancelled by @Alpha",
       body,
     });
-    // Both rows are wire events, each routed to its own task.
-    assert.deepEqual(broadcasted, [
-      {
-        type: "system_message",
-        taskId: "alpha",
-        kind: "task_cancel",
-        role: "source",
-        sourceTaskId: "alpha",
-        sourceLabel: "Alpha",
-        targetTaskId: "alpha-child",
-        targetLabel: "Alpha child",
-        title: '@Alpha cancelled @"Alpha child"',
-        body,
-      },
-      {
-        type: "system_message",
-        taskId: "alpha-child",
-        kind: "task_cancel",
-        role: "target",
-        sourceTaskId: "alpha",
-        sourceLabel: "Alpha",
-        targetTaskId: "alpha-child",
-        targetLabel: "Alpha child",
-        title: "Cancelled by @Alpha",
-        body,
-      },
-    ]);
   });
 
   it("returns idle when a direct child has no active execution", async () => {
@@ -2041,7 +1991,6 @@ describe("MCP Task tool host", () => {
         remote: new HostRegistry({}, { listLinks: () => [] }),
         store,
         tasks,
-        broadcastCollaboration: () => {},
       }),
     };
     await host.send(principal(), "alpha-child", "hello child");

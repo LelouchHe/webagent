@@ -26,7 +26,7 @@ import {
 } from "../src/task-manager.ts";
 import { ExecutionAuthority } from "../src/execution-authority.ts";
 import { TaskStateManager } from "../src/task-state.ts";
-import type { TaskCancelNoticeEvent } from "../src/task-cancel-record.ts";
+import type { AgentEvent } from "../src/types.ts";
 
 describe("remote lifecycle: relation envelope and outbox schema", () => {
   it("parses valid relation(child_left) envelopes and rejects malformed ones", () => {
@@ -165,7 +165,20 @@ async function createTestHost(dir: string) {
   const userToken = (await authStore.addToken("user-token", "admin")).token;
   const hostToken = (await authStore.addToken("hub-a", "host")).token;
   const wrongHostToken = (await authStore.addToken("hub-other", "host")).token;
-  const cancelNotices: TaskCancelNoticeEvent[] = [];
+  const cancelNotices: Array<Extract<AgentEvent, { type: "system_message" }>> =
+    [];
+  store.onEventsCommitted((rows) => {
+    for (const row of rows) {
+      if (row.type !== "system_message") continue;
+      const data = JSON.parse(row.data) as Record<string, unknown>;
+      if (data.kind !== "task_cancel") continue;
+      cancelNotices.push({
+        type: "system_message",
+        taskId: row.task_id,
+        ...data,
+      } as Extract<AgentEvent, { type: "system_message" }>);
+    }
+  });
   return {
     store,
     root,
@@ -366,7 +379,6 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       const ownerLocalOps = createLocalTaskOps({
         store: owner.store,
         tasks: owner.tasks,
-        broadcastTaskCancelNotice: (ev) => owner.cancelNotices.push(ev),
       });
       const ownerRemote = new HostRegistry({}, { listLinks: () => [] });
       const ownerTaskOps = {
@@ -376,12 +388,11 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
           remote: ownerRemote,
           store: owner.store,
           tasks: owner.tasks,
-          broadcastCollaboration: () => {},
-          broadcastTaskCancelNotice: (ev) => owner.cancelNotices.push(ev),
         }),
       };
       ownerServer = await startTestServer(
         createRequestHandler({
+          attachmentSecret: Buffer.alloc(32, 7),
           store: owner.store,
           tasks: owner.tasks,
           taskOps: ownerTaskOps,
@@ -437,7 +448,6 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       const hubLocalOps = createLocalTaskOps({
         store: hub.store,
         tasks: hub.tasks,
-        broadcastTaskCancelNotice: (ev) => hub.cancelNotices.push(ev),
       });
       const hubTaskOps = {
         ...hubLocalOps,
@@ -446,12 +456,11 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
           remote: hubRegistry,
           store: hub.store,
           tasks: hub.tasks,
-          broadcastCollaboration: () => {},
-          broadcastTaskCancelNotice: (ev) => hub.cancelNotices.push(ev),
         }),
       };
       hubServer = await startTestServer(
         createRequestHandler({
+          attachmentSecret: Buffer.alloc(32, 7),
           store: hub.store,
           tasks: hub.tasks,
           taskOps: hubTaskOps,
@@ -753,7 +762,6 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
           remote: hubRegistry,
           store: hub.store,
           tasks: hub.tasks,
-          broadcastCollaboration: () => {},
         }),
       };
 
@@ -814,7 +822,6 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       const ownerLocalOps = createLocalTaskOps({
         store: owner.store,
         tasks: owner.tasks,
-        broadcastTaskCancelNotice: (ev) => owner.cancelNotices.push(ev),
       });
       const ownerTaskOps = {
         ...ownerLocalOps,
@@ -823,12 +830,11 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
           remote: new HostRegistry({}, { listLinks: () => [] }),
           store: owner.store,
           tasks: owner.tasks,
-          broadcastCollaboration: () => {},
-          broadcastTaskCancelNotice: (ev) => owner.cancelNotices.push(ev),
         }),
       };
       ownerServer = await startTestServer(
         createRequestHandler({
+          attachmentSecret: Buffer.alloc(32, 7),
           store: owner.store,
           tasks: owner.tasks,
           taskOps: ownerTaskOps,
@@ -874,7 +880,6 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       const hubLocalOps = createLocalTaskOps({
         store: hub.store,
         tasks: hub.tasks,
-        broadcastTaskCancelNotice: (ev) => hub.cancelNotices.push(ev),
       });
       const hubTaskOps = {
         ...hubLocalOps,
@@ -883,8 +888,6 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
           remote: hubRegistry,
           store: hub.store,
           tasks: hub.tasks,
-          broadcastCollaboration: () => {},
-          broadcastTaskCancelNotice: (ev) => hub.cancelNotices.push(ev),
         }),
       };
 
@@ -1018,6 +1021,7 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       let mode: "delete-at-end" | "delete-next-microtask" = "delete-at-end";
       let currentReq: import("node:http").IncomingMessage | undefined;
       const handler = createRequestHandler({
+        attachmentSecret: Buffer.alloc(32, 7),
         store: owner.store,
         tasks: owner.tasks,
         taskOps: spiedTaskOps,

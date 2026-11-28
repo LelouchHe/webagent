@@ -59,6 +59,7 @@ describe("routes auth gate", () => {
     writeFileSync(join(publicDir, "icons", "icon-192.png"), "");
 
     store = new Store(tmpDir);
+    store.ensureRootTask(tmpDir);
     authStore = new AuthStore(join(tmpDir, "auth.json"));
     await authStore.load();
     const created = await authStore.addToken("test", "admin");
@@ -66,6 +67,7 @@ describe("routes auth gate", () => {
     hostToken = (await authStore.addToken("peer", "host")).token;
 
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       authStore,
       publicDir,
@@ -131,10 +133,35 @@ describe("routes auth gate", () => {
       assert.equal(allowed.status, 403);
     });
 
-    it("401 on /api/beta/prompt without auth", async () => {
-      const r = await req(port, "POST", "/api/beta/prompt");
-      assert.equal(r.status, 401);
-    });
+    for (const retired of [
+      {
+        method: "PUT",
+        label: "legacy config",
+        path: () => `/api/v1/tasks/${store.rootTaskId}/model`,
+      },
+      {
+        method: "GET",
+        label: "per-task SSE",
+        path: () => `/api/v1/tasks/${store.rootTaskId}/events/stream`,
+      },
+      {
+        method: "POST",
+        label: "beta prompt",
+        path: () => "/api/beta/prompt",
+      },
+    ]) {
+      it(`${retired.method} ${retired.label} stays 401 without auth`, async () => {
+        const r = await req(port, retired.method, retired.path());
+        assert.equal(r.status, 401);
+      });
+
+      it(`${retired.method} ${retired.label} is 404 with valid Bearer`, async () => {
+        const r = await req(port, retired.method, retired.path(), {
+          Authorization: `Bearer ${token}`,
+        });
+        assert.equal(r.status, 404);
+      });
+    }
   });
 
   describe("Whitelist passthrough", () => {

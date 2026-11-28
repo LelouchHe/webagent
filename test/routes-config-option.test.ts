@@ -16,7 +16,7 @@ function putConfig(port: number, taskId: string, value: string) {
         {
           hostname: "127.0.0.1",
           port,
-          path: `/api/v1/tasks/${taskId}/model`,
+          path: `/api/v1/tasks/${taskId}/config/model`,
           method: "PUT",
           headers: { "Content-Type": "application/json" },
         },
@@ -75,6 +75,7 @@ describe("config option route authority", () => {
     });
     const server = http.createServer(
       createRequestHandler({
+        attachmentSecret: Buffer.alloc(32, 7),
         store,
         tasks,
         publicDir,

@@ -508,7 +508,7 @@
               "method": "run",
               "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
               "args": [
-                "e55b587f-21bb-5ebd-8e82-95f37b22b78e",
+                "07051020-7f14-5893-ac60-c93a81cb74de",
                 "/",
                 "agent",
                 "00000000-0000-4000-8000-000000000001",

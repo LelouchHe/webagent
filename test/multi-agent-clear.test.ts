@@ -110,6 +110,7 @@ describe("clear onto another agent", () => {
     };
     tasks = new TaskManager(options);
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks,
       sseManager: Object.assign(new SseManager(), { broadcast() {} }),

@@ -42,6 +42,7 @@ describe("GET /api/v1/messages — list + single", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>t</h1>");
     store = new Store(tmpDir);
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       sseManager: new SseManager(),
       store,
       publicDir,

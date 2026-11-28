@@ -165,7 +165,7 @@ function compactPreviousSeq(
   }
 }
 
-import type { AuthStore, Scope, TokenRecord } from "../auth-store.ts";
+import type { AuthStore, TokenRecord } from "../auth-store.ts";
 import type { TicketStore } from "../sse-ticket.ts";
 import { signAttachmentUrl, verifyAttachmentSig } from "../auth.ts";
 import {
@@ -184,7 +184,7 @@ const IS_WIN = process.platform === "win32";
 const SAFE_ID = /^[a-zA-Z0-9_-]+$/;
 
 function broadcastInboxCount(store: Store, sseManager: SseManager): void {
-  sseManager.broadcastGlobal({
+  sseManager.broadcast({
     type: "inbox_count_changed",
     pendingCount: store.countUnprocessed(),
   });
@@ -319,10 +319,8 @@ export interface RequestHandlerDeps {
    * read instead of racing it with a sleep.
    */
   onRequestBodyReadStart?: (url: string) => void;
-  /** Optional secret for HMAC-signed image URLs. When present, image GET
-   *  requires `?sig=&exp=`; image upload returns a signed URL. When absent
-   *  (legacy/tests), images are served unauthenticated. */
-  attachmentSecret?: Buffer;
+  /** Secret for HMAC-signed attachment URLs. */
+  attachmentSecret: Buffer;
   /**
    * Optional MCP server endpoint. When present, `/mcp` requests are
    * dispatched here before the generic API router; the handler authenticates
@@ -639,9 +637,7 @@ async function handleAttachmentUpload(
           // 1h signed URL — long enough that the browser holds the rendered
           // image in <img> cache for the full task lifetime, short enough
           // that a leaked URL (screenshot, link share) expires within the day.
-          const fileUrl = deps.attachmentSecret
-            ? `${basePath}?${signAttachmentUrl(basePath, deps.attachmentSecret, 3600)}`
-            : basePath;
+          const fileUrl = `${basePath}?${signAttachmentUrl(basePath, deps.attachmentSecret, 3600)}`;
           await finish(HTTP_STATUS.OK, {
             attachmentId: row.id,
             displayName: row.name,
@@ -816,7 +812,6 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
               files: "/api/v1/files",
               config: "/api/v1/config",
               events_stream: "/api/v1/events/stream",
-              prompt: "/api/beta/prompt",
               push: "/api/beta/push",
               clients: "/api/beta/clients",
               hosts: "/api/v1/hosts",
@@ -2075,15 +2070,10 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
           return;
         }
 
-        // --- PUT /api/v1/tasks/:id/{model,mode,reasoning-effort} ---
         // --- PUT /api/v1/tasks/:id/config/:configId ---
-        const legacyConfigPutMatch = url.match(
-          /^\/api\/v1\/tasks\/([^/]+)\/(model|mode|reasoning-effort)\/?$/,
-        );
-        const genericConfigPutMatch = url.match(
+        const configPutMatch = url.match(
           /^\/api\/v1\/tasks\/([^/]+)\/config\/([^/]+)\/?$/,
         );
-        const configPutMatch = legacyConfigPutMatch ?? genericConfigPutMatch;
         if (configPutMatch && req.method === "PUT") {
           const taskId = decodeURIComponent(configPutMatch[1]);
           const configPath = decodeURIComponent(configPutMatch[2]);
@@ -2858,7 +2848,6 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
               ? tasks.applyStoredConfig(
                   tasks.configOptionsForTask(freshTask.id),
                   freshTask,
-                  { persist: warm },
                 )
               : [];
             json(
@@ -3181,7 +3170,6 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
           // When authStore is configured, every SSE connection MUST present a
           // valid single-use ticket from POST /api/v1/sse-ticket.
           let tokenName: string | undefined;
-          const receiveBusinessEvents = true;
           if (deps.authStore) {
             const ticket =
               new URLSearchParams(url.split("?")[1] ?? "").get("ticket") ?? "";
@@ -3211,7 +3199,6 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
             id: clientId,
             res,
             tokenName,
-            receiveBusinessEvents,
           };
           sseManager.add(client);
 
@@ -3224,91 +3211,6 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
             pendingCount,
           } as unknown as AgentEvent);
           sseManager.writeHeartbeat(client);
-          return;
-        }
-
-        // GET /api/v1/tasks/:id/events/stream — per-task SSE stream
-        const sseTaskMatch = url.match(
-          /^\/api\/v1\/tasks\/([^/]+)\/events\/stream(\?.*)?$/,
-        );
-        if (sseTaskMatch && req.method === "GET") {
-          const taskId = decodeURIComponent(sseTaskMatch[1]);
-
-          let tokenName: string | undefined;
-          let scope: Scope | undefined;
-          if (deps.authStore) {
-            const ticket =
-              new URLSearchParams(url.split("?")[1] ?? "").get("ticket") ?? "";
-            const principal = deps.ticketStore?.consume(ticket);
-            if (!principal) {
-              json(res, HTTP_STATUS.UNAUTHORIZED, {
-                error: "Invalid or expired ticket",
-              });
-              return;
-            }
-            tokenName = principal.tokenName;
-            scope = principal.scope;
-            if (scope === "host") {
-              json(res, HTTP_STATUS.FORBIDDEN, {
-                error: "Host tickets cannot subscribe to task events",
-              });
-              return;
-            }
-          }
-
-          const task = store.getTask(taskId);
-          if (!task) {
-            json(res, HTTP_STATUS.NOT_FOUND, { error: "Task not found" });
-            return;
-          }
-
-          const clientId = sseManager.generateClientId();
-          res.writeHead(HTTP_STATUS.OK, {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            Connection: "keep-alive",
-            "X-Host-Connection-Id": clientId,
-          });
-
-          const client: import("../sse-manager.ts").SseClient = {
-            id: clientId,
-            res,
-            taskId,
-            tokenName,
-          };
-          sseManager.add(client);
-
-          // Send connected event
-          sseManager.sendEvent(client, {
-            type: "connected",
-            clientId,
-            debugLevel: deps.debugLevel ?? "off",
-            pendingCount: store.countUnprocessed(),
-          } as unknown as AgentEvent);
-          sseManager.writeHeartbeat(client);
-
-          // Replay events from Last-Event-ID if provided
-          const lastEventId = req.headers["last-event-id"];
-          if (lastEventId) {
-            const afterSeq = parseInt(lastEventId as string, 10);
-            if (!isNaN(afterSeq)) {
-              const events = store.getEvents(taskId, { afterSeq });
-              for (const evt of events) {
-                try {
-                  sseManager.sendEvent(
-                    client,
-                    {
-                      type: evt.type as AgentEvent["type"],
-                      ...(JSON.parse(evt.data) as Record<string, unknown>),
-                    } as AgentEvent,
-                    evt.seq,
-                  );
-                } catch {
-                  // Skip malformed event data
-                }
-              }
-            }
-          }
           return;
         }
 
@@ -3349,23 +3251,16 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
         if (imgGetMatch && req.method === "GET") {
           const taskId = decodeURIComponent(imgGetMatch[1]);
           const file = decodeURIComponent(imgGetMatch[2]);
-          // When secret is configured, GET requires sig+exp in query — there
-          // is no Bearer fallback because <img src=...> / <a href=...> can't
-          // carry headers. Verify before any disk I/O.
-          if (deps.attachmentSecret) {
-            const params = new URLSearchParams(url.split("?")[1] ?? "");
-            const sig = params.get("sig") ?? "";
-            const exp = params.get("exp") ?? "";
-            const basePath = `/api/v1/tasks/${taskId}/attachments/${file}`;
-            if (
-              !verifyAttachmentSig(basePath, exp, sig, deps.attachmentSecret)
-            ) {
-              res.writeHead(HTTP_STATUS.UNAUTHORIZED, {
-                "Content-Type": "application/json",
-              });
-              res.end(JSON.stringify({ error: "Unauthorized" }));
-              return;
-            }
+          const params = new URLSearchParams(url.split("?")[1] ?? "");
+          const sig = params.get("sig") ?? "";
+          const exp = params.get("exp") ?? "";
+          const basePath = `/api/v1/tasks/${taskId}/attachments/${file}`;
+          if (!verifyAttachmentSig(basePath, exp, sig, deps.attachmentSecret)) {
+            res.writeHead(HTTP_STATUS.UNAUTHORIZED, {
+              "Content-Type": "application/json",
+            });
+            res.end(JSON.stringify({ error: "Unauthorized" }));
+            return;
           }
           const filePath = join(
             deps.dataDir,
@@ -3670,67 +3565,6 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
       // --- Beta API routes ---
       if (url.startsWith("/api/beta/")) {
         res.setHeader("Content-Type", "application/json");
-
-        // POST /api/beta/prompt — quick one-shot prompt (create temp task + send)
-        if (url === "/api/beta/prompt" && req.method === "POST") {
-          if (!tasks) {
-            json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-              error: "Agent not available",
-            });
-            return;
-          }
-
-          let body: Record<string, unknown>;
-          try {
-            body = JSON.parse(await readBody(req)) as Record<string, unknown>;
-          } catch {
-            json(res, HTTP_STATUS.BAD_REQUEST, { error: "Invalid JSON" });
-            return;
-          }
-
-          const text = body.text as string | undefined;
-          if (!text || typeof text !== "string") {
-            json(res, HTTP_STATUS.BAD_REQUEST, {
-              error: "Missing required field: text",
-            });
-            return;
-          }
-
-          const cwd = typeof body.cwd === "string" ? body.cwd : undefined;
-          let bridge;
-          try {
-            bridge = await tasks.resolveDefaultTransport();
-          } catch (err) {
-            json(res, HTTP_STATUS.SERVICE_UNAVAILABLE, {
-              error: `Agent not available: ${errorMessage(err)}`,
-            });
-            return;
-          }
-          const { taskId } = await tasks.createTask(
-            bridge,
-            cwd,
-            undefined,
-            "auto",
-          );
-          const streamUrl = `/api/v1/tasks/${taskId}/events/stream`;
-
-          // Fire-and-forget: start the turn synchronously before sending 202 so
-          // a synchronous throw never races ahead of a staged response.
-          tasks.beginAgentTurn(taskId, { origin: "interactive" });
-          const betaPromptId =
-            tasks.state.getState(taskId).runtime.busy?.promptId ?? undefined;
-          tasks.notePromptSubmitted(taskId);
-          bridge
-            .prompt(taskId, text, undefined, betaPromptId)
-            .catch(() => {})
-            .finally(() => {
-              tasks.endTurn(taskId, { promptId: betaPromptId });
-            });
-
-          // `createTask` already broadcast `task_created`.
-          json(res, HTTP_STATUS.ACCEPTED, { taskId, streamUrl });
-          return;
-        }
 
         // POST /api/beta/clients/:clientId/visibility
         const visMatch = url.match(

@@ -30,7 +30,6 @@ describe("tool-result images: the live frame", () => {
     const sse = new SseManager();
     sse.add({
       id: "frame-client",
-      taskId: "t1",
       res: {
         writableEnded: false,
         write(data: string) {
@@ -126,26 +125,45 @@ describe("tool-result images: the live frame", () => {
 
     const parsedFrames = frames.map(
       (chunk) =>
-        JSON.parse(chunk.replace(/^(?:id: \d+\n)?data: /, "").trim()) as Record<
+        JSON.parse(chunk.replace(/^data: /, "").trim()) as Record<
           string,
           unknown
         >,
     );
-    const updateFrame = parsedFrames.find(
-      (f) => f.type === "tool_call_update",
+    const feedFrame = parsedFrames.find(
+      (parsed) =>
+        parsed.feed === "t1" &&
+        (parsed.data as { type?: string } | undefined)?.type ===
+          "tool_call_update",
     ) as
-      | { content: ToolContentItem[]; rawOutput?: Record<string, unknown> }
+      | {
+          data: { type: string; data: string };
+        }
       | undefined;
-    assert.ok(updateFrame, "the tool_call_update frame must reach the client");
+    assert.ok(feedFrame);
+    assert.equal(feedFrame.data.type, "tool_call_update");
+    const updateFrame = {
+      ...(JSON.parse(feedFrame.data.data) as {
+        content: ToolContentItem[];
+      }),
+      type: feedFrame.data.type,
+    };
+    const rawOutputFrame = parsedFrames.find(
+      (parsed) => parsed.type === "tool_call_raw_output",
+    ) as { rawOutput?: Record<string, unknown> } | undefined;
+    assert.ok(
+      rawOutputFrame,
+      "the rawOutput bypass frame must reach the client",
+    );
     assert.equal(attachmentOf(updateFrame.content[1])?.kind, "image");
     assert.equal("data" in (updateFrame.content[1] as object), false);
     assert.equal(
-      parsedFrames.some((f) => f.type === "tool_call_raw_output"),
+      "rawOutput" in updateFrame,
       false,
-      "per-task SSE must inline stripped rawOutput without emitting a separate tool_call_raw_output frame",
+      "persisted feed data must not contain rawOutput",
     );
     // `rawOutput` keeps its shape and every field, minus the payload.
-    assert.deepEqual(updateFrame.rawOutput, {
+    assert.deepEqual(rawOutputFrame.rawOutput, {
       progress: 100,
       result: {
         output: [
@@ -185,11 +203,15 @@ describe("tool-result images: the live frame", () => {
     const frame = frames.join("");
     assert.equal(frame.includes(base64), false);
 
-    const updateFrame = frames
-      .map((chunk) => chunk.replace(/^(?:id: \d+\n)?data: /, "").trim())
-      .find((chunk) => chunk.includes('"rawOutput"'));
-    assert.ok(updateFrame, "the tool_call_update frame must reach the client");
-    const payload = JSON.parse(updateFrame) as {
+    const rawOutputFrame = frames
+      .map((chunk) => chunk.replace(/^data: /, "").trim())
+      .map((chunk) => JSON.parse(chunk) as Record<string, unknown>)
+      .find((parsed) => parsed.type === "tool_call_raw_output");
+    assert.ok(
+      rawOutputFrame,
+      "the rawOutput bypass frame must reach the client",
+    );
+    const payload = rawOutputFrame as {
       rawOutput: {
         type: string;
         mimeType: string;

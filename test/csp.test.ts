@@ -60,6 +60,7 @@ describe("CSP header on HTML entrypoints", () => {
     }
     store = new Store(join(tmpDir, "test.db"));
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       sseManager: { broadcast: () => {} } as any,
       publicDir,

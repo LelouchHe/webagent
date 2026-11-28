@@ -59,6 +59,7 @@ describe("raw request URL handling", () => {
     await authStore.load();
     token = (await authStore.addToken("api", "api")).token;
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks,
       authStore,

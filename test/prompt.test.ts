@@ -133,6 +133,7 @@ describe("Prompt REST API", () => {
     broadcastEvents = [];
 
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks,
       taskOps: createLocalTaskOps({ store, tasks }),
@@ -722,6 +723,7 @@ describe("Prompt REST API", () => {
 
     it("returns 503 when bridge is not ready", async () => {
       const handler = createRequestHandler({
+        attachmentSecret: Buffer.alloc(32, 7),
         store,
         tasks: createTaskManager(store, tmpDir, tmpDir),
         publicDir,

@@ -634,7 +634,8 @@ describe("input", () => {
     assert.equal(event.defaultPrevented, true);
     const call = fetchCalls.find(
       (c) =>
-        c.url.includes("/api/v1/tasks/s1/mode") && c.init?.method === "PUT",
+        c.url.includes("/api/v1/tasks/s1/config/mode") &&
+        c.init?.method === "PUT",
     );
     assert.ok(call, "expected a PUT config call");
     const body = JSON.parse(call.init?.body);

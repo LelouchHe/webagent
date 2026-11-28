@@ -46,6 +46,7 @@ describe("GET /api/v1/tasks/:id/snapshot", () => {
     tasks = createTaskManager(store, tmpDir, tmpDir);
     sse = new SseManager();
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks,
       sseManager: sse,

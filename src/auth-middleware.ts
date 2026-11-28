@@ -43,10 +43,6 @@ const WHITELIST: readonly WhitelistEntry[] = [
   // SSE streams — authenticated via short-lived ticket in query string
   // (EventSource cannot send custom headers).
   { method: "GET", test: (p) => p === "/api/v1/events/stream" },
-  {
-    method: "GET",
-    test: (p) => /^\/api\/v1\/tasks\/[A-Za-z0-9_-]+\/events\/stream$/.test(p),
-  },
 
   // Image GETs — authenticated via HMAC sig+exp query string (an <img>
   // tag cannot send Authorization headers). The image route handler does

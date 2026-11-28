@@ -9,13 +9,12 @@ import {
 } from "./event-egress.ts";
 
 import { formatTaskPath } from "./shared/task-reference.ts";
-import {
-  buildCollaborationSystemMessage,
-  collaborationTitle,
-} from "./collaboration-message.ts";
-import { migrateTimestampsToMillis } from "./timestamp-migration.ts";
+import { buildCollaborationSystemMessage } from "./collaboration-message.ts";
 import { canonicalModelIdentity } from "./model-identity.ts";
-import { assertNotLegacyDatabase } from "./legacy-database.ts";
+import {
+  assertNotLegacyDatabase,
+  detectSchemaIncompatibility,
+} from "./legacy-database.ts";
 import {
   bindingsEqual,
   type BindingChange,
@@ -427,59 +426,6 @@ export interface AttachmentInput {
   height?: number | null;
 }
 
-type JsonObject = Record<string, unknown>;
-
-function stringField(data: JsonObject, key: string): string | undefined {
-  return typeof data[key] === "string" ? data[key] : undefined;
-}
-
-/** Normalize pre-title system events before any replay or egress path sees them. */
-function migrateSystemMessageData(raw: string): string | null {
-  const data = JSON.parse(raw) as JsonObject;
-  const existingTitle = stringField(data, "title");
-  const body = stringField(data, "body");
-
-  // Older task-created rows used `title` for the child task title, while the
-  // new payload uses it for the visible system-message title. Their `body`
-  // already contains the old visible text, so preserve it as title-only.
-  if (
-    data.kind === "task_created" &&
-    data.taskTitle === undefined &&
-    existingTitle !== undefined &&
-    body !== undefined
-  ) {
-    const migrated: JsonObject = { ...data, title: body };
-    delete migrated.body;
-    return JSON.stringify(migrated);
-  }
-
-  if (existingTitle?.trim()) return null;
-
-  const messageBody = stringField(data, "messageBody");
-  const migrated: JsonObject = { ...data };
-
-  if (data.kind === "collaboration" && messageBody !== undefined) {
-    const source =
-      stringField(data, "sourceLabel") ??
-      stringField(data, "sourceTaskId") ??
-      "?";
-    const target =
-      stringField(data, "targetLabel") ??
-      stringField(data, "targetTaskId") ??
-      "?";
-    migrated.title = collaborationTitle({
-      sourceLabel: source,
-      targetLabel: target,
-    });
-    migrated.body = messageBody;
-  } else {
-    migrated.title = body?.trim() ? body : "System message";
-    delete migrated.body;
-  }
-  delete migrated.messageBody;
-  return JSON.stringify(migrated);
-}
-
 /**
  * One agent's read-only view of execution identity.
  *
@@ -628,12 +574,6 @@ export class Store {
       this.db.pragma("foreign_keys = ON");
       this.assertSupportedSchema();
       this.initializeSchema();
-      migrateTimestampsToMillis(this.db);
-      this.migrateAgentSessionUniqueness();
-      this.dropLegacyColumns();
-      this.migrateSystemMessagePayloads();
-      this.canonicalizeStoredModelValues();
-      this.migrateCanonicalCwds();
       this.rootId = this.resolveRootIdentity();
     } catch (error) {
       this.db.close();
@@ -749,179 +689,8 @@ export class Store {
     for (const observer of this.bindingObservers) observer(batch);
   }
 
-  private canonicalizeStoredModelValues(): void {
-    const rows = this.db
-      .prepare("SELECT id, model FROM tasks WHERE model IS NOT NULL")
-      .all() as Array<{ id: string; model: string }>;
-    const update = this.db.prepare(
-      "UPDATE tasks SET model = ? WHERE id = ? AND model = ?",
-    );
-    this.db.transaction(() => {
-      for (const row of rows) {
-        const canonical = canonicalModelIdentity(row.model);
-        if (canonical !== row.model) update.run(canonical, row.id, row.model);
-      }
-    })();
-  }
-
   private assertSupportedSchema(): void {
-    const legacy = this.db
-      .prepare(
-        "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'sessions'",
-      )
-      .get() as { present: number } | undefined;
-    const requiredColumns: Record<string, string[]> = {
-      tasks: [
-        "id",
-        "cwd",
-        "title",
-        "workflow_status",
-        "parent_id",
-        "pending_compact_summary",
-        "model",
-        "mode",
-        "reasoning_effort",
-        "source",
-        "deleted_at",
-        "created_at",
-        "last_active_at",
-      ],
-      agent_sessions: [
-        "agent_key",
-        "agent_session_id",
-        "task_id",
-        "created_at",
-      ],
-      events: [
-        "id",
-        "task_id",
-        "seq",
-        "type",
-        "data",
-        "created_at",
-        "from_ref",
-      ],
-      shares: [
-        "token",
-        "task_id",
-        "shared_at",
-        "share_snapshot_seq",
-        "ttl_hours",
-        "display_name",
-        "owner_label",
-        "created_at",
-        "last_accessed_at",
-      ],
-      attachments: [
-        "id",
-        "task_id",
-        "kind",
-        "name",
-        "mime",
-        "size",
-        "realpath",
-        "upload_seq",
-        "width",
-        "height",
-        "created_at",
-      ],
-      inbox_messages: [
-        "id",
-        "from_ref",
-        "from_label",
-        "to_ref",
-        "deliver",
-        "dedup_key",
-        "title",
-        "body",
-        "cwd",
-        "created_at",
-      ],
-      messages: [
-        "id",
-        "source_task_id",
-        "direct_target_task_id",
-        "source_actor",
-        "body",
-        "created_at",
-      ],
-      message_projections: ["message_id", "task_id", "role", "created_at"],
-      deliveries: [
-        "id",
-        "message_id",
-        "recipient_task_id",
-        "idempotency_key",
-        "status",
-        "queued_at",
-        "delivered_at",
-        "failed_at",
-        "failure_reason",
-        "source_remote_role",
-        "source_remote_host",
-        "source_entry_id",
-        "source_label",
-        "source_category",
-      ],
-    };
-    // Columns that earlier versions wrote and this one migrates away (see
-    // dropLegacyColumns). Tolerated here, then removed, so an upgraded
-    // database converges on the exact schema below without a data reset.
-    const legacyColumns: Record<string, string[]> = { tasks: ["brief"] };
-    let incompatible = legacy
-      ? "legacy sessions table"
-      : Object.entries(requiredColumns).find(([table, columns]) => {
-          const exists = this.db
-            .prepare(
-              "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?",
-            )
-            .get(table) as { present: number } | undefined;
-          if (!exists) return false;
-          const actual = new Set(
-            (
-              this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{
-                name: string;
-              }>
-            ).map((column) => column.name),
-          );
-          const tolerated = new Set([
-            ...columns,
-            ...(legacyColumns[table] ?? []),
-          ]);
-          return (
-            columns.some((column) => !actual.has(column)) ||
-            [...actual].some((column) => !tolerated.has(column)) ||
-            (table === "events" &&
-              this.db
-                .prepare(
-                  "SELECT 1 AS present FROM events WHERE from_ref IS NULL LIMIT 1",
-                )
-                .get() !== undefined)
-          );
-        })?.[0];
-    if (!incompatible) {
-      // The CHECK constraint is part of the contract, not a column list: an
-      // older database must be reset before it can store `waiting`.
-      const tasksSql = (
-        this.db
-          .prepare(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'tasks'",
-          )
-          .get() as { sql?: string } | undefined
-      )?.sql;
-      if (tasksSql && !tasksSql.includes("'waiting'")) {
-        incompatible = "tasks.workflow_status CHECK does not include waiting";
-      }
-      const deliveriesSql = (
-        this.db
-          .prepare(
-            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'deliveries'",
-          )
-          .get() as { sql?: string } | undefined
-      )?.sql;
-      if (deliveriesSql?.includes("'draining'")) {
-        incompatible = "deliveries.status CHECK still includes draining";
-      }
-    }
+    const incompatible = detectSchemaIncompatibility(this.db);
     if (incompatible) {
       throw new Error(
         `Pre-1.0 data directory detected (${incompatible}). Back up and delete the data directory before restarting: ${this.dataDir}`,
@@ -1214,9 +983,7 @@ export class Store {
 
     // ops — bounded-TTL deduplication store for HTTP write idempotency.
     // Independent of task lifecycle (no foreign keys); expired only by TTL.
-    // Drop the retired pre-ops `client_ops` table so upgraded DBs match fresh ones.
     this.db.exec(`
-      DROP TABLE IF EXISTS client_ops;
       CREATE TABLE IF NOT EXISTS ops (
         key TEXT PRIMARY KEY,
         fingerprint TEXT NOT NULL,
@@ -1227,108 +994,6 @@ export class Store {
       );
       CREATE INDEX IF NOT EXISTS idx_ops_created_at ON ops(created_at);
     `);
-  }
-
-  /**
-   * One binding per (agent, task) instead of one per task: the reserved Root
-   * record must be able to hold a binding for each configured backend, and
-   * switching back to a previous agent must restore that agent's binding and
-   * sessions. Existing databases carry the old task-only unique index; drop it
-   * and create the per-agent one in place. No rows are deleted.
-   */
-  private migrateAgentSessionUniqueness(): void {
-    this.db.transaction(() => {
-      const legacy = this.db
-        .prepare(
-          "SELECT 1 AS present FROM sqlite_master WHERE type = 'index' AND name = 'idx_agent_sessions_task'",
-        )
-        .get() as { present: number } | undefined;
-      if (legacy) this.db.exec("DROP INDEX idx_agent_sessions_task");
-      this.db.exec(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_sessions_agent_task ON agent_sessions(agent_key, task_id) WHERE task_id IS NOT NULL",
-      );
-    })();
-  }
-
-  /**
-   * One-shot migrations for columns the current code no longer uses, so every
-   * database — fresh or upgraded — ends up with the same shape.
-   */
-  private dropLegacyColumns(): void {
-    // `tasks.brief` held the pre-0.10 one-step creation brief. Creation is
-    // title-first now (`+<title>` then `@<title> <message>`), the column is
-    // gone from the code, and an existing database keeps an unused copy until
-    // it is dropped here.
-    const columns = this.db.pragma("table_info(tasks)") as Array<{
-      name: string;
-    }>;
-    if (columns.some((column) => column.name === "brief")) {
-      this.db.exec("ALTER TABLE tasks DROP COLUMN brief");
-    }
-  }
-
-  /**
-   * A stored cwd has no `.` and no `..` (`canonicalCwd`). An older build kept
-   * the bytes a user typed, so a task could carry `/x/` while the recent-path
-   * row written from it is `/x`; the pickers then compare the task's cwd
-   * against the recent list and fail to recognize the same directory, rendering
-   * it twice. Rewrite both sides to the canonical form: task rows first, then
-   * merge each recent-path variant into its canonical key keeping the newest
-   * use.
-   *
-   * A task row that still contains a `.`/`..` segment is the one case left
-   * alone. Folding it would apply today's shell rule to a directory the task
-   * was actually running in under the old rule — across a symlink, that is a
-   * different directory — so the row keeps its bytes and the picker may show it
-   * beside a folded recent key until the user moves the task.
-   */
-  private migrateCanonicalCwds(): void {
-    const tasks = this.db.prepare("SELECT id, cwd FROM tasks").all() as Array<{
-      id: string;
-      cwd: string;
-    }>;
-    const setCwd = this.db.prepare("UPDATE tasks SET cwd = ? WHERE id = ?");
-    const paths = this.db
-      .prepare("SELECT cwd, last_used_at FROM recent_paths")
-      .all() as Array<{ cwd: string; last_used_at: number }>;
-    const upsert = this.db.prepare(
-      `INSERT INTO recent_paths (cwd, last_used_at)
-       VALUES (?, ?)
-       ON CONFLICT(cwd) DO UPDATE SET last_used_at = MAX(last_used_at, excluded.last_used_at)`,
-    );
-    const remove = this.db.prepare("DELETE FROM recent_paths WHERE cwd = ?");
-    this.db.transaction(() => {
-      for (const row of tasks) {
-        if (
-          row.cwd.split(/[\\/]/).some((part) => part === "." || part === "..")
-        ) {
-          continue;
-        }
-        const canonical = canonicalCwd(row.cwd);
-        if (canonical !== row.cwd) setCwd.run(canonical, row.id);
-      }
-      for (const row of paths) {
-        const canonical = canonicalCwd(row.cwd);
-        if (canonical === row.cwd) continue;
-        upsert.run(canonical, row.last_used_at);
-        remove.run(row.cwd);
-      }
-    })();
-  }
-
-  /** Normalize the pre-title system_message payload in place. This is
-   * idempotent and runs before any event can be replayed or returned. */
-  private migrateSystemMessagePayloads(): void {
-    const rows = this.db
-      .prepare("SELECT id, data FROM events WHERE type = 'system_message'")
-      .all() as Array<{ id: number; data: string }>;
-    const update = this.db.prepare("UPDATE events SET data = ? WHERE id = ?");
-    this.db.transaction(() => {
-      for (const row of rows) {
-        const migrated = migrateSystemMessageData(row.data);
-        if (migrated !== null) update.run(migrated, row.id);
-      }
-    })();
   }
 
   /** Insert the one parentless Root row. Callers provide the transaction. */

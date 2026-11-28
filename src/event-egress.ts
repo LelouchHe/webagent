@@ -1,7 +1,6 @@
 import type Database from "better-sqlite3";
 import type { EventRow, Store } from "./store.ts";
 import type { TaskManager } from "./task-manager.ts";
-import type { AgentEvent } from "./types.ts";
 import { attachCollaborationDeliveryStatus } from "./collaboration-message.ts";
 import { enrichStoredEventsForDisplay } from "./attachment-labels.ts";
 import { reSignAttachmentUrlsInJson } from "./auth.ts";
@@ -102,26 +101,6 @@ export function toEventFeedEntries(
     prev: row.seq - 1,
     data: row,
   }));
-}
-
-/**
- * Thin legacy projection for per-task SSE (`/api/v1/tasks/:id/events/stream`)
- * so producers maintain a single committed feed while per-task SSE consumers
- * (such as `/api/beta/prompt` and `Last-Event-ID` replay) keep their wire shape.
- */
-export function projectLegacyPerTaskEvent(
-  row: StoredEventEgress,
-): AgentEvent | null {
-  try {
-    const parsed = JSON.parse(row.data) as Record<string, unknown>;
-    return {
-      ...parsed,
-      type: row.type,
-      taskId: row.task_id,
-    } as AgentEvent;
-  } catch {
-    return null;
-  }
 }
 
 export function projectImageReferences(

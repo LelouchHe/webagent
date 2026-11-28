@@ -6,11 +6,8 @@ import { tmpdir } from "node:os";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 import { Store } from "../src/store.ts";
 import { createTaskManager } from "../src/task-manager.ts";
-import {
-  createLocalTaskOps,
-  type TaskCancelNotice,
-} from "../src/host/local/adapter.ts";
-import type { StoredEvent } from "../src/types.ts";
+import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import type { AgentEvent, StoredEvent } from "../src/types.ts";
 
 /* eslint-disable @typescript-eslint/no-unsafe-function-type -- Promise resolver pattern uses generic Function type */
 
@@ -3139,12 +3136,7 @@ describe("events", () => {
         );
         const lease = tasks.authority.leaseFor(source.id);
         assert.ok(lease, "the source task has a generation");
-        const frames: TaskCancelNotice[] = [];
-        const host = createLocalTaskOps({
-          store,
-          tasks,
-          broadcastTaskCancelNotice: (event) => frames.push(event),
-        });
+        const host = createLocalTaskOps({ store, tasks });
         await host.cancel({
           kind: "agent",
           principal: {
@@ -3165,6 +3157,17 @@ describe("events", () => {
             data: row.data,
             created_at: new Date(row.created_at).toISOString(),
           }));
+        const frames = [
+          ...store.getEvents(source.id),
+          ...store.getEvents(child.id),
+        ].map(
+          (row) =>
+            ({
+              type: "system_message",
+              taskId: row.task_id,
+              ...(JSON.parse(row.data) as Record<string, unknown>),
+            }) as Extract<AgentEvent, { type: "system_message" }>,
+        );
         return {
           frames,
           sourceStored: asStored(store.getEvents(source.id)),

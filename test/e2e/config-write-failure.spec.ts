@@ -47,7 +47,7 @@ test("a refused model selection is reported instead of announced", async ({
   const before = await taskDetail(page, taskId);
   expect(before.model, "the task has a stored model").toBeTruthy();
 
-  await page.route(`**/api/v1/tasks/${taskId}/model`, refusePut);
+  await page.route(`**/api/v1/tasks/${taskId}/config/model`, refusePut);
 
   // The menu path (onSelect), which used to print the new model immediately.
   await page.locator("#input").fill("/model ");
@@ -74,7 +74,7 @@ test("a refused typed model command is reported instead of announced", async ({
   const taskId = await currentTaskId(page);
   const before = await taskDetail(page, taskId);
 
-  await page.route(`**/api/v1/tasks/${taskId}/model`, refusePut);
+  await page.route(`**/api/v1/tasks/${taskId}/config/model`, refusePut);
 
   // The Enter path (slash-exec), a separate writer with the same contract.
   await page.locator("#input").fill("/model mock model 2");
@@ -93,7 +93,7 @@ test("a refused mode switch rolls the indicator back", async ({ page }) => {
   // The canonical resting mode renders no pill; Plan would render one.
   await expect(page.locator("#mode-pill")).toHaveText("");
 
-  await page.route(`**/api/v1/tasks/${taskId}/mode`, refusePut);
+  await page.route(`**/api/v1/tasks/${taskId}/config/mode`, refusePut);
 
   await page.keyboard.press("Control+m");
 

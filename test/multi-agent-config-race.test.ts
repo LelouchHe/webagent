@@ -40,7 +40,7 @@ describe("config request across a rotation", () => {
   let callsA: string;
   let callsB: string;
   let bodyReadAt: string | null;
-  /** Resolvers waiting for the next `/model` body read to start. */
+  /** Resolvers waiting for the next config body read to start. */
   let bodyReadWaiters: Array<() => void>;
 
   before(async () => {
@@ -84,6 +84,7 @@ describe("config request across a rotation", () => {
       agents: registry,
     });
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks,
       sseManager: Object.assign(new SseManager(), { broadcast() {} }),
@@ -94,9 +95,7 @@ describe("config request across a rotation", () => {
       // the body back, so the request is parked inside `readBody` — the exact
       // window where a real `/clear` can land.
       onRequestBodyReadStart: (url) => {
-        // Any configuration write: the legacy `/model` path and the generic
-        // `/config/<id>` path both read a body.
-        if (!/\/(model|config\/)/.test(url)) return;
+        if (!url.includes("/config/")) return;
         bodyReadAt = url;
         const waiters = bodyReadWaiters;
         bodyReadWaiters = [];
@@ -131,7 +130,7 @@ describe("config request across a rotation", () => {
       .map((line) => JSON.parse(line) as { method: string; params: unknown });
   }
 
-  /** Resolves when the next `/model` request starts reading its body. */
+  /** Resolves when the next config request starts reading its body. */
   function nextBodyRead(): Promise<void> {
     return new Promise<void>((resolve) => {
       bodyReadWaiters.push(resolve);
@@ -144,7 +143,7 @@ describe("config request across a rotation", () => {
    */
   function pausedModelPut(
     taskId: string,
-    configPath = "model",
+    configPath = "config/model",
     value = "probe-model",
   ): {
     response: Promise<{ status: number; json: unknown }>;

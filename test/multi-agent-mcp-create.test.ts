@@ -650,7 +650,7 @@ describe("task_create on the caller's own agent", () => {
     // Override the parent's own execution so inheritance has a value to carry.
     const written = await harness.request(
       "PUT",
-      `/api/v1/tasks/${parent.taskId}/model`,
+      `/api/v1/tasks/${parent.taskId}/config/model`,
       { value: "model-a2" },
     );
     assert.equal(written.status, 200);

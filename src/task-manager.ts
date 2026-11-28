@@ -27,7 +27,6 @@ import {
   RUNTIME_MESSAGE_KINDS,
   buildCollaborationSystemMessage,
   isRuntimeMessageKind,
-  type CollaborationBroadcastRequest,
   type RuntimeMessageKind,
 } from "./collaboration-message.ts";
 import { isoFromMillis } from "./shared/time.ts";
@@ -728,18 +727,14 @@ export class TaskManager implements ObligationHost {
         agentCommands: AgentCommandSnapshot;
       }) => void)
     | null = null;
-  /** SSE broadcast hook for runtime collaboration messages. */
-  private collaborationBroadcast:
-    ((event: CollaborationBroadcastRequest) => void) | null = null;
   /** Live-only delivery status refresh for a sender's message mark. */
   private deliveryStatusBroadcast:
     | ((event: Extract<AgentEvent, { type: "collaboration_delivery" }>) => void)
     | null = null;
   private remoteChildWakeSource: ((taskId: string) => boolean) | null = null;
   /**
-   * SSE broadcast hook for a task that just became live. Every creation that
-   * goes through `createTask` (HTTP, quick prompt, message consume, agent
-   * `task_create`) announces here; the Root-materialization paths
+   * SSE broadcast hook for a task that just became live. Every supported
+   * creation that goes through `createTask` announces here; the Root-materialization paths
    * (`ensureRootTask` / `replaceRoot`) are announced by their own callers.
    */
   private taskCreatedBroadcast:
@@ -1521,18 +1516,6 @@ export class TaskManager implements ObligationHost {
     return taskCwd;
   }
 
-  /**
-   * The directory a rotation uses. Naming no new directory (compaction, bare
-   * `/clear`) keeps the stored spelling even when this build would no longer
-   * produce it — a legacy `..` or relative row — because folding it would move
-   * the task with no user input at all.
-   */
-  private rotationCwd(cwd: string | undefined, task: { cwd: string }): string {
-    return cwd === undefined || cwd === task.cwd
-      ? task.cwd
-      : this.resolveTaskCwd(cwd, task.cwd);
-  }
-
   /** Create a new task in both bridge and store, inheriting the source task's config. */
   async createTask(
     bridge: SessionBridge,
@@ -2074,7 +2057,7 @@ export class TaskManager implements ObligationHost {
     // A rotation's replacement execution is the *verified target* agent: the
     // same binding agent for a rebuild, or an explicitly rescued agent.
     const agentId = this.bridgeAgentId(bridge);
-    const taskCwd = this.rotationCwd(cwd, task);
+    const taskCwd = this.resolveTaskCwd(cwd, task.cwd);
     try {
       const info = await stat(taskCwd);
       if (!info.isDirectory()) throw new Error("not a directory");
@@ -2458,7 +2441,7 @@ export class TaskManager implements ObligationHost {
 
   /**
    * The default agent's started transport, for operations with no task to
-   * derive an agent from (a first task, a quick prompt). This is the only
+   * derive an agent from (for example a first task). This is the only
    * place a caller-less operation picks an agent, and it picks the configured
    * default rather than anything from the request.
    */
@@ -3082,24 +3065,8 @@ export class TaskManager implements ObligationHost {
       mode: string | null;
       reasoning_effort: string | null;
     },
-    opts?: {
-      /**
-       * False on a pure-read path: canonicalize the displayed value without
-       * writing the legacy model identity back to the row. Writes and
-       * operation paths keep the default (true).
-       */
-      persist?: boolean;
-    },
   ): ConfigOption[] {
     const model = task.model ? canonicalModelIdentity(task.model) : task.model;
-    if (
-      opts?.persist !== false &&
-      task.id &&
-      model !== task.model &&
-      model !== null
-    ) {
-      this.store.updateTaskConfig(task.id, "model", model);
-    }
     if (!configOptions.length) return configOptions;
     const stored: Record<string, string | null> = {
       model,
@@ -3957,13 +3924,6 @@ export class TaskManager implements ObligationHost {
     return at === undefined ? null : new Date(at).toISOString();
   }
 
-  /** Install the SSE broadcast hook for runtime collaboration messages. */
-  setCollaborationBroadcast(
-    broadcast: (event: CollaborationBroadcastRequest) => void,
-  ): void {
-    this.collaborationBroadcast = broadcast;
-  }
-
   /** Install the live delivery-status hook (sender mark refresh only). */
   setDeliveryStatusBroadcast(
     broadcast:
@@ -3985,7 +3945,7 @@ export class TaskManager implements ObligationHost {
 
   /**
    * Install the SSE broadcast hook for a newly created task. Every creation
-   * entry point (HTTP create, quick prompt, agent `task_create`) announces
+   * entry point (HTTP create or agent `task_create`) announces
    * through it, so no caller publishes its own copy.
    */
   setTaskCreatedBroadcast(
@@ -4335,17 +4295,6 @@ export class TaskManager implements ObligationHost {
       }),
       { from_ref: `msg:${message.id}` },
     );
-    this.collaborationBroadcast?.({
-      messageId: message.id,
-      sourceTaskId: message.source_task_id,
-      sourceLabel,
-      targetTaskId: taskId,
-      targetLabel,
-      role: "target",
-      taskId,
-      body: message.body,
-      runtimeMessage,
-    });
   }
 
   /**

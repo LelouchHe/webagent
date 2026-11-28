@@ -59,6 +59,7 @@ describe("tokens CRUD", () => {
     apiToken = (await authStore.addToken("api1", "api")).token;
 
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       authStore,
       publicDir,

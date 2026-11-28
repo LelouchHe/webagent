@@ -486,7 +486,7 @@ describe("api module", () => {
     assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1?warm=1");
   });
 
-  it("getSnapshot explicitly requests a warm", async () => {
+  it("getSnapshot is cold by default", async () => {
     fetchResponse = {
       status: 200,
       ok: true,
@@ -494,6 +494,17 @@ describe("api module", () => {
       text: () => Promise.resolve("{}"),
     };
     await api.getSnapshot("s1");
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1/snapshot");
+  });
+
+  it("getSnapshot explicitly requests a warm when needed", async () => {
+    fetchResponse = {
+      status: 200,
+      ok: true,
+      json: () => Promise.resolve({}),
+      text: () => Promise.resolve("{}"),
+    };
+    await api.getSnapshot("s1", { warm: true });
     assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1/snapshot?warm=1");
   });
 
@@ -651,7 +662,7 @@ describe("api module", () => {
 
   it("setConfig sends PUT /api/v1/tasks/:id/:configId", async () => {
     await api.setConfig("s1", "model", "gpt-4");
-    assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1/model");
+    assert.equal(fetchCalls[0].url, "/api/v1/tasks/s1/config/model");
     assert.equal(fetchCalls[0].init!.method, "PUT");
     const body = JSON.parse(fetchCalls[0].init!.body as string);
     assert.equal(body.value, "gpt-4");

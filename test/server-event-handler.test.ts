@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import {
-  projectLegacyPerTaskEvent,
   projectStoredEvents,
   toEventFeedEntries,
 } from "../src/event-egress.ts";
@@ -109,8 +108,11 @@ describe("handleAgentEvent", () => {
       if (!activeMockBroadcasted) return;
       const projected = projectStoredEvents(rows, { store, tasks });
       for (const entry of toEventFeedEntries(projected)) {
-        const legacy = projectLegacyPerTaskEvent(entry.data);
-        if (legacy) activeMockBroadcasted.push(legacy);
+        activeMockBroadcasted.push({
+          ...JSON.parse(entry.data.data),
+          type: entry.data.type,
+          taskId: entry.data.task_id,
+        } as AgentEvent);
       }
     });
     // Every handler in this file drives one mock transport for the task's

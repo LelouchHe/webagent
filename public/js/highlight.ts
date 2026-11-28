@@ -109,12 +109,3 @@ export function enhanceCodeBlocks(container: Element) {
   processCodeBlocks(container);
   void highlightAllIn(container);
 }
-
-/**
- * Theme change is handled entirely in CSS now (see styles.css / hljs theme
- * blocks scoped by [data-theme] + prefers-color-scheme). This is kept as a
- * no-op for backward compat with app.ts wiring.
- */
-export function onThemeChange() {
-  // intentionally empty
-}

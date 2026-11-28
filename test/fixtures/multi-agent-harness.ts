@@ -186,6 +186,7 @@ export async function startHarness(
 
   const makeHandler = (): ReturnType<typeof createRequestHandler> =>
     createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks: tasks!,
       taskOps: createLocalTaskOps({ store, tasks: tasks! }),

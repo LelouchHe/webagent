@@ -95,6 +95,7 @@ describe("SSE ticket flow", () => {
     const linkSyncOwner = new LinkSyncOwner(store);
 
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks: {} as never,
       linkSyncOwner,
@@ -346,6 +347,7 @@ describe("SSE ticket flow", () => {
     const owner = new LinkSyncOwner(localStore);
     const localSse = new SseManager(60_000);
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store: localStore,
       authStore: localAuth,
       linkSyncOwner: owner,
@@ -489,6 +491,7 @@ describe("SSE revocation via heartbeat", () => {
     sse.startHeartbeat();
 
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       authStore,
       ticketStore,

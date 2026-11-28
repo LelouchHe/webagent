@@ -66,6 +66,7 @@ describe("HTTP /events attachment label egress", () => {
     });
 
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks,
       publicDir,

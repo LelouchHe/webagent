@@ -167,6 +167,7 @@ describe("REST collaboration message constructive idempotency", () => {
       },
     });
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks,
       authStore,
@@ -337,6 +338,7 @@ describe("REST collaboration message constructive idempotency", () => {
     const restartedTasks = buildTaskManager(restartedStore);
     restartedTasks.drainCollaborationDeliveries = async () => false;
     const restartedHandler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store: restartedStore,
       tasks: restartedTasks,
       authStore,

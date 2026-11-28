@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/store.ts";
 import {
-  projectLegacyPerTaskEvent,
   projectStoredEvents,
   toEventFeedEntries,
 } from "../src/event-egress.ts";
@@ -95,8 +94,11 @@ export function createToolResultImageHarness(
           sseManager as { broadcastFeedEntry(e: typeof entry): void }
         ).broadcastFeedEntry(entry);
       } else {
-        const legacy = projectLegacyPerTaskEvent(entry.data);
-        if (legacy) broadcasts.push(legacy);
+        broadcasts.push({
+          ...JSON.parse(entry.data.data),
+          type: entry.data.type,
+          taskId: entry.data.task_id,
+        } as AgentEvent);
       }
     }
   });

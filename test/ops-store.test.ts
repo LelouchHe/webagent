@@ -471,7 +471,7 @@ process.on("SIGUSR2", () => {
       const liveOpId = `op-inflight-${randomUUID()}`;
       const liveOpKey = opIdentity(OPS_NAMESPACE, "token:ops-admin", liveOpId);
       const pendingModelWrite = fetch(
-        `http://127.0.0.1:${port}/api/v1/tasks/${created.id}/model`,
+        `http://127.0.0.1:${port}/api/v1/tasks/${created.id}/config/model`,
         {
           method: "PUT",
           headers: {

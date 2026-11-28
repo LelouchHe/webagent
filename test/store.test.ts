@@ -1987,26 +1987,6 @@ describe("Store", () => {
       assert.equal(paths[0].cwd, "/projects/a");
     });
 
-    it("merges legacy non-canonical keys when the store opens", () => {
-      const raw = (store as any).db.prepare(
-        "INSERT INTO recent_paths (cwd, last_used_at) VALUES (?, ?)",
-      );
-      raw.run("/projects/a", 1_000);
-      raw.run("/projects/a/", 2_000);
-      raw.run("/projects/b/./", 500);
-
-      store.close();
-      store = new Store(tmpDir);
-
-      const paths = store.listRecentPaths();
-      assert.deepEqual(
-        paths.map((p) => p.cwd),
-        ["/projects/a", "/projects/b"],
-      );
-      // The merged row keeps the newest use of either spelling.
-      assert.equal(paths[0].last_used_at, 2_000);
-    });
-
     it("stores a cwd with no `.` or `..`, folded the way a shell folds it", () => {
       // `a/link/..` is `a` however `link` is spelled, so no filesystem is
       // consulted: the typed path is what the user meant.
@@ -2034,42 +2014,6 @@ describe("Store", () => {
       store = new Store(tmpDir);
 
       assert.equal(store.getTask(store.rootTaskId)!.cwd, "./~/repo");
-    });
-
-    it("leaves a legacy `..` cwd alone so a running task cannot move", () => {
-      // Before this build, `+t ../foo` stored the raw `..` path and the task
-      // ran where the kernel resolved it. Folding it now would name another
-      // directory, so the row keeps its bytes.
-      store.createTask("legacy-dots", "/w/a", "auto", "test-agent", "a-1");
-      (store as any).db
-        .prepare("UPDATE tasks SET cwd = ? WHERE id = ?")
-        .run("/w/a/link/..", "legacy-dots");
-      (store as any).db
-        .prepare("INSERT INTO recent_paths (cwd, last_used_at) VALUES (?, ?)")
-        .run("/w/a/link/..", 1_000);
-
-      store.close();
-      store = new Store(tmpDir);
-
-      assert.equal(store.getTask("legacy-dots")!.cwd, "/w/a/link/..");
-    });
-
-    it("rewrites a legacy task cwd so it still matches its recent row", () => {
-      // A historical task could carry `/projects/a/` while the recent-path row
-      // written from it is keyed `/projects/a`; the pickers compare the two, so
-      // the task row is canonicalized too.
-      store.createTask("legacy-task", "/work", "auto", "test-agent", "agent-1");
-      (store as any).db
-        .prepare("UPDATE tasks SET cwd = ? WHERE id = ?")
-        .run("/projects/a/", "legacy-task");
-      (store as any).db
-        .prepare("INSERT INTO recent_paths (cwd, last_used_at) VALUES (?, ?)")
-        .run("/projects/a", 1_000);
-
-      store.close();
-      store = new Store(tmpDir);
-
-      assert.equal(store.getTask("legacy-task")!.cwd, "/projects/a");
     });
 
     it("listRecentPaths returns paths sorted by last_used_at DESC", () => {
