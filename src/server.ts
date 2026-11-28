@@ -11,7 +11,10 @@ import { TaskStateManager } from "./task-state.ts";
 import { AgentRegistry } from "./agent-registry.ts";
 import { ExecutionAuthority } from "./execution-authority.ts";
 import { CapabilityStore } from "./mcp/capability.ts";
-import { createMcpEndpoint } from "./mcp/server.ts";
+import {
+  createMcpEndpoint,
+  createMcpSessionCapabilities,
+} from "./mcp/server.ts";
 import { createLocalTaskOps } from "./host/local/adapter.ts";
 import { createRoutedTaskOps, createTaskHost } from "./host/tasks.ts";
 import {
@@ -159,8 +162,7 @@ const tasks = new TaskManager({
   store,
   defaultCwd: config.default_cwd,
   dataDir: config.data_dir,
-  capabilities,
-  mcpBaseUrl,
+  sessionCapabilities: createMcpSessionCapabilities(capabilities, mcpBaseUrl),
   state: taskState,
   authority: executionAuthority,
   agents: agentRegistry,

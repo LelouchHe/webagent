@@ -13,6 +13,7 @@ import { createLocalTaskOps } from "../src/host/local/adapter.ts";
 import { createTaskHost } from "../src/host/tasks.ts";
 import { createRequestHandler } from "../src/http/routes.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
+import { createMcpSessionCapabilities } from "../src/mcp/server.ts";
 import {
   COLLABORATION_MESSAGE_NAMESPACE,
   opIdentity,
@@ -70,6 +71,7 @@ describe("structural idempotency conformance", () => {
   let dir: string;
   let store: Store;
   let tasks: TaskManager;
+  let capabilities: CapabilityStore;
   let authStore: AuthStore;
   let apiToken: string;
   let hostToken: string;
@@ -102,12 +104,15 @@ describe("structural idempotency conformance", () => {
           },
         }) as never,
     });
+    capabilities = new CapabilityStore();
     tasks = new TaskManager({
       store,
       defaultCwd: dir,
       dataDir: dir,
-      capabilities: new CapabilityStore(),
-      mcpBaseUrl: "http://127.0.0.1:0",
+      sessionCapabilities: createMcpSessionCapabilities(
+        capabilities,
+        "http://127.0.0.1:0",
+      ),
       state: new TaskStateManager(),
       authority: new ExecutionAuthority(),
       agents,
@@ -341,9 +346,7 @@ describe("structural idempotency conformance", () => {
 
     // Concurrent duplicate create colliding on PK must not revoke the winner's capability token.
     const winnerId = (a.body as { id: string }).id;
-    const caps = (tasks as unknown as { capabilities: CapabilityStore })
-      .capabilities;
-    const winnerToken = caps.mint(winnerId, "mock", 1);
+    const winnerToken = capabilities.mint(winnerId, "mock", 1);
     const bridge = {
       ...mockBridgeStubs(),
       agentId: "mock",
@@ -360,7 +363,7 @@ describe("structural idempotency conformance", () => {
       }),
     );
     assert.ok(
-      caps.resolve(winnerToken),
+      capabilities.resolve(winnerToken),
       "winner capability token must survive a colliding duplicate create",
     );
   });

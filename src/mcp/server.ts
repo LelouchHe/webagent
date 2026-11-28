@@ -68,6 +68,52 @@ export function buildMcpServerEntry(
   };
 }
 
+/**
+ * Assemble the narrow session-capability port injected into `TaskManager`.
+ * Shares the same `CapabilityStore` with `createMcpEndpoint` while keeping
+ * `TaskManager` free of direct `mcp/` imports.
+ */
+export function createMcpSessionCapabilities(
+  capabilities: CapabilityStore,
+  mcpBaseUrl: string,
+): {
+  issue(input: {
+    taskId: string;
+    agentId: string;
+    mode: "attach" | "replace" | "restore";
+    generation: number | null;
+  }): { token: string; servers: AcpMcpServer[] };
+  promote(token: string, generation: number): void;
+  revoke(token: string): void;
+  revokeByTask(taskId: string): void;
+  revokeOtherTokens(taskId: string, keepToken: string): void;
+} {
+  return {
+    issue({ taskId, agentId, mode, generation }) {
+      const token =
+        mode === "restore"
+          ? capabilities.mint(taskId, agentId, generation)
+          : capabilities.mintInitializing(taskId, agentId);
+      return {
+        token,
+        servers: [buildMcpServerEntry(token, mcpBaseUrl)],
+      };
+    },
+    promote(token, generation) {
+      capabilities.promote(token, generation);
+    },
+    revoke(token) {
+      capabilities.revoke(token);
+    },
+    revokeByTask(taskId) {
+      capabilities.revokeByTask(taskId);
+    },
+    revokeOtherTokens(taskId, keepToken) {
+      capabilities.revokeOtherTokens(taskId, keepToken);
+    },
+  };
+}
+
 export interface McpEndpointOptions {
   /** Per-task capability store (keyed by task id). */
   capabilities: CapabilityStore;

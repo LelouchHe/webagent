@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { Store } from "../src/store.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
+import { createMcpSessionCapabilities } from "../src/mcp/server.ts";
 
 describe("persisted model identity", () => {
   it("does not rewrite values from the previous composite encoding on read", () => {
@@ -78,8 +79,10 @@ describe("persisted model identity", () => {
       store,
       dir,
       dir,
-      new CapabilityStore(),
-      "http://127.0.0.1:6800",
+      createMcpSessionCapabilities(
+        new CapabilityStore(),
+        "http://127.0.0.1:6800",
+      ),
     );
     try {
       store.createTask("task-1", dir, "auto", "test-agent", "session-1");

@@ -9,7 +9,10 @@ import { fileURLToPath } from "node:url";
 import { AgentBridge } from "../src/bridge.ts";
 import { AgentRegistry } from "../src/agent-registry.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
-import { createMcpEndpoint } from "../src/mcp/server.ts";
+import {
+  createMcpEndpoint,
+  createMcpSessionCapabilities,
+} from "../src/mcp/server.ts";
 import { createLocalTaskOps } from "../src/host/local/adapter.ts";
 import type { TaskOps } from "../src/api/tasks.ts";
 import { ExecutionAuthority } from "../src/execution-authority.ts";
@@ -100,8 +103,10 @@ describe("pending capability over a real ACP session", () => {
       store,
       defaultCwd: dir,
       dataDir: dir,
-      capabilities,
-      mcpBaseUrl: `http://127.0.0.1:${port}`,
+      sessionCapabilities: createMcpSessionCapabilities(
+        capabilities,
+        `http://127.0.0.1:${port}`,
+      ),
       state: new TaskStateManager(),
       authority,
       agents: registry,

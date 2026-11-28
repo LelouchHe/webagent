@@ -15,6 +15,7 @@ import { createLocalTaskOps } from "../src/host/local/adapter.ts";
 import { createTaskHost } from "../src/host/tasks.ts";
 import { createRequestHandler } from "../src/http/routes.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
+import { createMcpSessionCapabilities } from "../src/mcp/server.ts";
 import {
   OPS_NAMESPACE,
   opIdentity,
@@ -119,8 +120,10 @@ async function createHarness(
     store,
     defaultCwd: dir,
     dataDir: dir,
-    capabilities: new CapabilityStore(),
-    mcpBaseUrl: "http://127.0.0.1:0",
+    sessionCapabilities: createMcpSessionCapabilities(
+      new CapabilityStore(),
+      "http://127.0.0.1:0",
+    ),
     state: new TaskStateManager(),
     authority: new ExecutionAuthority(),
     agents,

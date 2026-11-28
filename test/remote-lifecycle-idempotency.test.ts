@@ -15,6 +15,7 @@ import { HostRegistry } from "../src/host/remote/registry.ts";
 import { createRoutedTaskOps } from "../src/host/tasks.ts";
 import { createRequestHandler } from "../src/http/routes.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
+import { createMcpSessionCapabilities } from "../src/mcp/server.ts";
 import { withRequestErrorBoundary } from "../src/request-boundary.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { Store } from "../src/store.ts";
@@ -62,8 +63,10 @@ async function createNode(prefix: string): Promise<HostNode> {
     store,
     defaultCwd: dir,
     dataDir: dir,
-    capabilities: new CapabilityStore(),
-    mcpBaseUrl: "http://127.0.0.1:0",
+    sessionCapabilities: createMcpSessionCapabilities(
+      new CapabilityStore(),
+      "http://127.0.0.1:0",
+    ),
     state: new TaskStateManager(),
     authority: new ExecutionAuthority(),
     agents,

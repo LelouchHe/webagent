@@ -6,7 +6,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { CapabilityStore } from "../../src/mcp/capability.ts";
-import { createMcpEndpoint } from "../../src/mcp/server.ts";
+import {
+  createMcpEndpoint,
+  createMcpSessionCapabilities,
+} from "../../src/mcp/server.ts";
 import { createLocalTaskOps } from "../../src/host/local/adapter.ts";
 import { createTaskOpsCore } from "../../src/task-ops.ts";
 import { createRoutedTaskOps, createTaskHost } from "../../src/host/tasks.ts";
@@ -171,8 +174,10 @@ export async function startHarness(options: HarnessOptions): Promise<Harness> {
     store,
     defaultCwd: dir,
     dataDir: dir,
-    capabilities,
-    mcpBaseUrl: "http://127.0.0.1:1",
+    sessionCapabilities: createMcpSessionCapabilities(
+      capabilities,
+      "http://127.0.0.1:1",
+    ),
     state: new TaskStateManager(),
     authority,
     agents: env,

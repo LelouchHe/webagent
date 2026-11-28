@@ -7,7 +7,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { CapabilityStore } from "../src/mcp/capability.ts";
-import { createMcpEndpoint } from "../src/mcp/server.ts";
+import {
+  createMcpEndpoint,
+  createMcpSessionCapabilities,
+} from "../src/mcp/server.ts";
 import type { TaskCaller, TaskOps } from "../src/api/tasks.ts";
 import { createLocalTaskOps } from "../src/host/local/adapter.ts";
 import { TaskManager, type DeliveryBridge } from "../src/task-manager.ts";
@@ -178,8 +181,10 @@ describe("mcp authority over the production host", () => {
       store,
       defaultCwd: dir,
       dataDir: dir,
-      capabilities,
-      mcpBaseUrl: "http://127.0.0.1:1",
+      sessionCapabilities: createMcpSessionCapabilities(
+        capabilities,
+        "http://127.0.0.1:1",
+      ),
       state: new TaskStateManager(),
       authority,
       agents: new StaticAgentEnvironment("agent-a"),
