@@ -250,6 +250,36 @@ export default tseslint.config(
   },
 
   {
+    files: ["src/host/api.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            noEntrypointDependency,
+            {
+              group: [
+                "./local/**",
+                "./remote/**",
+                "./tasks.ts",
+                "./link-sync.ts",
+                "**/host/local/**",
+                "**/host/remote/**",
+                "**/host/tasks.ts",
+                "**/host/link-sync.ts",
+                "**/store.ts",
+                "**/task-manager.ts",
+              ],
+              message:
+                "host/api.ts is a thin Host port contract and cannot import or re-export concrete Host implementations or local services.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  {
     files: ["src/host/remote/**/*.ts"],
     rules: {
       "no-restricted-imports": [

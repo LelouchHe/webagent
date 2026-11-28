@@ -14,6 +14,14 @@ async function restrictedImportErrors(
   const [result] = await eslint.lintText(code, {
     filePath: resolve(ROOT, relPath),
   });
+  assert.equal(
+    result.fatalErrorCount,
+    0,
+    `fatal lint error while checking ${relPath}: ${result.messages
+      .filter((m) => m.fatal)
+      .map((m) => m.message)
+      .join("; ")}`,
+  );
   return result.messages
     .filter((message) => message.ruleId === "no-restricted-imports")
     .map((message) => message.message);
@@ -119,6 +127,44 @@ describe("ESLint architecture dependency boundary matrix", () => {
       assert.ok(
         errors.length > 0,
         `${file} must not be allowed to import ${specifier}`,
+      );
+    }
+  });
+
+  it("forbids host/api.ts from importing or re-exporting concrete Host implementations or local services", async () => {
+    const allowed = await restrictedImportErrors(
+      "src/host/api.ts",
+      'import type { TaskOps } from "../api/tasks.ts";\nexport type X = TaskOps;\n',
+    );
+    assert.deepEqual(
+      allowed,
+      [],
+      "host/api.ts should be allowed to import ../api/tasks.ts",
+    );
+
+    for (const specifier of [
+      "./local/adapter.ts",
+      "./remote/registry.ts",
+      "./tasks.ts",
+      "./link-sync.ts",
+      "../store.ts",
+      "../task-manager.ts",
+    ]) {
+      const importErrors = await restrictedImportErrors(
+        "src/host/api.ts",
+        `import type * as x from "${specifier}";\nexport type X = typeof x;\n`,
+      );
+      assert.ok(
+        importErrors.length > 0,
+        `src/host/api.ts must not be allowed to import ${specifier}`,
+      );
+      const reexportErrors = await restrictedImportErrors(
+        "src/host/api.ts",
+        `export type * from "${specifier}";\n`,
+      );
+      assert.ok(
+        reexportErrors.length > 0,
+        `src/host/api.ts must not be allowed to re-export ${specifier}`,
       );
     }
   });
