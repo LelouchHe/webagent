@@ -52,7 +52,7 @@ WebAgent is a terminal-style web UI for ACP-compatible agents. This document des
 │                  Browser                      │
 │                                               │
 │  app.ts (boot)                                │
-│    ├── connection.ts  ←→ SSE + REST           │
+│    ├── connection.ts  ←→ sync hub + REST      │
 │    ├── events.ts      ←  event dispatch       │
 │    ├── input.ts       →  user messages        │
 │    ├── commands.ts    →  slash commands        │
@@ -62,14 +62,14 @@ WebAgent is a terminal-style web UI for ACP-compatible agents. This document des
 │    └── api.ts         →  REST client          │
 │                                               │
 │  ┌─────────────────────────────────────────┐  │
-│  │           EventSource (SSE)             │  │
+│  │  SharedWorker / in-tab SyncHub (SSE)    │  │
 │  │     GET /api/v1/events/stream            │  │
 │  └─────────────────────────────────────────┘  │
 │  ┌─────────────────────────────────────────┐  │
 │  │            fetch (REST)                 │  │
 │  │  POST /api/v1/tasks/:id/prompt       │  │
 │  │  GET /api/v1/tasks/:id/events       │  │
-│  │  PUT /api/v1/tasks/:id/model        │  │
+│  │  PUT /api/v1/tasks/:id/config/model │  │
 │  │  ...                                    │  │
 │  └─────────────────────────────────────────┘  │
 └──────────────────────────────────────────────┘
@@ -87,7 +87,7 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content
 | -------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | **`app.ts`**               | Boot entry point. Imports all modules, calls `connect()`, registers service worker                  | —                                                                                               |
 | **`state.ts`**             | Shared state singleton, DOM refs (`dom`), config helpers, routing, cancel logic                     | `state`, `dom`, `setBusy()`, `requestNewTask()`, `resetTaskUI()`, `setConnectionStatus()` |
-| **`connection.ts`**        | SSE + REST connection lifecycle, parallel init, visibility sync                                     | `connect()`                                                                                     |
+| **`connection.ts`**        | SharedWorker/in-tab sync hub, per-feed catch-up consumer, parallel REST init, visibility sync        | `connect()`                                                                                     |
 | **`events.ts`**            | Event dispatch (live + replay), history loading, permission responses                               | `handleEvent()`, `loadHistory()`, `loadNewEvents()`                                             |
 | **`event-interpreter.ts`** | Pure data transformation for ACP events — zero DOM dependency                                       | `interpretToolCall()`, `classifyPermissionOption()`, `parseDiff()`, etc.                        |
 | **`constants.ts`**         | Display constants (tool icons, plan status icons)                                                   | `TOOL_ICONS`, `PLAN_STATUS_ICONS`                                                               |
@@ -112,12 +112,13 @@ The remaining modules, by area:
 | Files | `file-browser.ts` (`/view` path semantics), `view-command.ts` (`/view` menu), `file-viewer.ts` (read-only viewer) |
 | Shell | `auth-fetch.ts` (Bearer injection, 401 handling), `login.ts` / `login-core.ts`, `theme.ts`, `log.ts` (in-page logger), `local-reset.ts`, `inbox-indicator.ts`, `live-source.ts` |
 | Share viewer | `share/viewer.ts`, `share/commands.ts`, `share/attachment-rewriter.ts` — see [Share Links](../share.md) |
+| Browser sync | `sync-hub.ts` (one physical SSE + tab ports), `sync-client.ts` (SharedWorker/fallback transport), `sync-worker.ts` (static same-origin SharedWorker), and the generic `src/shared/sync` consumer |
 
 **Dependency graph** (arrows = imports):
 
 ```
 app.ts
-  ├── connection.ts        → state, render, events, api
+  ├── connection.ts        → state, render, events, api, sync-client, sync-hub
   ├── events.ts            → state, render, api, event-interpreter, types
   ├── event-interpreter.ts → constants, types  (ZERO DOM dependency)
   ├── input.ts             → state, render, commands, attachments, api
@@ -157,35 +158,40 @@ The module imports trigger side effects (event listeners, theme initialization).
 
 ## Connection Lifecycle
 
-### SSE Stream
+### Shared sync transport
 
-`connect()` mints a stream ticket, opens the global SSE stream, and then starts
-REST initialization while the stream registers:
+`connect()` opens one `SyncHub` through a static same-origin SharedWorker, with
+an in-tab fallback when SharedWorker is unavailable. The hub mints an SSE
+ticket, owns the single `/api/v1/events/stream` connection, and fans
+`feed_entry`, ephemeral, and control messages to tab ports. Each tab routes feed
+entries through a `SyncFeedConsumer`; a current task's durable position is
+applied serially, overlap is ignored, and gaps are filled by paged REST reads.
 
 ```
 connect()
-  └── POST /sse-ticket                         // EventSource cannot send Bearer
-        ├── new EventSource('/api/v1/events/stream?ticket=…')
+  └── connectToSyncHub()
+        ├── sync-worker.ts -> SyncHub (or DirectPort fallback)
+        │     ├── POST /sse-ticket
+        │     └── EventSource('/api/v1/events/stream?ticket=…')
         └── initializeTaskAndIntent()
-              ├── GET /config                  // agent directory
-              ├── GET /tasks                   // startup list baseline
-              └── initTask()                   // after /config settles
+              ├── GET /config
+              ├── GET /tasks
+              └── initTask()
 ```
 
-The `connected` frame does not gate task loading, but task loading does start
-after the ticket and `/config`, so a cold load with a hash costs six serial
-round trips (HTML, assets, ticket, config, history and detail, snapshot). The
-order is kept on purpose: history and detail are read a round trip after the
-stream opens, by which time it has registered in practice, so events persisted
-around registration reach the client one way or the other. That is relied on,
-not enforced. See the boot waterfall entry in
-[known-issues](../known-issues.md).
+The hub isolates SSE auth generations and keeps a bounded grace window when the
+last tab disconnects. The tab consumer, not the hub, decides how a committed
+row changes a conversation. Ephemeral events bypass the durable feed position
+and apply only to their real semantics (for example runtime warm-up or bash
+termination).
 
 **SSE message handling:**
 
 - `connected` event → stores `state.clientId`, reports visibility via REST
-- All other events → dispatched to `handleEvent()`
-- `onerror` → close, cleanup, reconnect after 3 seconds
+- `feed_entry` → ordered per-task `SyncFeedConsumer` apply
+- `ephemeral` / `control` → dispatched to `handleEvent()`
+- `disconnected` → the hub and consumer recover; a new generation rejects stale
+  frames, reads, and delayed continuations
 
 ### REST Initialization (Parallel)
 
@@ -212,24 +218,24 @@ For **full loads** (new task or first visit):
 
 ```
 Promise.all([
-  api.getTask(taskId),     // GET detail?warm=1
-  loadHistory(taskId),     // GET /events?flush=1&limit=N
+  api.getTask(taskId, { warm: true }), // establish execution metadata
+  loadHistory(taskId),                 // committed feed catch-up
 ])
-→ hydrateTaskRuntime(taskId)  // GET /snapshot?warm=1, after replay drains patches
+→ hydrateTaskRuntime(taskId)  // cold snapshot; warm detail already requested it
 → handleEvent({ type: 'task_created', ... })
 ```
 
 For **incremental reconnects** (same task, SSE dropped):
 
 ```
-api.getTask(taskId)        // GET detail?warm=1 for config/title
+api.getTask(taskId, { warm: true }) // warm read for config/title
 → handleEvent({ type: 'task_created', ... })
-→ loadNewEvents(taskId)       // GET /events?flush=1&after=N
+→ feed catch-up from the applied position
 ```
 
-On a full load, history renders as soon as its events arrive, without waiting
-for task resume; the snapshot follows the replay so it is newer than any live
-patch queued during it.
+`getSnapshot()` is cold by default. The snapshot reconciliation paths call it
+without `warm=1`, while navigation/detail call sites that need execution
+metadata request warm explicitly.
 
 ### Reconnection
 
@@ -1053,11 +1059,13 @@ This eliminates the serial dependency chain that existed with WebSocket-only arc
 
 ### Global SSE Stream
 
-The client connects to `/api/v1/events/stream` (global), not per-task. This means:
+The client connects to `/api/v1/events/stream` only once. This means:
 
 - No reconnect needed on task switch
 - Multi-client broadcast works naturally (see other clients' task changes)
-- One connection per browser tab, regardless of task switches
+- One physical connection per SharedWorker scope, normally shared by multiple
+  tabs; each tab still owns its focus and visibility intent
+- No per-task SSE URL, event-id replay branch, or `Last-Event-ID` framing
 
 ### Optimistic UI + Retry
 

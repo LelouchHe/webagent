@@ -27,6 +27,13 @@ The module only decides *when* to send, retry, read, or stop. What an entry
 means, how it is stored, and what counts as hand-off are the caller's: for
 links, `src/host/link-sync.ts` and the `Store` implement those ports.
 
+The main browser also uses the feed consumer in `public/js/sync-hub.ts`. A
+same-origin SharedWorker owns the single global SSE connection and fans feed
+frames out to tab ports; `SyncFeedConsumer` performs ordered REST catch-up,
+applies durable feed positions, and rejects stale overlap. The browser keeps
+ephemeral delivery separate from persisted feed rows and the server's
+outer-commit observer publishes only committed event batches.
+
 ## Request
 
 `sendSyncRequest` sends one typed request with an operation id and bounded

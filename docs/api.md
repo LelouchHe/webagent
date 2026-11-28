@@ -126,10 +126,9 @@ API discovery endpoint. Returns the API version and top-level endpoint paths.
     "files": "/api/v1/files",
     "config": "/api/v1/config",
     "events_stream": "/api/v1/events/stream",
-    "hosts": "/api/v1/hosts",
-    "prompt": "/api/beta/prompt",
     "push": "/api/beta/push",
-    "clients": "/api/beta/clients"
+    "clients": "/api/beta/clients",
+    "hosts": "/api/v1/hosts"
   }
 }
 ```
@@ -315,7 +314,7 @@ was not sent; the body carries `error` plus `agentId` for a local agent)
 **Side effects:**
 
 - A local creation broadcasts `task_created` to all SSE clients. The event is emitted by task
-  creation itself, so the quick prompt and the Agent's `task_create` tool
+  creation itself, so every supported task-creation path, including the Agent's `task_create` tool,
   announce the same event; a request's `X-Client-Op-Id` rides it as
   `clientOpId`, which is how a client whose create response was lost matches
   the task. An event names a task that now exists, nothing else. A creation
@@ -323,7 +322,7 @@ was not sent; the body carries `error` plus `agentId` for a local agent)
   its own route answers with the id and the client switches there, so an
   announcement would install it first and make that switch a no-op
 - A local creation broadcasts `config_option_update` if config was inherited
-- A local creation records and broadcasts a `system_message` (`kind: task_created`) on the parent
+- A local creation records a `system_message` (`kind: task_created`) on the parent
   task — the same row the Agent's `task_create` tool writes, with `from_ref`
   `user` instead of `agent` — so user- and agent-created tasks look identical in
   the task flow and survive a reload. The row names the agent the task landed on
@@ -1897,7 +1896,7 @@ Retrieve a previously uploaded attachment. Responses are immutably cached
 
 **Response** `200`: Binary with appropriate `Content-Type`.
 
-**Errors:** `403` (path traversal), `404` (not found)
+**Errors:** `401` (missing or invalid signed URL), `403` (path traversal), `404` (not found)
 
 ---
 
@@ -1905,10 +1904,9 @@ Retrieve a previously uploaded attachment. Responses are immutably cached
 
 #### `GET /api/v1/events/stream`
 
-**Global SSE stream.** Receives all events from all tasks for ordinary user
-tickets. This is the primary stream used by the WebAgent frontend. Host
-tickets connect only for connection/heartbeat transport and receive no business
-broadcasts.
+**Global SSE stream.** The only task-event SSE endpoint. It receives committed
+event-feed entries for every task plus non-persisted application events.
+This is the primary stream used by the WebAgent frontend.
 
 **Response:** `text/event-stream`
 
@@ -1918,33 +1916,18 @@ On connection, the server sends a `connected` event:
 data: {"type":"connected","clientId":"cl-a1b2c3d4e5f6"}
 ```
 
-Then all subsequent events are streamed as they occur:
+Committed rows use the feed envelope:
 
 ```
-data: {"type":"message_chunk","taskId":"abc-123","text":"Hello"}
+data: {"feed":"abc-123","pos":42,"prev":41,"data":{"id":12,"task_id":"abc-123","seq":42,"type":"assistant_message","data":"...","from_ref":"agent","created_at":"..."}}
 ```
+
+Ephemeral events, such as `task_runtime_warmed` or `bash_done`, remain ordinary
+top-level `AgentEvent` JSON. A staged `tool_call_raw_output` is emitted as a
+separate ephemeral immediately after its committed `tool_call_update` feed
+entry.
 
 **Heartbeat:** A named `event: heartbeat\ndata: {}` frame is sent every 15 seconds (and once immediately on connect) to prevent proxy/QUIC idle timeouts. Frontend also listens to this event to drive per-task visibility refresh — see [Visibility Sync & Push Suppression](architecture/client.md#visibility-sync--push-suppression).
-
----
-
-#### `GET /api/v1/tasks/:id/events/stream`
-
-**Per-task SSE stream.** Only receives events for the specified task. Supports `Last-Event-ID` header for reconnection replay.
-Host tickets are not accepted on this endpoint.
-
-**Response:** `text/event-stream`
-
-| Header          | Description                                                                                    |
-| --------------- | ---------------------------------------------------------------------------------------------- |
-| `Last-Event-ID` | If provided, replays all stored events with `seq > Last-Event-ID` before streaming live events |
-
-Events include an `id` field (the seq number) for automatic reconnection:
-
-```
-id: 42
-data: {"type":"message_chunk","taskId":"abc-123","text":"Hello"}
-```
 
 ---
 
@@ -2143,32 +2126,6 @@ These endpoints are under `/api/beta/` because their design is not yet stable. S
 
 These APIs work and are used in production, but may be redesigned or replaced when we have a better abstraction for cross-client notifications. Breaking changes are possible without a major version bump.
 
-### One-Shot Prompt
-
-#### `POST /api/beta/prompt`
-
-Create a temporary task and send a prompt in one call. Useful for programmatic/API-only use. This endpoint is in beta because the response format and options (e.g. synchronous wait mode) may change.
-
-**Request body:**
-
-| Field  | Type   | Required | Description                       |
-| ------ | ------ | -------- | --------------------------------- |
-| `text` | string | Yes      | The prompt text                   |
-| `cwd`  | string | No       | Working directory for the task |
-
-**Response** `202`:
-
-```json
-{
-  "taskId": "new-task-id",
-  "streamUrl": "/api/v1/tasks/new-task-id/events/stream"
-}
-```
-
-The client should connect to the `streamUrl` SSE endpoint to receive the agent's response.
-
----
-
 ### Push Notifications
 
 VAPID-based Web Push for background notifications. See `src/push-service.ts`.
@@ -2274,7 +2231,7 @@ These events are streamed in real-time via SSE as the agent works.
 | `connected`             | `clientId`, `pendingCount`                                                               | SSE connection established, with the authoritative pending inbox count. Not an agent event — generated by the server. |
 | `task_runtime_warmed`   | `taskId`, `agentId`, `configOptions`, `agentCommands`                                                  | A background warm-up for that task finished. Published after the request with `warm=1` already answered; a client applies it only when it is viewing that task. Server-originated, never an execution event. |
 | `connected` (agent)     | `agentId`, `agent`, `configOptions`                                                                   | One agent's process connected. Same event name as the handshake, distinguished by `agentId` + `agent`; clients only let it complete a reload of the agent carrying their current task. |
-| `task_created`       | `taskId`, `agentId`, `parentId?`, `parentAgentId?`, `cwd`, `cwdDisplay?`, `title`, `configOptions`, `agentCommands?`, `clientOpId?`, `busyKind?`                                | Task created or resumed. A creation a caller asked for (HTTP create, quick prompt, agent `task_create`) announces itself from the creation itself; an internal carrier creation does not. `clientOpId` is the requesting client's own operation. `parentId`/`parentAgentId` are the activation facts: a client settles the status bar's reference without another read. |
+| `task_created`       | `taskId`, `agentId`, `parentId?`, `parentAgentId?`, `cwd`, `cwdDisplay?`, `title`, `configOptions`, `agentCommands?`, `clientOpId?`, `busyKind?`                                | Task created or resumed. A supported creation path announces itself from the creation itself; an internal carrier creation does not. `clientOpId` is the requesting client's own operation. `parentId`/`parentAgentId` are the activation facts: a client settles the status bar's reference without another read. |
 | `task_deleted`       | `taskId`, `agentId?`, `parentId?`, `replacedBy?`, `clientOpId?`                                | Task was deleted; `agentId` is the agent that carried the removed execution; `replacedBy` is its successor when it has one (today only a Root exit), which a client viewing it follows before `parentId` |
 | `task_title_updated` | `taskId`, `title`                                                                     | Task title set (explicit or id-default)                                                                            |
 | `task_expired`       | `taskId`                                                                              | Task expired in the ACP agent                                                                                    |
@@ -2288,7 +2245,7 @@ These events are streamed in real-time via SSE as the agent works.
 | `plan`                  | `taskId`, `entries`                                                                   | Agent plan update. Each entry: `{ status, content }`                                                                |
 | `permission_request`    | `requestId`, `taskId`, `title`, `options`                                             | Agent needs permission to proceed                                                                                   |
 | `permission_response`   | `requestId`, `taskId`, `optionName`, `denied`                                         | Permission was resolved (server-generated)                                                                          |
-| `system_message`        | `taskId`, `kind`, `title`, `body?`, plus `messageId`/`sourceTaskId`/`targetTaskId`/`role` and the raw labels (`sourceLabel`/`targetLabel`, `taskTitle` for `task_created`) | A projected system row: a title and a readable body. `kind` names the fact (`collaboration`, `task_created`, `task_cancel`, `agent_rotation`, `handoff_reminder`, `task_outcome_notice`, …) and is what replay stores, so live and replay render through the same branch. A runtime message keeps its own kind rather than `collaboration`, has no `sourceTaskId`/`sourceLabel` because the runtime is not a Task to reference, and is titled in the runtime's voice with no task reference, so a client that dispatches on `kind` must not go looking for one in that title. **The raw labels travel with the row**: a client anchors the reference it may mark inside `title` by task id, and cannot recover it from the rendered text (titles repeat and may contain quotes or the words between two references). Dropping them costs the live mark only — replay still marks from the stored `data` — so both forms must carry the same fields. Use `buildCollaborationBroadcast` / `buildTaskCreatedBroadcast` rather than writing the envelope by hand |
+| `system_message`        | `taskId`, `kind`, `title`, `body?`, plus fact-specific ids, roles and raw task labels | A persisted system row. `kind` names the fact (`collaboration`, `task_created`, `task_cancel`, `agent_rotation`, `handoff_reminder`, `task_outcome_notice`, …). Live delivery uses the committed `events` feed entry whose `data` JSON is this payload, so live and replay consume one row shape. Runtime messages keep their own kind and omit a source task because the runtime is not a Task. |
 | `prompt_done`           | `taskId`, `stopReason`, `promptId?`                                                    | Agent turn completed with a standard ACP stop reason                                                               |
 | `error`                 | `message`, `taskId?`, `promptId?`                                                      | Prompt or agent error; task-scoped errors are persisted for replay                                               |
 | `user_message`          | `taskId`, `text`, `attachments?` (array of `{kind, attachmentId, displayName, mimeType, path?, width?, height?}`) | User message broadcast (for multi-client sync)                                                                      |
@@ -2299,7 +2256,7 @@ These events are streamed in real-time via SSE as the agent works.
 | `message_created`       | `messageId`                                                                              | Unbound inbox message arrived. Metadata-only — no body/title on the wire; pull via `GET /api/v1/messages/:id`       |
 | `message_consumed`      | `messageId`, `taskId`                                                                 | Inbox message was consumed (task materialized). Clients should remove inbox row and close matching notifications |
 | `message_acked`         | `messageId`                                                                              | Inbox message was dismissed without consume                                                                         |
-| `inbox_count_changed`   | `pendingCount`                                                                           | Authoritative pending inbox count after a mutation or TTL cleanup. Delivered globally, including task-scoped SSE clients |
+| `inbox_count_changed`   | `pendingCount`                                                                           | Authoritative pending inbox count after a mutation or TTL cleanup. Delivered to every global SSE client |
 
 ### Replay-Only Events
 
@@ -2394,11 +2351,10 @@ Events are stored in the `events` table with auto-incrementing `seq` numbers per
 
 The `SseManager` class (`src/sse-manager.ts`) manages all SSE connections:
 
-- **Global clients** (`/api/v1/events/stream`): `taskId` is `undefined`, receives all events
-- **Per-task clients** (`/api/v1/tasks/:id/events/stream`): only receives events for that task
-- **Broadcast logic**: iterates all clients; skips per-task clients whose `taskId` doesn't match
+- **Global clients** (`/api/v1/events/stream`) receive all committed feed entries and ephemeral events
+- **Broadcast logic**: iterates all clients; filtering by the current task belongs to the client consumer
 - **Heartbeat**: Named `event: heartbeat\ndata: {}\n\n` every 15s (plus once immediately on connect). Prevents Cloudflare HTTP/3 (QUIC) and other proxies from closing idle connections. The frontend also listens via `EventSource.addEventListener("heartbeat", ...)` to drive per-task visibility refresh (see [Visibility Sync & Push Suppression](architecture/client.md#visibility-sync--push-suppression)). Timer uses `.unref()` to not block Node.js process exit.
-- **Auto-reconnect with replay**: Per-task streams support `Last-Event-ID` header. On reconnect, the server replays all events after the given seq from the database.
+- **Reconnect and replay**: `SyncFeedConsumer` tracks each feed's durable position; after reconnect it pages REST history from that position and ignores stale or overlapping watch frames.
 - **Cleanup**: Clients are removed on `res.close` event (browser disconnect, network drop)
 
 ### Gzip Compression

@@ -198,7 +198,9 @@ webagent status                        # show running state
 
 The daemon writes a PID file (`webagent.pid`) into the configured `data_dir`, and a log file (`webagent.log`) in the current directory. The PID file living in `data_dir` lets multiple instances coexist on the same machine — each `--config` points at its own `data_dir` — but `stop`/`status`/`restart` must still see the same `--config` (or run from the same cwd if you rely on defaults) so they resolve to the same PID file. The log file, by contrast, is per-shell.
 
-Upgrading across the timestamp migration (schema rebuild, `VACUUM`, and the rollback rule that requires restoring the pre-deploy database backup) has its own runbook: see [Timestamp normalization → Migration and rollback](schema.md#migration-and-rollback).
+Pre-1.0 schema changes are breaking: an incompatible database is refused
+without being migrated. Back up and reset the data directory as described in
+[Pre-1.0 reset policy](schema.md#pre-10-reset-policy).
 
 For auto-start on boot, see [Auto-Start on Boot](autostart.md) (launchd, systemd, crontab, and Windows Task Scheduler examples).
 

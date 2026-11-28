@@ -96,8 +96,8 @@ logo/count button opens the `/inbox` picker.
 The SSE `connected` handshake supplies the initial `pendingCount`, so startup
 does not fetch message bodies. Later create, consume, dismiss, and TTL cleanup
 operations broadcast a global `inbox_count_changed` event with the
-authoritative post-mutation count. Global delivery bypasses per-task SSE
-filtering, keeping every connected client in sync. Inbox lifecycle events no
+authoritative post-mutation count. The single global SSE stream delivers it to
+every connected client. Inbox lifecycle events no
 longer add informational rows to the active conversation.
 
 ### `/inbox` slash menu
