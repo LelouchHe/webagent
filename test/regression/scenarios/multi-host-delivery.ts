@@ -5,6 +5,7 @@ import {
   EMPTY_MOCK,
   hostTokenPath,
   provisionHostToken,
+  waitForHost,
 } from "../multi-host.ts";
 
 interface State {
@@ -399,6 +400,7 @@ export default scenario<State>({
           // Hold the owner -> hub feed so the hub's in-flight send goes out
           // before child_left removes the link on hub.
           link.disconnect("watch");
+          await waitForHost(client, "hub", "owner", "unreachable");
           const deleted = await client
             .instance("owner")
             .rest("DELETE", `/api/v1/tasks/${removableId}`);
@@ -443,6 +445,7 @@ export default scenario<State>({
           const link = client.forwarder("link");
           const childId = readTaskId(state.ownerDb, "Delivery Child");
           link.disconnect("watch");
+          await waitForHost(client, "hub", "owner", "unreachable");
           await client
             .instance("hub")
             .rest("POST", `/api/v1/tasks/${state.parentId}/prompt`, {
@@ -493,6 +496,7 @@ export default scenario<State>({
           // hub's synchronous delete succeeds, then resume feed to observe the
           // queued report failing with target_deleted without blocking P1.
           link.disconnect("watch");
+          await waitForHost(client, "hub", "owner", "unreachable");
           await client
             .instance("owner")
             .rest("POST", `/api/v1/tasks/${p2ChildId}/prompt`, {
