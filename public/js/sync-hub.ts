@@ -47,6 +47,7 @@ export type TabToHubMessage =
 
 export type HubToTabMessage =
   | { type: "ready" }
+  | { type: "connecting"; authGen: number }
   | {
       type: "connected";
       clientId: string;
@@ -148,6 +149,7 @@ export class SyncHub {
   private debugLevel: string | undefined;
   private pendingCount = 0;
   private sseConnected = false;
+  private sseConnecting = false;
   private supervisorRunning = false;
   private hasConnectedOnce = false;
   private eventSource: EventSource | null = null;
@@ -296,6 +298,12 @@ export class SyncHub {
         reconnected: false,
       });
     } else {
+      if (this.sseConnecting) {
+        entry.port.postMessage({
+          type: "connecting",
+          authGen: this.authGen,
+        });
+      }
       this.startSupervisor();
     }
     this.flushVisibilityIfChanged();
@@ -333,6 +341,12 @@ export class SyncHub {
           reconnected: false,
         });
       } else {
+        if (this.sseConnecting) {
+          entry.port.postMessage({
+            type: "connecting",
+            authGen: this.authGen,
+          });
+        }
         this.startSupervisor();
       }
       this.flushVisibilityIfChanged();
@@ -425,6 +439,9 @@ export class SyncHub {
       return;
     }
 
+    this.sseConnecting = true;
+    this.broadcastAuthenticated({ type: "connecting", authGen });
+
     let ticket: string;
     try {
       const headers: Record<string, string> = {
@@ -498,6 +515,7 @@ export class SyncHub {
   ): void {
     const reconnected = this.hasConnectedOnce;
     this.hasConnectedOnce = true;
+    this.sseConnecting = false;
     this.sseConnected = true;
     this.clientId = raw.clientId as string;
     this.visibilityRev = 0;
@@ -616,7 +634,13 @@ export class SyncHub {
       es.onmessage = null;
       es.close();
     }
-    if (es || this.sseConnected || this.clientId !== null) {
+    const wasActive =
+      Boolean(es) ||
+      this.sseConnected ||
+      this.sseConnecting ||
+      this.clientId !== null;
+    this.sseConnecting = false;
+    if (wasActive) {
       this.sseConnected = false;
       this.clientId = null;
       this.lastSentTaskIdsKey = null;

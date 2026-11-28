@@ -148,11 +148,7 @@ function sendHello(): void {
 }
 
 function sendVisibility(taskId: string | null = state.taskId): void {
-  sendToHub({
-    type: "visibility",
-    visible: !document.hidden,
-    taskId,
-  });
+  sendToHub({ type: "visibility", visible: !document.hidden, taskId });
 }
 
 function sendFocus(taskId: string | null): number {
@@ -545,6 +541,9 @@ function handleHubFocusAck(
 function handleHubMessage(msg: HubToTabMessage): void {
   switch (msg.type) {
     case "ready":
+      return;
+    case "connecting":
+      setConnectionStatus("connecting", "connecting");
       return;
     case "connected":
       handleHubConnected(msg);
