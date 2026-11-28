@@ -125,6 +125,7 @@ export class SyncOutbox<TRequest = unknown, TResponse = unknown> {
       timeoutMs: this.options.timeoutMs,
       transport: this.options.transport,
       timer: this.options.timer,
+      retries: 0,
     });
     if (
       !this.started ||

@@ -128,6 +128,13 @@ const FeedEntrySchema = z.object({
   data: z.unknown(),
 });
 
+const TaskFeedEntrySchema = z.object({
+  feed: z.string().min(1),
+  pos: z.number().int().positive(),
+  prev: z.number().int().nonnegative(),
+  data: TaskEventSchema,
+});
+
 export interface OwnerTaskHistoryEvent extends CanonicalTaskHistoryEvent {
   parsedData: Record<string, unknown>;
 }
@@ -141,13 +148,19 @@ export function decodeOwnerTaskEvents(
     throw new HostConnectionFailure("invalid_response");
   }
   return parsed.data.events.map((event) => {
-    const row = TaskEventSchema.safeParse(event);
-    if (!row.success || row.data.task_id !== taskId) {
+    const entry = TaskFeedEntrySchema.safeParse(event);
+    if (
+      !entry.success ||
+      entry.data.feed !== taskId ||
+      entry.data.data.task_id !== taskId ||
+      entry.data.pos !== entry.data.data.seq
+    ) {
       throw new HostConnectionFailure("invalid_response");
     }
+    const row = entry.data.data;
     let parsedData: unknown;
     try {
-      parsedData = JSON.parse(row.data.data) as unknown;
+      parsedData = JSON.parse(row.data) as unknown;
     } catch {
       throw new HostConnectionFailure("invalid_response");
     }
@@ -159,7 +172,7 @@ export function decodeOwnerTaskEvents(
       throw new HostConnectionFailure("invalid_response");
     }
     return {
-      ...row.data,
+      ...row,
       parsedData: parsedData as Record<string, unknown>,
     };
   });
@@ -228,15 +241,6 @@ function responseError(body: unknown, status: number): string {
     typeof (body as { error?: unknown }).error === "string"
     ? (body as { error: string }).error
     : `HTTP ${status}`;
-}
-
-function isOpAbortedResponse(status: number, body: unknown): boolean {
-  return (
-    status === HTTP_STATUS.CONFLICT &&
-    body !== null &&
-    typeof body === "object" &&
-    (body as { code?: unknown }).code === "op_aborted"
-  );
 }
 
 type FencedRequestOutcome =
@@ -320,8 +324,17 @@ export class HostConnection {
       timer: this.timer,
       retries: this.createRetries,
     });
+    if (outcome.kind === "skipped") {
+      return { kind: "not_sent", reason: "Remote task create was skipped" };
+    }
     if (outcome.kind === "unknown") {
-      return { kind: "unknown", reason: errorMessage(outcome.error) };
+      return {
+        kind: "unknown",
+        reason:
+          outcome.status !== undefined
+            ? responseError(outcome.body, outcome.status)
+            : errorMessage(outcome.error),
+      };
     }
     if (outcome.kind === "rejected") {
       return {
@@ -372,54 +385,25 @@ export class HostConnection {
     request: HostHttpRequest,
     beforeSend?: () => boolean | void,
   ): Promise<FencedRequestOutcome> {
-    const opId = randomUUID();
-    let lastUnknownReason = "Remote request result is unknown";
-
-    for (let attempt = 0; attempt <= LIFECYCLE_REQUEST_RETRIES; attempt += 1) {
-      if (beforeSend) {
-        if (attempt === 0) {
-          if (beforeSend() === false) return { kind: "skipped" };
-        } else {
-          try {
-            if (beforeSend() === false) {
-              return { kind: "unknown", reason: lastUnknownReason };
-            }
-          } catch {
-            return { kind: "unknown", reason: lastUnknownReason };
-          }
-        }
-      }
-
-      const outcome = await sendSyncRequest({
-        opId,
-        request,
-        timeoutMs: REQUEST_TIMEOUT_MS,
-        transport: this.requestTransport,
-        timer: this.timer,
-        retries: 0,
-      });
-
-      if (outcome.kind === "success") return outcome;
-      if (outcome.kind === "rejected") {
-        if (isOpAbortedResponse(outcome.status, outcome.body)) {
-          return {
-            kind: "unknown",
-            reason: responseError(outcome.body, outcome.status),
-          };
-        }
-        if (attempt > 0) {
-          return {
-            kind: "unknown",
-            reason: `${lastUnknownReason}; retry returned HTTP ${outcome.status}: ${responseError(outcome.body, outcome.status)}`,
-          };
-        }
-        return outcome;
-      }
-
-      lastUnknownReason = errorMessage(outcome.error);
+    const outcome = await sendSyncRequest({
+      opId: randomUUID(),
+      request,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      transport: this.requestTransport,
+      timer: this.timer,
+      retries: LIFECYCLE_REQUEST_RETRIES,
+      beforeSend: beforeSend ? () => beforeSend() : undefined,
+    });
+    if (outcome.kind === "unknown") {
+      return {
+        kind: "unknown",
+        reason:
+          outcome.status !== undefined
+            ? responseError(outcome.body, outcome.status)
+            : errorMessage(outcome.error),
+      };
     }
-
-    return { kind: "unknown", reason: lastUnknownReason };
+    return outcome;
   }
 
   async cancelTask(
@@ -558,8 +542,10 @@ export class HostConnection {
     if (outcome.kind === "rejected") {
       throw new HostRequestError(path, outcome.status);
     }
-    if (outcome.kind === "unknown") {
-      throw new HostConnectionFailure("network", { cause: outcome.error });
+    if (outcome.kind !== "success") {
+      throw new HostConnectionFailure("network", {
+        cause: outcome.kind === "unknown" ? outcome.error : undefined,
+      });
     }
     if (outcome.body === null) {
       throw new HostConnectionFailure("invalid_response");
@@ -582,8 +568,10 @@ export class HostConnection {
     if (outcome.kind === "rejected") {
       throw new HostRequestError(path, outcome.status);
     }
-    if (outcome.kind === "unknown") {
-      throw new HostConnectionFailure("network", { cause: outcome.error });
+    if (outcome.kind !== "success") {
+      throw new HostConnectionFailure("network", {
+        cause: outcome.kind === "unknown" ? outcome.error : undefined,
+      });
     }
     const parsed = RemoteTaskStatusSchema.safeParse(outcome.body);
     if (!parsed.success) {

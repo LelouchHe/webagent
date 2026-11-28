@@ -28,7 +28,7 @@ export interface StreamSupervisorOptions {
   retryDelay: (failures: number, failure: StreamFailure) => number;
   onFailure?: (failure: StreamFailure) => void;
   handshakeTimeoutMs?: number;
-  stallTimeoutMs?: number;
+  stallTimeoutMs?: number | null;
   clock?: Partial<StreamClock>;
 }
 
@@ -58,7 +58,7 @@ export class StreamSupervisor {
   private readonly retryDelay: StreamSupervisorOptions["retryDelay"];
   private readonly onFailure: StreamSupervisorOptions["onFailure"];
   private readonly handshakeTimeoutMs: number | null;
-  private readonly stallTimeoutMs: number;
+  private readonly stallTimeoutMs: number | null;
   private readonly clock: StreamClock;
   private current: StreamAttempt | null = null;
   private abort: AbortController | null = null;
@@ -79,7 +79,10 @@ export class StreamSupervisor {
         }
       : undefined;
     this.handshakeTimeoutMs = options.handshakeTimeoutMs ?? null;
-    this.stallTimeoutMs = options.stallTimeoutMs ?? STREAM_STALL_TIMEOUT_MS;
+    this.stallTimeoutMs =
+      options.stallTimeoutMs === undefined
+        ? STREAM_STALL_TIMEOUT_MS
+        : options.stallTimeoutMs;
     this.clock = { ...DEFAULT_CLOCK, ...options.clock };
   }
 
@@ -129,7 +132,13 @@ export class StreamSupervisor {
 
   checkLiveness(): void {
     const attempt = this.current;
-    if (!attempt || this.lastActivity === null) return;
+    if (
+      !attempt ||
+      this.lastActivity === null ||
+      this.stallTimeoutMs === null
+    ) {
+      return;
+    }
     const silentMs = this.clock.now() - this.lastActivity;
     if (silentMs < this.stallTimeoutMs) return;
     this.fail(attempt, "stalled", undefined, silentMs);
@@ -184,7 +193,7 @@ export class StreamSupervisor {
   }
 
   private armWatchdog(): void {
-    if (this.watchdog !== null) return;
+    if (this.watchdog !== null || this.stallTimeoutMs === null) return;
     const interval = Math.min(WATCHDOG_INTERVAL_MS, this.stallTimeoutMs);
     const watchdog = this.clock.setInterval(() => {
       this.checkLiveness();
