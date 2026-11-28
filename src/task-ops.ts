@@ -12,11 +12,7 @@ import {
   TaskCreateInputError,
   TaskRemoteCreatePartialSuccessError,
 } from "./api/tasks.ts";
-import {
-  buildTaskCreatedSystemMessage,
-  type TaskCreatedBroadcastInput,
-} from "./task-created-message.ts";
-import { randomUUID } from "node:crypto";
+import { buildTaskCreatedSystemMessage } from "./task-created-message.ts";
 import type { AgentEvent } from "./types.ts";
 
 function buildTarget(caller: TaskCreateCaller, input: TaskCreateInput) {
@@ -43,7 +39,6 @@ export function createTaskOpsCore(deps: {
   host: TaskCreateHost;
   store: Store;
   tasks: TaskManager;
-  broadcastTaskCreated?: (event: TaskCreatedBroadcastInput) => void;
   broadcastConfigUpdate?: (
     event: Extract<AgentEvent, { type: "config_option_update" }>,
   ) => void;
@@ -120,7 +115,6 @@ export function createTaskOpsCore(deps: {
         if (caller.kind === "agent") return { ...result, session: undefined };
         return result;
       }
-      let taskTitle: string | undefined;
       let taskCreated:
         ReturnType<typeof buildTaskCreatedSystemMessage> | undefined;
       const prepareRecord = () => {
@@ -128,7 +122,7 @@ export function createTaskOpsCore(deps: {
         if (result.task.title === null) {
           throw new Error("task_create_facts_incomplete");
         }
-        taskTitle = result.task.title;
+        const taskTitle = result.task.title;
         taskCreated = buildTaskCreatedSystemMessage({
           taskId: result.task.id,
           taskTitle,
@@ -144,7 +138,6 @@ export function createTaskOpsCore(deps: {
           });
         }
       };
-      let announceCreated = true;
       if (target.host !== undefined) {
         const remoteHost = target.host;
         if (localParentId === undefined) throw new Error("parent_not_found");
@@ -154,21 +147,14 @@ export function createTaskOpsCore(deps: {
             throw new Error("parent_not_found");
           }
           prepareRecord();
-          announceCreated = taskCreated
-            ? store.recordRemoteChild(
-                localParentId,
-                result.task.id,
-                remoteHost,
-                {
-                  data: taskCreated.data,
-                  fromRef: caller.kind === "agent" ? "agent" : "user",
-                },
-              )
-            : store.recordRemoteChild(
-                localParentId,
-                result.task.id,
-                remoteHost,
-              );
+          if (taskCreated) {
+            store.recordRemoteChild(localParentId, result.task.id, remoteHost, {
+              data: taskCreated.data,
+              fromRef: caller.kind === "agent" ? "agent" : "user",
+            });
+          } else {
+            store.recordRemoteChild(localParentId, result.task.id, remoteHost);
+          }
         } catch (error) {
           throw new TaskRemoteCreatePartialSuccessError(
             remoteHost,
@@ -179,16 +165,6 @@ export function createTaskOpsCore(deps: {
       } else {
         assertCaller();
         prepareRecord();
-      }
-      if (announceCreated && taskCreated && taskTitle && localParentId) {
-        deps.broadcastTaskCreated?.({
-          messageId: randomUUID(),
-          sourceTaskId: localParentId,
-          targetTaskId: result.task.id,
-          taskTitle,
-          title: taskCreated.title,
-          body: taskCreated.body,
-        });
       }
       if (
         !isRemote &&

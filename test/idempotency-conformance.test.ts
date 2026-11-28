@@ -136,6 +136,7 @@ describe("structural idempotency conformance", () => {
     const linkSyncOwner = new LinkSyncOwner(store);
     const sseManager = new SseManager(60_000);
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks,
       taskOps,

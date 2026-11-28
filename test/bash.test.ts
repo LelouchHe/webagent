@@ -99,6 +99,7 @@ describe("Bash REST API", () => {
     };
 
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks,
       taskOps: createLocalTaskOps({ store, tasks }),

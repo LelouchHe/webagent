@@ -174,7 +174,6 @@ async function createHarness(
     broadcast(event: AgentEvent) {
       broadcasts.push(event);
     },
-    broadcastGlobal() {},
   } as unknown as SseManager;
 
   const registeredPushClients: Array<{ clientId: string; endpoint: string }> =
@@ -189,6 +188,7 @@ async function createHarness(
   } as unknown as PushService;
 
   const handler = createRequestHandler({
+    attachmentSecret: Buffer.alloc(32, 7),
     store,
     tasks,
     taskOps,
@@ -462,7 +462,7 @@ describe("HTTP ops idempotency, legacy client_ops removal, and fixed task create
     }
   });
 
-  it("fresh DB has no client_ops table; upgraded DB drops legacy client_ops at boot", async () => {
+  it("fresh DB has no client_ops table; an existing one refuses startup", async () => {
     const dir = mkdtempSync(join(tmpdir(), "webagent-legacy-ops-"));
     cleanupDirs.push(dir);
 
@@ -484,16 +484,7 @@ describe("HTTP ops idempotency, legacy client_ops removal, and fixed task create
       "fresh DB must not create client_ops table",
     );
 
-    // 2. Seed an orphan legacy client_ops table with recognizable sentinel rows
-    //    at the exact keys used by the four routes.
-    const taskId = "legacy-task-1";
-    const permOpId = "op-legacy-perm";
-    const cancelOpId = "op-legacy-cancel";
-    const promptOpId = "op-legacy-prompt";
-    const ingressOpId = "op-legacy-ingress";
-
-    // Seed a pre-migration TEXT timestamp column and bare-UTC string values so
-    // any restored timestamp-migration entry for client_ops would mutate it.
+    // 2. Seed the retired table.
     dbCheck.exec(`
       CREATE TABLE client_ops (
         task_id      TEXT NOT NULL,
@@ -503,55 +494,6 @@ describe("HTTP ops idempotency, legacy client_ops removal, and fixed task create
         PRIMARY KEY (task_id, client_op_id)
       );
     `);
-    const insertLegacy = dbCheck.prepare(
-      "INSERT INTO client_ops (task_id, client_op_id, result_json, created_at) VALUES (?, ?, ?, ?)",
-    );
-    const legacyRows = [
-      {
-        task_id: taskId,
-        client_op_id: permOpId,
-        result_json: JSON.stringify({
-          status: 200,
-          body: { ok: true, sentinel: "legacy-perm" },
-        }),
-        created_at: "2026-09-19 15:51:07.101",
-      },
-      {
-        task_id: taskId,
-        client_op_id: cancelOpId,
-        result_json: JSON.stringify({
-          status: 200,
-          body: { ok: true, status: "cancelled", sentinel: "legacy-cancel" },
-        }),
-        created_at: "2026-09-19 15:51:07.102",
-      },
-      {
-        task_id: taskId,
-        client_op_id: promptOpId,
-        result_json: JSON.stringify({
-          status: 202,
-          body: { status: "accepted", sentinel: "legacy-prompt" },
-        }),
-        created_at: "2026-09-19 15:51:07.103",
-      },
-      {
-        task_id: "__ingress__",
-        client_op_id: ingressOpId,
-        result_json: JSON.stringify({
-          status: 200,
-          body: { id: "msg-legacy-sentinel", delivered: "pending" },
-        }),
-        created_at: "2026-09-19 15:51:07.104",
-      },
-    ];
-    for (const row of legacyRows) {
-      insertLegacy.run(
-        row.task_id,
-        row.client_op_id,
-        row.result_json,
-        row.created_at,
-      );
-    }
     const seededTable = dbCheck
       .prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'client_ops'",
@@ -560,73 +502,10 @@ describe("HTTP ops idempotency, legacy client_ops removal, and fixed task create
     assert.ok(seededTable, "legacy client_ops table should be seeded");
     dbCheck.close();
 
-    // 3. Re-open through the real startup path: client_ops is dropped at boot
-    //    and all four routes run through ops without reading legacy sentinels.
-    const h = await track(await createHarness(dir));
-    h.store.createTask(
-      taskId,
-      dir,
-      "auto",
-      "mock",
-      "sess-legacy",
-      h.store.rootTaskId,
+    assert.throws(
+      () => new Store(dir),
+      /Pre-1\.0 data directory detected .*legacy client_ops table/,
     );
-    await h.tasks.resolveTaskExecution(taskId);
-    h.addPendingPermission(taskId, "perm-legacy");
-
-    const permRes = await postJson(
-      h.port,
-      `/api/v1/tasks/${taskId}/permissions/perm-legacy`,
-      h.apiToken,
-      { optionId: "allow_once" },
-      permOpId,
-    );
-    assert.equal(permRes.status, 200);
-    assert.deepEqual(permRes.body, { ok: true });
-    assert.equal(h.resolveCalls.length, 1);
-
-    const cancelRes = await postJson(
-      h.port,
-      `/api/v1/tasks/${taskId}/cancel`,
-      h.apiToken,
-      undefined,
-      cancelOpId,
-    );
-    assert.equal(cancelRes.status, 200);
-    assert.deepEqual(cancelRes.body, { ok: true, status: "idle" });
-
-    const promptRes = await postJson(
-      h.port,
-      `/api/v1/tasks/${taskId}/prompt`,
-      h.apiToken,
-      { text: "live prompt" },
-      promptOpId,
-    );
-    assert.equal(promptRes.status, 202);
-    assert.deepEqual(promptRes.body, { status: "accepted" });
-    await waitUntil(() => h.promptCalls === 1);
-
-    const ingressRes = await postJson(
-      h.port,
-      "/api/v1/messages",
-      h.apiToken,
-      {
-        from_ref: "cron:test",
-        to: "user",
-        title: "Live ingress",
-        body: "body",
-      },
-      ingressOpId,
-    );
-    assert.equal(ingressRes.status, 200);
-    assert.notEqual(ingressRes.body.id, "msg-legacy-sentinel");
-    assert.equal(ingressRes.body.delivered, "pending");
-
-    await waitUntil(() => !h.tasks.activePrompts.has(taskId));
-    const deleted = h.store.deleteTask(taskId);
-    assert.ok(deleted, "seeded task should be deleted");
-    await h.close();
-    openHarnesses.pop();
     const dbAfter = new Database(dbPath, { readonly: true });
     const tableAfter = dbAfter
       .prepare(
@@ -635,14 +514,14 @@ describe("HTTP ops idempotency, legacy client_ops removal, and fixed task create
       .get();
     dbAfter.close();
 
-    assert.equal(
+    assert.deepEqual(
       tableAfter,
-      undefined,
-      "legacy client_ops table should be dropped at boot",
+      seededTable,
+      "refusal must leave legacy client_ops in place",
     );
   });
 
-  it("replays opted-in routes byte-for-byte with headers and executes side effects once (including 204, Cache-Control, Root exit, push/subscribe, beta/prompt)", async () => {
+  it("replays opted-in routes byte-for-byte with headers and executes side effects once (including 204, Cache-Control, Root exit, and push/subscribe)", async () => {
     const h = await track(await createHarness());
     const created = await postJson(h.port, "/api/v1/tasks", h.apiToken, {
       agentId: "mock",
@@ -801,37 +680,7 @@ describe("HTTP ops idempotency, legacy client_ops removal, and fixed task create
     });
     assert.equal(ps1.status, 201);
 
-    // 8. POST /api/beta/prompt completes synchronous submission before ops.complete & replays same taskId.
-    const betaHold = h.holdNextPrompt();
-    const betaOp = `op-beta-${randomUUID()}`;
-    const tasksBeforeBeta = h.store.listTasks().length;
-    const bp1 = await sendHttp(h.port, {
-      method: "POST",
-      path: "/api/beta/prompt",
-      token: h.apiToken,
-      body: { text: "quick question" },
-      opId: betaOp,
-    });
-    assert.equal(bp1.status, 202);
-    const betaTaskId = bp1.body.taskId as string;
-    // Handler promise awaited past json(202), so turn is already active when response arrives.
-    assert.ok(h.tasks.activePrompts.has(betaTaskId));
-    await betaHold.started;
-    betaHold.release();
-    await waitUntil(() => !h.tasks.activePrompts.has(betaTaskId));
-
-    const bp2 = await sendHttp(h.port, {
-      method: "POST",
-      path: "/api/beta/prompt",
-      token: h.apiToken,
-      body: { text: "quick question" },
-      opId: betaOp,
-    });
-    assert.equal(bp2.status, 202);
-    assert.deepEqual(bp2.rawBody, bp1.rawBody);
-    assert.equal(h.store.listTasks().length, tasksBeforeBeta + 1);
-
-    // 9. Root exit (DELETE /api/v1/tasks/:rootId) replays original replacedBy without a second exit.
+    // 8. Root exit (DELETE /api/v1/tasks/:rootId) replays original replacedBy without a second exit.
     const oldRootId = h.store.rootTaskId;
     const [re1] = await sendPair({
       method: "DELETE",

@@ -172,6 +172,7 @@ describe("SSE REST API", () => {
     tasks.attachExecutionBridge(mockBridge);
 
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks,
       taskOps: createLocalTaskOps({ store, tasks }),
@@ -311,114 +312,6 @@ describe("SSE REST API", () => {
     });
   });
 
-  describe("GET /api/v1/tasks/:id/events/stream (per-task)", () => {
-    it("only receives events for its task", async () => {
-      const id1 = await createTask();
-      const id2 = await createTask();
-
-      const sse = openSse(port, `/api/v1/tasks/${id1}/events/stream`);
-      sseCleanups.push(sse.close);
-      await sse.response;
-      await waitFor(() => sse.events.length >= 1);
-
-      // Broadcast events from both tasks
-      sseManager.broadcast({
-        type: "message_chunk",
-        taskId: id1,
-        text: "mine",
-      });
-      sseManager.broadcast({
-        type: "message_chunk",
-        taskId: id2,
-        text: "other",
-      });
-
-      // Short wait to let any *erroneous* cross-task events leak through.
-      // Both broadcasts are synchronous; a bug leaking id2 to id1 would be
-      // observable within a tick. Keep short to avoid slowing the suite.
-      await new Promise((r) => setTimeout(r, 20));
-      // Should only have connected + the event for id1
-      const dataEvents = sse.events.slice(1).map((e) => JSON.parse(e));
-      assert.equal(dataEvents.length, 1);
-      assert.equal(dataEvents[0].taskId, id1);
-      assert.equal(dataEvents[0].text, "mine");
-    });
-
-    it("returns 404 for unknown task", async () => {
-      const res = await makeRequest(
-        port,
-        "GET",
-        "/api/v1/tasks/nonexistent/events/stream",
-      );
-      assert.equal(res.status, 404);
-    });
-
-    it("replays events from Last-Event-ID", async () => {
-      const id = await createTask();
-
-      // Store some events
-      store.saveEvent(
-        id,
-        "user_message",
-        { text: "msg1" },
-        { from_ref: "user" },
-      );
-      const evt2 = store.saveEvent(
-        id,
-        "assistant_message",
-        { text: "reply1" },
-        { from_ref: "agent" },
-      );
-      store.saveEvent(
-        id,
-        "user_message",
-        { text: "msg2" },
-        { from_ref: "user" },
-      );
-
-      // Connect with Last-Event-ID pointing to evt2's seq
-      const sse = openSse(port, `/api/v1/tasks/${id}/events/stream`, {
-        lastEventId: String(evt2.seq),
-      });
-      sseCleanups.push(sse.close);
-      await sse.response;
-      await waitFor(() => sse.events.length >= 2); // connected + 1 replayed event
-
-      const replayed = sse.events.slice(1).map((e) => JSON.parse(e));
-      assert.equal(replayed.length, 1);
-      assert.equal(replayed[0].type, "user_message");
-      assert.ok(
-        JSON.parse(replayed[0].data ?? "{}").text === "msg2" ||
-          replayed[0].text === "msg2",
-      );
-    });
-
-    it("replays events with seq as SSE id", async () => {
-      const id = await createTask();
-      const evt1 = store.saveEvent(
-        id,
-        "user_message",
-        { text: "test" },
-        { from_ref: "user" },
-      );
-
-      // Use Last-Event-ID=0 to get all events replayed with id: field
-      const sse = openSse(port, `/api/v1/tasks/${id}/events/stream`, {
-        lastEventId: "0",
-      });
-      sseCleanups.push(sse.close);
-      await sse.response;
-      await waitFor(() => sse.rawChunks.length >= 1);
-
-      const allRaw = sse.rawChunks.join("");
-      // Replayed events should include id: field with their seq number
-      assert.ok(
-        allRaw.includes(`id: ${evt1.seq}`),
-        "Replayed SSE events should include id field with seq",
-      );
-    });
-  });
-
   describe("POST /api/beta/clients/:clientId/visibility", () => {
     it("updates client visibility", async () => {
       const sse = openSse(port, "/api/v1/events/stream");
@@ -551,8 +444,8 @@ describe("SSE REST API", () => {
       assert.equal(heartbeats[0], "event: heartbeat\ndata: {}\n\n");
     });
 
-    describe("global broadcasts", () => {
-      it("delivers inbox count changes to task-scoped clients", () => {
+    describe("broadcasts", () => {
+      it("delivers inbox count changes to every client", () => {
         const sse = new SseManager();
         const chunks: string[] = [];
         const fakeRes = {
@@ -563,9 +456,9 @@ describe("SSE REST API", () => {
           },
           on() {},
         } as any;
-        sse.add({ id: "task-client", res: fakeRes, taskId: "s1" });
+        sse.add({ id: "global-client", res: fakeRes });
 
-        sse.broadcastGlobal({
+        sse.broadcast({
           type: "inbox_count_changed",
           pendingCount: 2,
         });

@@ -12,11 +12,7 @@ import { createTaskManager } from "../src/task-manager.ts";
 import { createLocalTaskOps } from "../src/host/local/adapter.ts";
 import { createTaskOpsCore } from "../src/task-ops.ts";
 import { createTaskHost } from "../src/host/tasks.ts";
-import { buildCollaborationBroadcast } from "../src/collaboration-message.ts";
-import {
-  buildTaskCreatedBroadcast,
-  buildTaskCreatedSystemMessage,
-} from "../src/task-created-message.ts";
+import { buildTaskCreatedSystemMessage } from "../src/task-created-message.ts";
 import { mockBridgeStubs, waitFor } from "./fixtures.ts";
 import type { ConfigOption } from "../src/types.ts";
 
@@ -99,9 +95,6 @@ describe("S3 collaboration write routes", () => {
     promptCalls.length = 0;
     store = new Store(tmpDir);
     tasks = createTaskManager(store, tmpDir, tmpDir);
-    tasks.setCollaborationBroadcast((event) => {
-      broadcasts.push(buildCollaborationBroadcast(event));
-    });
     tasks.setDeliveryStatusBroadcast((event) => {
       broadcasts.push(event);
     });
@@ -134,15 +127,13 @@ describe("S3 collaboration write routes", () => {
         }),
         store,
         tasks,
-        broadcastTaskCreated: (event) => {
-          broadcasts.push(buildTaskCreatedBroadcast(event));
-        },
         broadcastConfigUpdate: (event) => {
           broadcasts.push(event);
         },
       }),
     };
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       sseManager: Object.assign(new SseManager(), {
         broadcast(event: { type: string; taskId?: string }) {
           broadcasts.push(event);
@@ -260,21 +251,21 @@ describe("S3 collaboration write routes", () => {
     assert.match(String(userData.body), /^Task ID: /);
     assert.match(String(userData.body), /model: inherited/);
     assert.match(String(userData.body), /thinking: inherited/);
-    assert.equal(
-      broadcasts.filter((event) => event.type === "system_message").length,
-      1,
-      "the created row must be announced live, not only stored",
-    );
-    const createdRowIndex = broadcasts.findIndex(
-      (event) =>
-        event.type === "system_message" && event.kind === "task_created",
+    const createdFeedIndex = broadcasts.findIndex((event: any) => {
+      if (event.data?.type !== "system_message") return false;
+      return JSON.parse(event.data.data).kind === "task_created";
+    });
+    assert.notEqual(
+      createdFeedIndex,
+      -1,
+      "the created row must reach the feed",
     );
     const configIndex = broadcasts.findIndex(
       (event) =>
         event.type === "config_option_update" && event.taskId === userTaskId,
     );
     assert.ok(
-      configIndex > createdRowIndex,
+      configIndex > createdFeedIndex,
       "the row broadcasts before config",
     );
     assert.equal(userData.cwd, tmpDir);
@@ -306,8 +297,6 @@ describe("S3 collaboration write routes", () => {
       }),
       store,
       tasks,
-      broadcastTaskCreated: (event) =>
-        broadcasts.push({ ...buildTaskCreatedBroadcast(event) }),
     });
     const parentLease = tasks.authority.leaseFor("parent");
     assert.ok(parentLease, "the parent task must have a generation");
@@ -364,43 +353,18 @@ describe("S3 collaboration write routes", () => {
     assert.match(String(agentData.title), /^Created task @agent-child$/);
     assert.match(String(agentData.body), /model: inherited/);
 
-    // Each path broadcasts the wire envelope for its own row, so a live row
-    // cannot drift from its persisted twin. The protocol fields are spelled out
-    // here rather than produced by the builder under test, or the assertion
-    // would only compare the builder with itself.
-    const envelopes = broadcasts.filter(
-      (event) => event.kind === "task_created",
-    );
-    assert.equal(envelopes.length, 2);
-    const [userEnvelope, agentEnvelope] = envelopes;
-    assert.deepEqual(userEnvelope, {
-      type: "system_message",
-      taskId: "parent",
-      kind: "task_created",
-      messageId: String(userEnvelope.messageId),
-      sourceTaskId: "parent",
-      targetTaskId: userTaskId,
-      taskTitle: "usr-child",
-      role: "source",
-      title: "Created task @usr-child",
-      body: String(userData.body),
-    });
-    assert.deepEqual(agentEnvelope, {
-      type: "system_message",
-      taskId: "parent",
-      kind: "task_created",
-      messageId: String(agentEnvelope.messageId),
-      sourceTaskId: "parent",
-      targetTaskId: String(agentData.taskId),
-      taskTitle: "agent-child",
-      role: "source",
-      title: "Created task @agent-child",
-      body: String(agentData.body),
-    });
+    const feedPayloads = broadcasts
+      .filter(
+        (event: any) =>
+          event.data?.type === "system_message" &&
+          JSON.parse(event.data.data).kind === "task_created",
+      )
+      .map((event: any) => JSON.parse(event.data.data));
+    assert.deepEqual(feedPayloads, [userData, agentData]);
     assert.deepEqual(
-      Object.keys(userEnvelope).sort(),
-      Object.keys(agentEnvelope).sort(),
-      "both initiators must announce the same envelope shape",
+      Object.keys(feedPayloads[0]).sort(),
+      Object.keys(feedPayloads[1]).sort(),
+      "both initiators must publish the same row shape",
     );
   });
 
@@ -626,6 +590,7 @@ describe("S3 collaboration write routes", () => {
       },
     });
     const flakyHandler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       sseManager: Object.assign(new SseManager(), {
         broadcast() {},
       }),

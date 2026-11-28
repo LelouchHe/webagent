@@ -190,6 +190,7 @@ describe("contract-08 browser sync mechanisms", () => {
       });
 
       const handler = createRequestHandler({
+        attachmentSecret: Buffer.alloc(32, 7),
         store,
         sseManager,
         clientRegistry: registry,
@@ -796,11 +797,11 @@ describe("contract-08 browser sync mechanisms", () => {
     });
   });
 
-  describe("per-task SSE edge and empty 201/200 body classification (F11, F12)", () => {
-    it("omits duplicate bash_result on per-task SSE clients while keeping it on global feed", () => {
+  describe("feed and empty 201/200 body classification (F11, F12)", () => {
+    it("publishes persisted bash_result to every feed client", () => {
       const sse = new SseManager(60_000);
       const globalFrames: string[] = [];
-      const perTaskFrames: string[] = [];
+      const secondFrames: string[] = [];
       sse.add({
         id: "g1",
         res: {
@@ -813,12 +814,11 @@ describe("contract-08 browser sync mechanisms", () => {
         } as any,
       });
       sse.add({
-        id: "t1-client",
-        taskId: "t1",
+        id: "g2",
         res: {
           writableEnded: false,
           write: (s: string) => {
-            perTaskFrames.push(s);
+            secondFrames.push(s);
             return true;
           },
           on: () => {},
@@ -839,7 +839,7 @@ describe("contract-08 browser sync mechanisms", () => {
         },
       });
       assert.equal(globalFrames.length, 1);
-      assert.equal(perTaskFrames.length, 0);
+      assert.equal(secondFrames.length, 1);
     });
 
     it("treats empty 201/200 JSON responses as unknown while allowing 204", async () => {

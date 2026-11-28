@@ -153,7 +153,7 @@ before any of this on every launch path, and
 
 | Module | Responsibility |
 | --- | --- |
-| `src/task-manager.ts` | Live task runtime: creation (one entry point for REST create, quick prompt, inbox consume, and `task_create`), prompt submission slots, chunk buffers, collaboration delivery drain, bash processes, compaction and clear rotation, deletion and Root replacement. Broadcasts through callbacks injected by `server.ts`. |
+| `src/task-manager.ts` | Live task runtime: creation (one entry point for REST create, inbox consume, and `task_create`), prompt submission slots, chunk buffers, collaboration delivery drain, bash processes, compaction and clear rotation, deletion and Root replacement. Real live-only facts broadcast through callbacks injected by `server.ts`; persisted facts publish from Store's outer commit. |
 | `src/store.ts` | SQLite persistence: tasks, bindings, raw ACP events, messages and deliveries, attachments, shares, push subscriptions, HTTP `ops` records, recent paths. See [Database Schema](../schema.md). |
 | `src/store/` | Store collaborators: `ops.ts` (`OpsStore`: bounded-TTL `ops` claim, complete, and sweep), `collaboration-messages.ts` (REST collaboration message create-or-replay by derived Message id), and for multi-host persistence `remote-relations.ts` (`remote_tasks`), `link-outbox.ts` (`outbox`, `outbox_cursors`, push cursor), `link-apply.ts` (inbound apply, receipts, notices, rejection and timeout failures), and `internal.ts` (the `StoreInternal` handle they share). See [Multi-host](./multi-host.md). |
 | `src/execution-authority.ts` | Which execution may still write to a task: the binding, the per-task generation (not persisted), and the lease validated at the write boundaries. |
@@ -288,9 +288,9 @@ Behavior of an agent's execution:
 persists events to the Store, updates `TaskState`, and hands frames to the
 `SseManager`. `PushService` receives the notifiable events.
 
-- **SSE** — `SseManager.broadcast()` sends an event to every client that is not
-  filtered to a different task; `broadcastGlobal()` ignores the task filter for
-  application-wide state. A named heartbeat frame every 15 seconds keeps
+- **SSE** — `SseManager.broadcast()` sends an ephemeral event to every global
+  client; committed persisted rows use the outer-commit feed path, and there is
+  no per-task SSE filter. A named heartbeat frame every 15 seconds keeps
   proxies from closing idle streams and re-checks token revocation.
 - **Egress rewrites** — the internal lease stamp is dropped before an event
   leaves the server; attachment paths are relabeled and image URLs are signed at

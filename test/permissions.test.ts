@@ -119,6 +119,7 @@ describe("Permissions REST API", () => {
     broadcastEvents = [];
 
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks,
       taskOps: createLocalTaskOps({ store, tasks }),
@@ -377,6 +378,7 @@ describe("Permissions REST API", () => {
       // The pending request has no recorded execution provenance here, so the
       // route refuses it before any bridge is consulted.
       const handler = createRequestHandler({
+        attachmentSecret: Buffer.alloc(32, 7),
         store,
         tasks,
         publicDir,

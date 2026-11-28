@@ -1,7 +1,7 @@
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
-import { buildCollaborationBroadcast } from "../src/collaboration-message.ts";
+import { buildCollaborationSystemMessage } from "../src/collaboration-message.ts";
 
 /**
  * A row that names another task keeps naming it after it is renamed or
@@ -634,18 +634,19 @@ describe("task-reference marks", () => {
       // A second client watching the source task: row and delete both arrive live.
       state.taskId = "a";
       snapshot({ a: "a", b: "b" });
-      events.handleEvent(
-        buildCollaborationBroadcast({
+      events.handleEvent({
+        type: "system_message",
+        taskId: "a",
+        ...buildCollaborationSystemMessage({
           messageId: "m1",
           sourceTaskId: "a",
           sourceLabel: "a",
           targetTaskId: "b",
           targetLabel: "b",
           role: "source",
-          taskId: "a",
           body: "hello",
         }),
-      );
+      });
       const row = dom.messages.querySelector(
         ".system-msg",
       ) as HTMLElement | null;

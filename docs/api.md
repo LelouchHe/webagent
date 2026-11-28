@@ -126,10 +126,9 @@ API discovery endpoint. Returns the API version and top-level endpoint paths.
     "files": "/api/v1/files",
     "config": "/api/v1/config",
     "events_stream": "/api/v1/events/stream",
-    "hosts": "/api/v1/hosts",
-    "prompt": "/api/beta/prompt",
     "push": "/api/beta/push",
-    "clients": "/api/beta/clients"
+    "clients": "/api/beta/clients",
+    "hosts": "/api/v1/hosts"
   }
 }
 ```
@@ -315,7 +314,7 @@ was not sent; the body carries `error` plus `agentId` for a local agent)
 **Side effects:**
 
 - A local creation broadcasts `task_created` to all SSE clients. The event is emitted by task
-  creation itself, so the quick prompt and the Agent's `task_create` tool
+  creation itself, so every supported task-creation path, including the Agent's `task_create` tool,
   announce the same event; a request's `X-Client-Op-Id` rides it as
   `clientOpId`, which is how a client whose create response was lost matches
   the task. An event names a task that now exists, nothing else. A creation
@@ -323,7 +322,7 @@ was not sent; the body carries `error` plus `agentId` for a local agent)
   its own route answers with the id and the client switches there, so an
   announcement would install it first and make that switch a no-op
 - A local creation broadcasts `config_option_update` if config was inherited
-- A local creation records and broadcasts a `system_message` (`kind: task_created`) on the parent
+- A local creation records a `system_message` (`kind: task_created`) on the parent
   task — the same row the Agent's `task_create` tool writes, with `from_ref`
   `user` instead of `agent` — so user- and agent-created tasks look identical in
   the task flow and survive a reload. The row names the agent the task landed on
@@ -887,7 +886,9 @@ task: …`, never a busy conflict. Destructive operations (`POST /clear`, delete
 Root exit) still answer `409` while the task is restoring, because they would
 replace the execution being loaded.
 
-Use `GET /events` for message history (rendering only) and `GET /snapshot` for runtime state (`busy`, `pendingPermissions`, `streaming`). The two are decoupled — `/events` never mutates runtime state in the frontend.
+Use `GET /events` for committed message history and `GET /snapshot` for the
+current runtime state (`busy`, pending permissions, streaming watermarks).
+The two are decoupled.
 
 **Response** `200`:
 
@@ -910,9 +911,34 @@ Use `GET /events` for message history (rendering only) and `GET /snapshot` for r
       "since": "2026-04-18T18:00:00.000Z",
       "promptId": "p1"
     },
-    "pendingPermissions": [],
-    "streaming": { "assistant": false, "thinking": false }
-  }
+    "pendingPermissions": []
+  },
+  "streaming": {
+    "epoch": "server-process-epoch",
+    "lastSegmentId": 7,
+    "thinking": {
+      "segmentId": 6,
+      "endOffset": 23,
+      "text": "current thought preview"
+    },
+    "assistant": {
+      "segmentId": 7,
+      "endOffset": 12,
+      "text": "current text"
+    }
+  },
+  "imageReferences": [
+    {
+      "sourceUri": "file:///private/tmp/tool-image.png",
+      "attachment": {
+        "kind": "image",
+        "attachmentId": "attachment-uuid",
+        "displayName": "tool-image.png",
+        "mimeType": "image/png",
+        "path": "/api/v1/tasks/abc-123/attachments/attachment-uuid.png?sig=...&exp=..."
+      }
+    }
+  ]
 }
 ```
 
@@ -924,7 +950,11 @@ Use `GET /events` for message history (rendering only) and `GET /snapshot` for r
   looking at a busy indicator with no visible cause. A restore is still a
   blocker for state-changing operations; that gate is internal and never
   surfaces as `busy`.
-- `runtime.pendingPermissions` / `runtime.streaming` — present in the schema; population via `state_patch` follows in subsequent milestones.
+- `streaming` — the top-level process-epoch watermark and optional active
+  thinking/assistant previews. `endOffset` is a UTF-16 offset. This is a pure
+  read and never flushes the buffers.
+- `imageReferences` — verified persisted `file://`-to-attachment bindings for
+  recovered Markdown images, with attachment paths freshly signed at egress.
 
 **Consistency rule**: If an incoming `state_patch.seq != lastSeq + 1`, the frontend reloads the snapshot and drops in-flight patches.
 
@@ -969,55 +999,57 @@ With `X-Client-Op-Id`, the HTTP `ops` adapter guarantees at-most-once execution 
 Retrieve events for a task (history). This is the primary history endpoint
 used during page load, and the read contract for external consumers: it never
 touches execution, so it works for archived, unbound, and never-materialized
-tasks alike. By default every scope gets **persisted rows only**: no
-thinking/assistant buffer is flushed, `seq` does not advance, and `streaming`
-is `false`. The browser explicitly requests `flush=1` where it consumes that
-streaming state.
+tasks alike. Every scope gets **persisted rows only**: no
+thinking/assistant buffer is flushed and `seq` does not advance.
 
 | Parameter  | In    | Type           | Description                                                                                                      |
 | ---------- | ----- | -------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `thinking` | query | `"0"` or `"1"` | Set to `"0"` to exclude thinking events                                                                          |
-| `after`    | query | number         | Return only events with `seq > after` (incremental sync)                                                         |
-| `limit`    | query | number         | Return at most N events (latest N, in ASC order). When omitted, returns all events (backward compat). Max 10000. |
+| `after`    | query | number         | Return events with `seq > after`; the browser's forward catch-up shape returns ascending feed entries. |
+| `upTo`     | query | number         | Upper bound for bounded forward catch-up. The response cannot advance beyond the snapshot position. |
+| `limit`    | query | number         | Return at most N entries. Max 10000. Forward catch-up is ascending; backward history uses `before`. |
 | `before`   | query | number         | Return only events with `seq < before` (cursor for pagination). Combine with `limit` to paginate backwards.      |
-| `flush`    | query | `"1"`          | Flush pending thinking/assistant buffers into stored events before reading. Omitted means no flush or seq advance. |
 
-**Response** `200`: Envelope containing events array and streaming status. When `limit` is provided, `total` and `hasMore` are included.
+**Response** `200`: an envelope of `FeedEntry<StoredEvent>` values.
 
 ```json
 {
   "events": [
     {
-      "id": 1,
-      "task_id": "abc-123",
-      "seq": 1,
-      "type": "user_message",
-      "data": "{\"text\":\"Hello\"}",
-      "created_at": "2025-01-15T10:31:00.000Z"
+      "feed": "abc-123",
+      "pos": 12,
+      "prev": 11,
+      "data": {
+        "id": 90,
+        "task_id": "abc-123",
+        "seq": 12,
+        "type": "user_message",
+        "data": "{\"text\":\"Hello\"}",
+        "from_ref": "user",
+        "created_at": "2025-01-15T10:31:00.000Z"
+      }
     }
   ],
-  "streaming": {
-    "thinking": false,
-    "assistant": false
-  },
+  "imageReferences": [],
   "total": 7157,
   "hasMore": true
 }
 ```
 
-| Field       | Present               | Description                                                    |
-| ----------- | --------------------- | -------------------------------------------------------------- |
-| `events`    | always                | Array of stored events, ordered by `seq` ASC                   |
-| `streaming` | always                | Whether a tail was flushed or the runtime is actively streaming |
-| `total`     | when `limit` provided | Total event count for the task (respects `thinking` filter) |
-| `hasMore`   | when `limit` provided | Whether there are older events before the returned page        |
+| Field | Present | Description |
+| --- | --- | --- |
+| `events` | always | Feed entries. `pos` is the task sequence and `prev` is `pos - 1`. |
+| `imageReferences` | backward/history reads only | Verified image-reference metadata; omitted from forward catch-up. |
+| `total` | limited backward read | Persisted event count for the task, respecting `thinking`. |
+| `hasMore` | limited backward read | Whether an older page exists. |
 
 **Pagination example:**
 
 ```
-GET /api/v1/tasks/:id/events?limit=200           → latest 200 events
+GET /api/v1/tasks/:id/events?limit=200           → latest 200 events for backward history
 GET /api/v1/tasks/:id/events?limit=200&before=50 → 200 events before seq 50
-GET /api/v1/tasks/:id/events?after=7000      → all events after seq 7000 (incremental sync, no limit)
+GET /api/v1/tasks/:id/events?after=7000&limit=200&upTo=7123
+                                                 → bounded forward catch-up through seq 7123
 ```
 
 **Collaboration delivery marks.** A stored `system_message` whose `data.kind`
@@ -1056,12 +1088,6 @@ row:
 A failed delivery carries `failureReason` instead of `deliveredAt`. The event is
 best effort; a reload reads the delivery row.
 
-
-The `streaming` flags indicate either that an explicit `flush=1` found an
-unflushed buffer or that the runtime is actively streaming. A `true` flag can
-therefore accompany no new event rows. If a tail was flushed, the frontend
-should keep the last element open for continued live streaming (to avoid
-duplicate thinking/assistant blocks on reconnect).
 
 > **Note:** The `data` field is a JSON string that must be parsed by the client. The shape of the parsed object depends on the `type`. See [SSE Event Reference](#sse-event-reference).
 
@@ -1897,7 +1923,7 @@ Retrieve a previously uploaded attachment. Responses are immutably cached
 
 **Response** `200`: Binary with appropriate `Content-Type`.
 
-**Errors:** `403` (path traversal), `404` (not found)
+**Errors:** `401` (missing or invalid signed URL), `403` (path traversal), `404` (not found)
 
 ---
 
@@ -1905,10 +1931,9 @@ Retrieve a previously uploaded attachment. Responses are immutably cached
 
 #### `GET /api/v1/events/stream`
 
-**Global SSE stream.** Receives all events from all tasks for ordinary user
-tickets. This is the primary stream used by the WebAgent frontend. Host
-tickets connect only for connection/heartbeat transport and receive no business
-broadcasts.
+**Global SSE stream.** The only task-event SSE endpoint. It receives committed
+event-feed entries for every task plus non-persisted application events.
+This is the primary stream used by the WebAgent frontend.
 
 **Response:** `text/event-stream`
 
@@ -1918,33 +1943,18 @@ On connection, the server sends a `connected` event:
 data: {"type":"connected","clientId":"cl-a1b2c3d4e5f6"}
 ```
 
-Then all subsequent events are streamed as they occur:
+Committed rows use the feed envelope:
 
 ```
-data: {"type":"message_chunk","taskId":"abc-123","text":"Hello"}
+data: {"feed":"abc-123","pos":42,"prev":41,"data":{"id":12,"task_id":"abc-123","seq":42,"type":"assistant_message","data":"...","from_ref":"agent","created_at":"..."}}
 ```
+
+Ephemeral events, such as `task_runtime_warmed` or `bash_done`, remain ordinary
+top-level `AgentEvent` JSON. A staged `tool_call_raw_output` is emitted as a
+separate ephemeral immediately after its committed `tool_call_update` feed
+entry.
 
 **Heartbeat:** A named `event: heartbeat\ndata: {}` frame is sent every 15 seconds (and once immediately on connect) to prevent proxy/QUIC idle timeouts. Frontend also listens to this event to drive per-task visibility refresh — see [Visibility Sync & Push Suppression](architecture/client.md#visibility-sync--push-suppression).
-
----
-
-#### `GET /api/v1/tasks/:id/events/stream`
-
-**Per-task SSE stream.** Only receives events for the specified task. Supports `Last-Event-ID` header for reconnection replay.
-Host tickets are not accepted on this endpoint.
-
-**Response:** `text/event-stream`
-
-| Header          | Description                                                                                    |
-| --------------- | ---------------------------------------------------------------------------------------------- |
-| `Last-Event-ID` | If provided, replays all stored events with `seq > Last-Event-ID` before streaming live events |
-
-Events include an `id` field (the seq number) for automatic reconnection:
-
-```
-id: 42
-data: {"type":"message_chunk","taskId":"abc-123","text":"Hello"}
-```
 
 ---
 
@@ -2143,32 +2153,6 @@ These endpoints are under `/api/beta/` because their design is not yet stable. S
 
 These APIs work and are used in production, but may be redesigned or replaced when we have a better abstraction for cross-client notifications. Breaking changes are possible without a major version bump.
 
-### One-Shot Prompt
-
-#### `POST /api/beta/prompt`
-
-Create a temporary task and send a prompt in one call. Useful for programmatic/API-only use. This endpoint is in beta because the response format and options (e.g. synchronous wait mode) may change.
-
-**Request body:**
-
-| Field  | Type   | Required | Description                       |
-| ------ | ------ | -------- | --------------------------------- |
-| `text` | string | Yes      | The prompt text                   |
-| `cwd`  | string | No       | Working directory for the task |
-
-**Response** `202`:
-
-```json
-{
-  "taskId": "new-task-id",
-  "streamUrl": "/api/v1/tasks/new-task-id/events/stream"
-}
-```
-
-The client should connect to the `streamUrl` SSE endpoint to receive the agent's response.
-
----
-
 ### Push Notifications
 
 VAPID-based Web Push for background notifications. See `src/push-service.ts`.
@@ -2235,29 +2219,37 @@ Associate an SSE client with a push subscription endpoint. Used for per-task vis
 
 #### `POST /api/beta/clients/:clientId/visibility`
 
-Report client visibility state (foreground/background) and which task the client is viewing. Used by the push notification service for **global, task-scoped** suppression — if any client is viewing task X, push for task X is suppressed on **all** endpoints across all devices. See [Visibility Sync & Push Suppression](architecture/client.md#visibility-sync--push-suppression) for the full architecture (60s TTL, named-event heartbeat, edge-triggered banner recall).
+Report the complete set of tasks visible to one client. This drives global,
+task-scoped push suppression. See [Visibility Sync & Push Suppression](architecture/client.md#visibility-sync--push-suppression).
+`X-Visibility-Rev` is required and must be a positive safe integer; stale or
+repeated revisions are ignored.
 
 **Request body:**
 
 ```json
-{ "visible": true, "taskId": "optional-task-id" }
+{ "taskIds": ["task-a", "task-b"] }
 ```
 
 | Field       | Type           | Required | Description                                                                                                                                 |
 | ----------- | -------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `visible`   | boolean        | yes      | Whether the client is in the foreground                                                                                                     |
-| `taskId` | string \| null | no       | Omitted = preserve prior value; explicit `null` = clear; string = replace. A visible client with no task set does not suppress any push. |
+| `taskIds` | string[] | yes | Complete replacement set; `[]` means no task is visible. |
 
 **Behavior:**
 
-- Every call stamps `visibleSince`; records older than 60s are ignored by the suppression check (self-heals ghost records).
-- Transitioning to visible+task=X (from invisible OR a different task) triggers `sendClose` for `sess-${X}-done` + pending-permission cleanup on other devices. Heartbeat refreshes of the same state do **not** re-fire sendClose.
+- Every accepted call replaces the set and stamps `visibleSince`; records older
+  than 60s are ignored by the suppression check.
+- Newly visible ids trigger completion-banner and pending-permission cleanup.
+  A stale revision or repeated set does not retrigger the edge while the prior
+  visibility remains within the 60-second TTL. After that record expires, a
+  newer revision reporting the same set makes those ids newly visible again.
 
-**Trust boundary:** accepts `clientId` known to either the SSE manager OR the `clientRegistry` (the registry survives SSE disconnect, so `pagehide` beacons still land after the stream closes).
+The SSE client must still be connected both before and after the body is read.
+A client that disconnects during the body read returns 404 and is not
+re-created.
 
 **Response** `200`: `{ "ok": true }`
 
-**Errors:** `404` (client not found)
+**Errors:** `400` (invalid revision or `taskIds`), `404` (client not connected)
 
 ---
 
@@ -2274,7 +2266,7 @@ These events are streamed in real-time via SSE as the agent works.
 | `connected`             | `clientId`, `pendingCount`                                                               | SSE connection established, with the authoritative pending inbox count. Not an agent event — generated by the server. |
 | `task_runtime_warmed`   | `taskId`, `agentId`, `configOptions`, `agentCommands`                                                  | A background warm-up for that task finished. Published after the request with `warm=1` already answered; a client applies it only when it is viewing that task. Server-originated, never an execution event. |
 | `connected` (agent)     | `agentId`, `agent`, `configOptions`                                                                   | One agent's process connected. Same event name as the handshake, distinguished by `agentId` + `agent`; clients only let it complete a reload of the agent carrying their current task. |
-| `task_created`       | `taskId`, `agentId`, `parentId?`, `parentAgentId?`, `cwd`, `cwdDisplay?`, `title`, `configOptions`, `agentCommands?`, `clientOpId?`, `busyKind?`                                | Task created or resumed. A creation a caller asked for (HTTP create, quick prompt, agent `task_create`) announces itself from the creation itself; an internal carrier creation does not. `clientOpId` is the requesting client's own operation. `parentId`/`parentAgentId` are the activation facts: a client settles the status bar's reference without another read. |
+| `task_created`       | `taskId`, `agentId`, `parentId?`, `parentAgentId?`, `cwd`, `cwdDisplay?`, `title`, `configOptions`, `agentCommands?`, `clientOpId?`, `busyKind?`                                | Task created or resumed. A supported creation path announces itself from the creation itself; an internal carrier creation does not. `clientOpId` is the requesting client's own operation. `parentId`/`parentAgentId` are the activation facts: a client settles the status bar's reference without another read. |
 | `task_deleted`       | `taskId`, `agentId?`, `parentId?`, `replacedBy?`, `clientOpId?`                                | Task was deleted; `agentId` is the agent that carried the removed execution; `replacedBy` is its successor when it has one (today only a Root exit), which a client viewing it follows before `parentId` |
 | `task_title_updated` | `taskId`, `title`                                                                     | Task title set (explicit or id-default)                                                                            |
 | `task_expired`       | `taskId`                                                                              | Task expired in the ACP agent                                                                                    |
@@ -2288,7 +2280,7 @@ These events are streamed in real-time via SSE as the agent works.
 | `plan`                  | `taskId`, `entries`                                                                   | Agent plan update. Each entry: `{ status, content }`                                                                |
 | `permission_request`    | `requestId`, `taskId`, `title`, `options`                                             | Agent needs permission to proceed                                                                                   |
 | `permission_response`   | `requestId`, `taskId`, `optionName`, `denied`                                         | Permission was resolved (server-generated)                                                                          |
-| `system_message`        | `taskId`, `kind`, `title`, `body?`, plus `messageId`/`sourceTaskId`/`targetTaskId`/`role` and the raw labels (`sourceLabel`/`targetLabel`, `taskTitle` for `task_created`) | A projected system row: a title and a readable body. `kind` names the fact (`collaboration`, `task_created`, `task_cancel`, `agent_rotation`, `handoff_reminder`, `task_outcome_notice`, …) and is what replay stores, so live and replay render through the same branch. A runtime message keeps its own kind rather than `collaboration`, has no `sourceTaskId`/`sourceLabel` because the runtime is not a Task to reference, and is titled in the runtime's voice with no task reference, so a client that dispatches on `kind` must not go looking for one in that title. **The raw labels travel with the row**: a client anchors the reference it may mark inside `title` by task id, and cannot recover it from the rendered text (titles repeat and may contain quotes or the words between two references). Dropping them costs the live mark only — replay still marks from the stored `data` — so both forms must carry the same fields. Use `buildCollaborationBroadcast` / `buildTaskCreatedBroadcast` rather than writing the envelope by hand |
+| `system_message`        | `taskId`, `kind`, `title`, `body?`, plus fact-specific ids, roles and raw task labels | A persisted system row. `kind` names the fact (`collaboration`, `task_created`, `task_cancel`, `agent_rotation`, `handoff_reminder`, `task_outcome_notice`, …). Live delivery uses the committed `events` feed entry whose `data` JSON is this payload, so live and replay consume one row shape. Runtime messages keep their own kind and omit a source task because the runtime is not a Task. |
 | `prompt_done`           | `taskId`, `stopReason`, `promptId?`                                                    | Agent turn completed with a standard ACP stop reason                                                               |
 | `error`                 | `message`, `taskId?`, `promptId?`                                                      | Prompt or agent error; task-scoped errors are persisted for replay                                               |
 | `user_message`          | `taskId`, `text`, `attachments?` (array of `{kind, attachmentId, displayName, mimeType, path?, width?, height?}`) | User message broadcast (for multi-client sync)                                                                      |
@@ -2299,7 +2291,7 @@ These events are streamed in real-time via SSE as the agent works.
 | `message_created`       | `messageId`                                                                              | Unbound inbox message arrived. Metadata-only — no body/title on the wire; pull via `GET /api/v1/messages/:id`       |
 | `message_consumed`      | `messageId`, `taskId`                                                                 | Inbox message was consumed (task materialized). Clients should remove inbox row and close matching notifications |
 | `message_acked`         | `messageId`                                                                              | Inbox message was dismissed without consume                                                                         |
-| `inbox_count_changed`   | `pendingCount`                                                                           | Authoritative pending inbox count after a mutation or TTL cleanup. Delivered globally, including task-scoped SSE clients |
+| `inbox_count_changed`   | `pendingCount`                                                                           | Authoritative pending inbox count after a mutation or TTL cleanup. Delivered to every global SSE client |
 
 ### Replay-Only Events
 
@@ -2394,11 +2386,10 @@ Events are stored in the `events` table with auto-incrementing `seq` numbers per
 
 The `SseManager` class (`src/sse-manager.ts`) manages all SSE connections:
 
-- **Global clients** (`/api/v1/events/stream`): `taskId` is `undefined`, receives all events
-- **Per-task clients** (`/api/v1/tasks/:id/events/stream`): only receives events for that task
-- **Broadcast logic**: iterates all clients; skips per-task clients whose `taskId` doesn't match
+- **Global clients** (`/api/v1/events/stream`) receive all committed feed entries and ephemeral events
+- **Broadcast logic**: iterates all clients; filtering by the current task belongs to the client consumer
 - **Heartbeat**: Named `event: heartbeat\ndata: {}\n\n` every 15s (plus once immediately on connect). Prevents Cloudflare HTTP/3 (QUIC) and other proxies from closing idle connections. The frontend also listens via `EventSource.addEventListener("heartbeat", ...)` to drive per-task visibility refresh (see [Visibility Sync & Push Suppression](architecture/client.md#visibility-sync--push-suppression)). Timer uses `.unref()` to not block Node.js process exit.
-- **Auto-reconnect with replay**: Per-task streams support `Last-Event-ID` header. On reconnect, the server replays all events after the given seq from the database.
+- **Reconnect and replay**: `SyncFeedConsumer` tracks each feed's durable position; after reconnect it pages REST history from that position and ignores stale or overlapping watch frames.
 - **Cleanup**: Clients are removed on `res.close` event (browser disconnect, network drop)
 
 ### Gzip Compression

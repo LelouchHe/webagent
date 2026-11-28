@@ -20,12 +20,9 @@ import "./input.ts"; // keyboard/send listeners
 import { connect } from "./connection.ts";
 import * as api from "./api.ts";
 import { state, dom } from "./state.ts";
-import { addSystem, onThemeChange } from "./render.ts";
+import { addSystem } from "./render.ts";
 import { installInputFocusRecovery } from "./input-focus-recovery.ts";
-import {
-  handleCopyClick,
-  onThemeChange as hljsThemeChange,
-} from "./highlight.ts";
+import { handleCopyClick } from "./highlight.ts";
 import { setLogRenderer } from "./log.ts";
 import {
   navigateFromNotification,
@@ -41,9 +38,6 @@ installInboxIndicator();
 
 // Code block copy button (event delegation)
 dom.messages.addEventListener("click", handleCopyClick);
-// Swap hljs theme CSS when app theme changes
-onThemeChange(hljsThemeChange);
-
 connect();
 
 // Fetch version info (non-blocking)

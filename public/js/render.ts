@@ -506,12 +506,3 @@ export function finishBash(
   }
   if (el === state.currentBashEl) state.currentBashEl = null;
 }
-
-// --- Theme ---
-//
-// Theme cycling, persistence, and the `#theme-btn` click handler all live
-// in `./theme.ts` (also imported by the share viewer). Re-export
-// `onThemeChange` here so callers (app.ts) can keep using the existing
-// import path.
-
-export { onThemeChange } from "./theme.ts";

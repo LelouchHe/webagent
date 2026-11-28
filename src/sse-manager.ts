@@ -4,10 +4,7 @@ import type { AgentEvent } from "./types.ts";
 import { reSignAttachmentUrlsInJson } from "./auth.ts";
 import { enrichEventForDisplay, type LabelMap } from "./attachment-labels.ts";
 import { log } from "./log.ts";
-import {
-  projectLegacyPerTaskEvent,
-  type EventFeedEntry,
-} from "./event-egress.ts";
+import type { EventFeedEntry } from "./event-egress.ts";
 import { SSE_HEARTBEAT_INTERVAL_MS } from "./shared/stream-supervisor.ts";
 
 const slog = log.scope("sse");
@@ -26,9 +23,7 @@ const SSE_HEARTBEAT_FRAME = "event: heartbeat\ndata: {}\n\n";
 export interface SseClient {
   id: string;
   res: ServerResponse;
-  taskId?: string; // undefined = global stream
   tokenName?: string; // bound at connect via SSE ticket; used for revoke detection
-  receiveBusinessEvents?: boolean;
 }
 
 /**
@@ -51,8 +46,7 @@ export class SseManager {
 
   /**
    * Stage stripped `rawOutput` for an immediately-following committed
-   * `tool_call_update` so per-task SSE edges can inline it without dual
-   * producer broadcasts while global feed clients receive a separate ephemeral.
+   * `tool_call_update` so the feed client receives the separate ephemeral.
    */
   stageToolCallRawOutput(
     taskId: string,
@@ -78,9 +72,8 @@ export class SseManager {
    * Wire a label-map provider to enrich attachment uuid paths with
    * user-friendly labels at egress (CLAUDE.md "Attachment label
    * egress rewrite"). Applied per-event-task inside `sendEvent`,
-   * so both `broadcast()` and direct `sendEvent()` callers (e.g.
-   * SSE Last-Event-ID replay) get enriched output. DB still stores
-   * raw events.
+   * so both `broadcast()` and direct `sendEvent()` callers get enriched
+   * output. DB still stores raw events.
    */
   setLabelMapProvider(fn: (taskId: string) => LabelMap): void {
     this.getLabelMap = fn;
@@ -133,7 +126,6 @@ export class SseManager {
     this.clients.set(client.id, client);
     slog.info("connected", {
       clientId: client.id,
-      taskId: client.taskId ?? "*",
       clients: this.clients.size,
     });
     client.res.on("close", () => {
@@ -168,7 +160,7 @@ export class SseManager {
   }
 
   /** Send an SSE event to a single client. */
-  sendEvent(client: SseClient, event: AgentEvent, seq?: number): void {
+  sendEvent(client: SseClient, event: AgentEvent): void {
     if (client.res.writableEnded) return;
     let outEvent = event;
     if (this.getLabelMap) {
@@ -183,9 +175,7 @@ export class SseManager {
     if (this.attachmentSecret && data.includes("/attachments/")) {
       data = reSignAttachmentUrlsInJson(data, this.attachmentSecret);
     }
-    let msg = "";
-    if (seq != null) msg += `id: ${seq}\n`;
-    msg += `data: ${data}\n\n`;
+    const msg = `data: ${data}\n\n`;
     try {
       client.res.write(msg);
     } catch (err) {
@@ -198,8 +188,6 @@ export class SseManager {
 
   /**
    * Broadcast a committed persisted event feed entry to connected SSE clients.
-   * Global clients receive `{ feed, pos, prev, data }` with NO `id:` line;
-   * per-task clients receive the thin legacy event projection with `id: pos`.
    */
   broadcastFeedEntry(entry: EventFeedEntry): void {
     let stagedRawOutput: { id: string; rawOutput: unknown } | null = null;
@@ -224,73 +212,34 @@ export class SseManager {
     const snapshot = [...this.clients.values()];
     let feedFrame: string | null = null;
     let rawOutputFrame: string | null = null;
-    let legacyFrame: string | null = null;
     for (const client of snapshot) {
       if (client.res.writableEnded) continue;
-      if (client.receiveBusinessEvents === false) continue;
-      if (client.taskId) {
-        if (client.taskId !== entry.feed) continue;
-        // Per-task SSE consumers receive ephemeral `bash_done` as the bash
-        // terminator; omit the persisted `bash_result` duplicate at this edge.
-        if (entry.data.type === "bash_result") continue;
-        if (legacyFrame === null) {
-          const legacy = projectLegacyPerTaskEvent(entry.data);
-          if (!legacy) continue;
-          const out =
-            stagedRawOutput !== null
-              ? { ...legacy, rawOutput: stagedRawOutput.rawOutput }
-              : legacy;
-          legacyFrame = `id: ${entry.pos}\ndata: ${JSON.stringify(out)}\n\n`;
+      feedFrame ??= `data: ${JSON.stringify(entry)}\n\n`;
+      try {
+        client.res.write(feedFrame);
+        if (stagedRawOutput !== null) {
+          rawOutputFrame ??= `data: ${JSON.stringify({
+            type: "tool_call_raw_output",
+            taskId: entry.feed,
+            id: stagedRawOutput.id,
+            rawOutput: stagedRawOutput.rawOutput,
+          })}\n\n`;
+          client.res.write(rawOutputFrame);
         }
-        try {
-          client.res.write(legacyFrame);
-        } catch (err) {
-          slog.warn("write failed", { clientId: client.id, err: String(err) });
-          this.remove(client.id, "write-failed");
-        }
-      } else {
-        feedFrame ??= `data: ${JSON.stringify(entry)}\n\n`;
-        try {
-          client.res.write(feedFrame);
-          if (stagedRawOutput !== null) {
-            rawOutputFrame ??= `data: ${JSON.stringify({
-              type: "tool_call_raw_output",
-              taskId: entry.feed,
-              id: stagedRawOutput.id,
-              rawOutput: stagedRawOutput.rawOutput,
-            })}\n\n`;
-            client.res.write(rawOutputFrame);
-          }
-        } catch (err) {
-          slog.warn("write failed", { clientId: client.id, err: String(err) });
-          this.remove(client.id, "write-failed");
-        }
+      } catch (err) {
+        slog.warn("write failed", { clientId: client.id, err: String(err) });
+        this.remove(client.id, "write-failed");
       }
     }
   }
 
   /**
    * Broadcast an event to all connected SSE clients.
-   * Global clients get all events. Per-task clients only get events for their task.
    */
   broadcast(event: AgentEvent): void {
-    const taskId = (event as Record<string, unknown>).taskId as
-      string | undefined;
     const snapshot = [...this.clients.values()];
     for (const client of snapshot) {
       if (client.res.writableEnded) continue;
-      if (client.receiveBusinessEvents === false) continue;
-      if (client.taskId && client.taskId !== taskId) continue;
-      this.sendEvent(client, event);
-    }
-  }
-
-  /** Broadcast global application state regardless of a client's task filter. */
-  broadcastGlobal(event: AgentEvent): void {
-    const snapshot = [...this.clients.values()];
-    for (const client of snapshot) {
-      if (client.res.writableEnded) continue;
-      if (client.receiveBusinessEvents === false) continue;
       this.sendEvent(client, event);
     }
   }

@@ -52,7 +52,7 @@ WebAgent is a terminal-style web UI for ACP-compatible agents. This document des
 │                  Browser                      │
 │                                               │
 │  app.ts (boot)                                │
-│    ├── connection.ts  ←→ SSE + REST           │
+│    ├── connection.ts  ←→ sync hub + REST      │
 │    ├── events.ts      ←  event dispatch       │
 │    ├── input.ts       →  user messages        │
 │    ├── commands.ts    →  slash commands        │
@@ -62,14 +62,14 @@ WebAgent is a terminal-style web UI for ACP-compatible agents. This document des
 │    └── api.ts         →  REST client          │
 │                                               │
 │  ┌─────────────────────────────────────────┐  │
-│  │           EventSource (SSE)             │  │
+│  │  SharedWorker / in-tab SyncHub (SSE)    │  │
 │  │     GET /api/v1/events/stream            │  │
 │  └─────────────────────────────────────────┘  │
 │  ┌─────────────────────────────────────────┐  │
 │  │            fetch (REST)                 │  │
 │  │  POST /api/v1/tasks/:id/prompt       │  │
 │  │  GET /api/v1/tasks/:id/events       │  │
-│  │  PUT /api/v1/tasks/:id/model        │  │
+│  │  PUT /api/v1/tasks/:id/config/model │  │
 │  │  ...                                    │  │
 │  └─────────────────────────────────────────┘  │
 └──────────────────────────────────────────────┘
@@ -87,7 +87,7 @@ All frontend source lives in `public/js/*.ts`. esbuild bundles it into a content
 | -------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | **`app.ts`**               | Boot entry point. Imports all modules, calls `connect()`, registers service worker                  | —                                                                                               |
 | **`state.ts`**             | Shared state singleton, DOM refs (`dom`), config helpers, routing, cancel logic                     | `state`, `dom`, `setBusy()`, `requestNewTask()`, `resetTaskUI()`, `setConnectionStatus()` |
-| **`connection.ts`**        | SSE + REST connection lifecycle, parallel init, visibility sync                                     | `connect()`                                                                                     |
+| **`connection.ts`**        | SharedWorker/in-tab sync hub, per-feed catch-up consumer, parallel REST init, visibility sync        | `connect()`                                                                                     |
 | **`events.ts`**            | Event dispatch (live + replay), history loading, permission responses                               | `handleEvent()`, `loadHistory()`, `loadNewEvents()`                                             |
 | **`event-interpreter.ts`** | Pure data transformation for ACP events — zero DOM dependency                                       | `interpretToolCall()`, `classifyPermissionOption()`, `parseDiff()`, etc.                        |
 | **`constants.ts`**         | Display constants (tool icons, plan status icons)                                                   | `TOOL_ICONS`, `PLAN_STATUS_ICONS`                                                               |
@@ -112,12 +112,13 @@ The remaining modules, by area:
 | Files | `file-browser.ts` (`/view` path semantics), `view-command.ts` (`/view` menu), `file-viewer.ts` (read-only viewer) |
 | Shell | `auth-fetch.ts` (Bearer injection, 401 handling), `login.ts` / `login-core.ts`, `theme.ts`, `log.ts` (in-page logger), `local-reset.ts`, `inbox-indicator.ts`, `live-source.ts` |
 | Share viewer | `share/viewer.ts`, `share/commands.ts`, `share/attachment-rewriter.ts` — see [Share Links](../share.md) |
+| Browser sync | `sync-hub.ts` (one physical SSE + tab ports), `sync-client.ts` (SharedWorker/fallback transport), `sync-worker.ts` (static same-origin SharedWorker), and the generic `src/shared/sync` consumer |
 
 **Dependency graph** (arrows = imports):
 
 ```
 app.ts
-  ├── connection.ts        → state, render, events, api
+  ├── connection.ts        → state, render, events, api, sync-client, sync-hub
   ├── events.ts            → state, render, api, event-interpreter, types
   ├── event-interpreter.ts → constants, types  (ZERO DOM dependency)
   ├── input.ts             → state, render, commands, attachments, api
@@ -157,35 +158,40 @@ The module imports trigger side effects (event listeners, theme initialization).
 
 ## Connection Lifecycle
 
-### SSE Stream
+### Shared sync transport
 
-`connect()` mints a stream ticket, opens the global SSE stream, and then starts
-REST initialization while the stream registers:
+`connect()` opens one `SyncHub` through a static same-origin SharedWorker, with
+an in-tab fallback when SharedWorker is unavailable. The hub mints an SSE
+ticket, owns the single `/api/v1/events/stream` connection, and fans
+`feed_entry`, ephemeral, and control messages to tab ports. Each tab routes feed
+entries through a `SyncFeedConsumer`; a current task's durable position is
+applied serially, overlap is ignored, and gaps are filled by paged REST reads.
 
 ```
 connect()
-  └── POST /sse-ticket                         // EventSource cannot send Bearer
-        ├── new EventSource('/api/v1/events/stream?ticket=…')
+  └── connectToSyncHub()
+        ├── sync-worker.ts -> SyncHub (or DirectPort fallback)
+        │     ├── POST /sse-ticket
+        │     └── EventSource('/api/v1/events/stream?ticket=…')
         └── initializeTaskAndIntent()
-              ├── GET /config                  // agent directory
-              ├── GET /tasks                   // startup list baseline
-              └── initTask()                   // after /config settles
+              ├── GET /config
+              ├── GET /tasks
+              └── initTask()
 ```
 
-The `connected` frame does not gate task loading, but task loading does start
-after the ticket and `/config`, so a cold load with a hash costs six serial
-round trips (HTML, assets, ticket, config, history and detail, snapshot). The
-order is kept on purpose: history and detail are read a round trip after the
-stream opens, by which time it has registered in practice, so events persisted
-around registration reach the client one way or the other. That is relied on,
-not enforced. See the boot waterfall entry in
-[known-issues](../known-issues.md).
+The hub isolates SSE auth generations and keeps a bounded grace window when the
+last tab disconnects. The tab consumer, not the hub, decides how a committed
+row changes a conversation. Ephemeral events bypass the durable feed position
+and apply only to their real semantics (for example runtime warm-up or bash
+termination).
 
 **SSE message handling:**
 
 - `connected` event → stores `state.clientId`, reports visibility via REST
-- All other events → dispatched to `handleEvent()`
-- `onerror` → close, cleanup, reconnect after 3 seconds
+- `feed_entry` → ordered per-task `SyncFeedConsumer` apply
+- `ephemeral` / `control` → dispatched to `handleEvent()`
+- `disconnected` → the hub and consumer recover; a new generation rejects stale
+  frames, reads, and delayed continuations
 
 ### REST Initialization (Parallel)
 
@@ -212,39 +218,49 @@ For **full loads** (new task or first visit):
 
 ```
 Promise.all([
-  api.getTask(taskId),     // GET detail?warm=1
-  loadHistory(taskId),     // GET /events?flush=1&limit=N
+  api.getTask(taskId, { warm: true }), // establish execution metadata
+  loadHistory(taskId),                 // committed feed catch-up
 ])
-→ hydrateTaskRuntime(taskId)  // GET /snapshot?warm=1, after replay drains patches
+→ hydrateTaskRuntime(taskId)  // cold snapshot; warm detail already requested it
 → handleEvent({ type: 'task_created', ... })
 ```
 
 For **incremental reconnects** (same task, SSE dropped):
 
 ```
-api.getTask(taskId)        // GET detail?warm=1 for config/title
-→ handleEvent({ type: 'task_created', ... })
-→ loadNewEvents(taskId)       // GET /events?flush=1&after=N
+api.getSnapshot(taskId, { warm: true }) // cold runtime read + explicit warm
+→ capture snapshot.task.lastEventSeq as bounded target
+→ paged read(after=applied, upTo=target)
+→ commit snapshot + release queued live frames
 ```
 
-On a full load, history renders as soon as its events arrive, without waiting
-for task resume; the snapshot follows the replay so it is newer than any live
-patch queued during it.
+`getSnapshot()` is cold by default. The snapshot reconciliation paths call it
+without `warm=1`, while navigation/detail call sites that need execution
+metadata request warm explicitly. Same-task reconnect uses the warm snapshot
+and its event watermark as the catch-up fence, so live frames cannot advance
+the applied position beyond an inconsistent snapshot.
 
 ### Reconnection
 
-When SSE disconnects:
-
-1. `cleanup()` — reset connection state, finalize streaming elements
-2. `setTimeout(connect, 3000)` — retry after 3 seconds
-3. On reconnect, `initTask()` detects the same task in the hash → **incremental** path
-4. Only fetches events after `state.lastEventSeq` — no full history reload
+When SSE disconnects, `SyncHub`'s stream supervisor closes the stale attempt and
+retries it under a fresh generation. The tab rebuilds the active task's
+consumer, while recovery itself stays gated until both reconnection gates clear:
+the new hub `connected` frame and the `focus_ack` for the same focus
+generation. Once both gates are open, `beforeCatchUp` takes a warm snapshot,
+reads forward pages bounded by that snapshot's `lastEventSeq`, and commits the
+snapshot only after reaching the watermark; stale frames and continuations from
+the old generation are ignored.
 
 ### Visibility Sync & Push Suppression
 
 Push notifications are filtered by a **global, task-scoped visibility rule**: if any client is actively viewing task X, push for task X is suppressed on **all** endpoints (e.g. laptop looking at A → phone also doesn't buzz for A). But task B completing in the background still pushes to all devices. Controlled by `push.global_visibility_suppression` (default `true`).
 
-**Server-side split (single-writer pattern):** `ClientRegistry` (`src/client-registry.ts`) is the sole writer for client identity + visibility state (one entry per `clientId` with `visible`, `active` task, `visibleSince` timestamp). `PushService` (`src/push-service.ts`) owns push endpoints (VAPID subscription, consecutive-failure counter) and delegates **all** visibility reads to the registry (`isTaskVisibleToAnyClient`, `hasVisibleClient`, `isEndpointVisible`). Splitting the writer prevents the two pieces of state from drifting; previously they were both updated from `PushService.updateClient` and a buggy code path could leave them inconsistent.
+**Server-side split (single-writer pattern):** `ClientRegistry`
+(`src/client-registry.ts`) is the sole writer for client identity and its
+declarative `visibleTaskIds` set plus `visibleSince` timestamp.
+`PushService` (`src/push-service.ts`) owns push endpoints and delegates all
+visibility reads to the registry (`isTaskVisibleToAnyClient`,
+`hasVisibleClient`, `isEndpointVisible`).
 
 Accurate visibility state is therefore critical — a stale "visible" record globally blackholes push. The fundamental limitation is that `visibilitychange` only tracks tab-switching, not actual user attention, and on iOS PWA the browser can silently kill the hidden-transition `fetch` mid-flight, leaving a permanent ghost record.
 
@@ -252,23 +268,28 @@ Accurate visibility state is therefore critical — a stale "visible" record glo
 
 | Layer                                 | Mechanism                                                                                                                                              | File                                              |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
-| 1. Hidden transition survives OS kill | `navigator.sendBeacon` first, `fetch({keepalive:true})` fallback, plus `pagehide` secondary listener                                                   | `connection.ts` → `postHiddenBeacon()`            |
-| 2. Server clock on every record       | Each `/visibility` update stamps `visibleSince`; readers ignore records older than **60s**                                                             | `client-registry.ts` → `isTaskVisibleToAnyClient` (called via `push-service.ts`) |
-| 3. Continuous refresh while SSE alive | SSE emits a **named** `event: heartbeat` every **15s** (not a comment — `EventSource` discards those); frontend listener POSTs `/visibility` each tick | `sse-manager.ts`, `connection.ts`                 |
+| 1. Hub-level latest state | `SyncHub` collects the visible task id from every authenticated live tab and full-replaces the set when it changes | `sync-hub.ts` |
+| 2. Revision fencing | Each POST carries a positive monotonic `X-Visibility-Rev`; stale/equal revisions are ignored | `client-registry.ts` → `setVisibility()` |
+| 3. Server TTL | Each accepted `/visibility` update stamps `visibleSince`; readers ignore records older than **60s** | `client-registry.ts` → `isTaskVisibleToAnyClient` |
 
 SSE liveness is the single authoritative "this client is reachable" signal: connection alive → heartbeat fires → TTL stays fresh; connection dies or process is suspended → heartbeats stop → record expires within 60s and push correctly re-enables globally.
 
 **Edge vs level semantics on `/visibility`:**
 
-- `ClientRegistry.setVisibility` returns `{ becameVisibleFor }`, non-null **only** on the edge (invisible OR different task → visible + task=X). PushService observes that signal (via the `/visibility` handler) to fire close-banner side effects.
-- `sendClose(sess-${sid}-done)` + permission cleanup fire **only** on that edge, not on every 15s heartbeat refresh — otherwise one focused client would hammer banner recall on every device every 15s
-- Body parsing distinguishes `taskId` omitted (preserve prior) from explicit `null` (clear) via `"taskId" in body` on raw JSON before Zod collapses both to `undefined`
+- `ClientRegistry.setVisibility` accepts only a newer revision and full-replaces
+  `visibleTaskIds`. It returns `newlyVisibleTaskIds`, not an in-flight boolean.
+- Completion and permission banner cleanup fires only for ids that became
+  visible. Heartbeat refreshes still POST the unchanged set to refresh TTL, but
+  do not repeat that edge while the prior visibility remains fresh.
+- The hub posts `{ taskIds }`; each update also requires
+  `X-Visibility-Rev: <positive integer>`. An SSE client that disconnects during
+  body parsing returns 404 and is never recreated.
 
 **When the client reports:** each SSE client registers its push endpoint with
-`POST /api/beta/push/register-client` on connect, and reports
-`{ visible, taskId? }` to `POST /api/beta/clients/:clientId/visibility` on SSE
-connect, on `visibilitychange`, and on task switch (the `task_created`
-handler). A client with no current task suppresses nothing.
+`POST /api/beta/push/register-client` on connect. The hub reports
+`{ taskIds: [...] }` to `POST /api/beta/clients/:clientId/visibility`, with a
+monotonic `X-Visibility-Rev`, whenever the union of visible tab task ids
+changes. The empty set suppresses nothing.
 
 **Emergency rollback:** set `push.global_visibility_suppression = false` in the service config and reload — disables cross-device suppression without code change.
 
@@ -675,11 +696,11 @@ Uses `res.text()` + `JSON.parse()` instead of `res.json()` to handle empty bodie
 | `cancelTask(taskId)`                          | POST   | `/api/v1/tasks/:id/cancel`                        |
 | `resolvePermission(taskId, requestId, optionId)` | POST   | `/api/v1/tasks/:id/permissions/:reqId`            |
 | `denyPermission(taskId, requestId)`              | POST   | `/api/v1/tasks/:id/permissions/:reqId`            |
-| `setConfig(taskId, configId, value)`             | PUT    | `/api/v1/tasks/:id/{model,mode,reasoning-effort}` |
+| `setConfig(taskId, configId, value)`             | PUT    | `/api/v1/tasks/:id/config/:configId` |
 | `setTitle(taskId, title)`                        | PUT    | `/api/v1/tasks/:id/title`                         |
 | `execBash(taskId, command)`                      | POST   | `/api/v1/tasks/:id/bash`                          |
 | `cancelBash(taskId)`                             | POST   | `/api/v1/tasks/:id/bash/cancel`                   |
-| `postVisibility(clientId, visible)`                 | POST   | `/api/beta/clients/:clientId/visibility`             |
+| `postVisibility(clientId, taskIds, rev)`            | POST   | `/api/beta/clients/:clientId/visibility`             |
 | `getStatus(taskId)`                              | GET    | `/api/v1/tasks/:id/status`                        |
 
 ---
@@ -1053,11 +1074,13 @@ This eliminates the serial dependency chain that existed with WebSocket-only arc
 
 ### Global SSE Stream
 
-The client connects to `/api/v1/events/stream` (global), not per-task. This means:
+The client connects to `/api/v1/events/stream` only once. This means:
 
 - No reconnect needed on task switch
 - Multi-client broadcast works naturally (see other clients' task changes)
-- One connection per browser tab, regardless of task switches
+- One physical connection per SharedWorker scope, normally shared by multiple
+  tabs; each tab still owns its focus and visibility intent
+- No per-task SSE URL, event-id replay branch, or `Last-Event-ID` framing
 
 ### Optimistic UI + Retry
 

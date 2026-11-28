@@ -44,7 +44,7 @@ async function storeChoices(
   for (const [path, value] of paths) {
     const written = await harness.request(
       "PUT",
-      `/api/v1/tasks/${taskId}/${path}`,
+      `/api/v1/tasks/${taskId}/config/${path}`,
       { value },
     );
     assert.equal(written.status, 200, `${path} write must succeed`);
@@ -145,7 +145,7 @@ describe("a replacement owned by another agent", () => {
       const otherId = String(other.json.id);
       await harness.request(
         "PUT",
-        `/api/v1/tasks/${otherId}/reasoning-effort`,
+        `/api/v1/tasks/${otherId}/config/reasoning-effort`,
         {
           value: "low",
         },
@@ -179,7 +179,7 @@ describe("a replacement owned by another agent", () => {
       // cold read can only produce it by overlaying the row.
       const coldChoice = await harness.request(
         "PUT",
-        `/api/v1/tasks/${taskId}/reasoning-effort`,
+        `/api/v1/tasks/${taskId}/config/reasoning-effort`,
         { value: "low" },
       );
       assert.equal(coldChoice.status, 200);
@@ -337,7 +337,7 @@ describe("a replacement owned by another agent", () => {
       const otherId = String(other.json.id);
       const warm = await harness.request(
         "PUT",
-        `/api/v1/tasks/${otherId}/reasoning-effort`,
+        `/api/v1/tasks/${otherId}/config/reasoning-effort`,
         { value: "low" },
       );
       assert.equal(warm.status, 200);

@@ -533,118 +533,31 @@ SELECT COUNT(*) FROM events WHERE task_id NOT IN (SELECT id FROM tasks);
 
 ---
 
-## Event payload normalization
+## Event payloads
 
-The `events.data` column stores JSON whose shape depends on `type`. The
-`system_message` payload uses a required `title` and an optional `body`.
-When opening a current-schema database written before this payload split,
-`Store` performs an idempotent transaction that normalizes title-less
-`system_message` rows before any replay or egress path can read them. This is a
-payload normalization, not a SQLite table migration; after startup, all event
-readers use the current `title`/`body` shape. The retired `tasks.brief` column
-is handled the same way: the schema guard tolerates it and startup drops it
-(see [Pre-1.0 reset policy](#pre-10-reset-policy)).
-
-## Timestamp normalization
-
-Eight tables hold nine timestamp columns. Seven of them (`tasks.created_at`,
-`tasks.last_active_at`, `agent_sessions.created_at`, `events.created_at`,
-`push_subscriptions.created_at`, `attachments.created_at`,
-`recent_paths.last_used_at`) were bare UTC strings in older databases, in two
-shapes: `%Y-%m-%d %H:%M:%S` and `%Y-%m-%d %H:%M:%S.%f`, neither with a timezone
-marker. The other two (`shares.created_at`, `owner_prefs.updated_at`) were
-already INTEGER but
-defaulted to `CAST(strftime('%s','now') AS INTEGER) * 1000` (seconds aligned).
-
-At startup, `migrateTimestampsToMillis()` rebuilds each table whose target
-column declarations differ from the canonical DDL (wrong type, extra or missing
-constraints, or a legacy default expression), in one transaction. String
-columns are converted with
-`CAST(ROUND((julianday(col) - 2440587.5) * 86400000) AS INTEGER)` (SQLite reads
-a suffix-less time string as UTC, so no `utc`/`localtime` modifier is applied);
-the two already-INTEGER columns only have their declaration converged and their
-values are copied through untouched.
-Foreign keys are disabled for the rebuild and a `foreign_key_check` must pass
-before the transaction commits. A NULL in a legacy nullable column falls back
-to that row's converted `created_at`, matching what
-`ORDER BY COALESCE(last_active_at, created_at)` already meant.
-
-The migration is **fail-closed**. Before any DDL it scans every target column:
-a legacy column must hold a `YYYY-MM-DD HH:MM:SS[.SSS]` UTC string whose
-numeric instant round-trips back to the same literal date-time (`'0'`, the
-empty string, `'now'`, a `T` separator, and calendar-invalid values such as
-`2026-02-29`, `2026-04-31`, `24:00:00`, or `23:59:60` all fail — SQLite would
-otherwise normalize those silently), and a column already declared INTEGER
-must hold an integer.
-Any offending value aborts the migration with the table, column, row identity
-(`id`, `task_id`/`seq`, …), and original value, and the transaction rolls back —
-a malformed value is never silently coerced to a plausible-looking number.
-
-The rebuild reads the live `CREATE TABLE` / `CREATE INDEX` text from
-`sqlite_master` and replaces only the timestamp declarations, so no second copy
-of the DDL exists. A database whose non-timestamp DDL matches the current
-release therefore ends up with byte-identical schema text to a freshly created
-one; a database carrying an older ALTER-built layout (for example the older
-`tasks` / `events` shapes with quoted table names and reordered columns) keeps
-that layout and only converges the timestamp declarations. Running the
-migration again is a no-op.
-
-This release changes the **JSON egress**: every timestamp field now renders
-ISO-8601 UTC with an explicit `Z` (`docs/api.md` → `Timestamps`). Storage stays
-integer milliseconds; the wire never carries the integer form.
-
-### Migration and rollback
-
-- **When.** The migration runs inside `Store` construction on every server
-  start, before the server accepts requests. It is idempotent: a database whose
-  declarations are already canonical is left untouched.
-- **Atomicity.** Every rebuild happens in one transaction with foreign keys
-  disabled, and `foreign_key_check` must pass before it commits. A malformed
-  value aborts the migration and rolls the whole transaction back.
-- **`VACUUM` is a separate step.** It cannot run inside a transaction, needs
-  roughly twice the database size in free disk, and blocks whatever startup it
-  runs in. The rebuild frees pages but does not shrink the file; run `VACUUM`
-  as a one-off operator step after a successful migration if the file should
-  shrink (the dogfood database went from 269 MB to 14.3 MB).
-- **Rollback = restore the full pre-deploy database backup.** The migration
-  commits inside `Store` construction; `dropLegacyColumns` and
-  `migrateSystemMessagePayloads` then run afterwards as separate statements, so
-  a failure there leaves the database migrated. Reverting the binary alone is
-  **not** sufficient — restore the backup taken before the deploy.
-- **Before deploying.** Take a consistent backup (`.backup`, or checkpoint and
-  copy), run the *full* `Store` startup on the backup copy (not just the
-  migration), and verify `integrity_check`, `foreign_key_check`, that every
-  timestamp column holds integers, the row counts and sampled values, and that
-  the schema and indexes match a freshly created database. Keep the old binary
-  and the backup until the deploy is confirmed.
+The `events.data` column stores the current JSON shape for its `type`.
+`system_message` requires `title` and may carry `body` plus kind-specific
+reference fields. Stored rows are never normalized during startup.
 
 ## Pre-1.0 reset policy
 
-Schema changes before 1.0 are breaking changes. Server startup never performs
-an implicit compatibility migration for obsolete table schemas: the strict
-schema guard rejects them at boot, and operators must back up and reset their
-data directory before restarting. This includes a `tasks.workflow_status` CHECK
-that predates `waiting`: the constraint is part of the contract, so such a
-database is refused at startup rather than at the first `task_update(waiting)`.
-Likewise a `deliveries` table that still has `claimed_at` or a `draining`
-status is refused. Four narrow, in-place schema edits are the
-explicit exceptions (three column-scoped and one index swap), and all converge
-an existing database on the current schema instead of requiring a reset:
+Schema changes before 1.0 are breaking changes. Store startup is not a
+compatibility layer: it asserts the current schema before writable setup and
+refuses an obsolete database without changing the original file. Operators
+must back up and reset their data directory.
 
-- the `system_message` payload normalization described above for the current
-  `title`/`body` split;
-- dropping the retired `tasks.brief` column in place (`0.10` replaced one-step
-  child creation with `+<title>` followed by `@<title> <message>`);
-- converting the eight legacy string timestamp columns to INTEGER unix
-  milliseconds (see [Timestamp normalization](#timestamp-normalization));
-- replacing the task-only `agent_sessions` unique index with one on
-  `(agent_key, task_id)`, preserving the existing same-agent rebind semantics.
-  The index keeps bindings separable per backend; the global
-  one-binding-per-task rule is enforced by the application (see
-  [`agent_sessions`](#agent_sessions)).
+The assertion covers current timestamp declarations and `DEFAULT 0` values,
+column sets, the `tasks.workflow_status` CHECK, and the `deliveries` status
+CHECK. It explicitly refuses `tasks.brief`, the retired
+`idx_agent_sessions_task`, and `client_ops`. There are no startup DDL rebuilds,
+timestamp conversions, payload rewrites, or stored-model/cwd canonicalization
+passes.
 
 The single-Root data shape is a hard break. Startup refuses a pre-multi-agent
-database read-only, before any write: tasks without the Root that `workspace`
+database via a read-only preflight before any writable open (leaving
+`webagent.db` and any existing `webagent.db-wal` byte-identical; SQLite may
+create or refresh a rebuildable `-shm` index when reading an uncheckpointed
+WAL): tasks without the Root that `workspace`
 names (which includes a database whose Root still has the pre-UUID literal id
 `root`: Root identity became a per-database UUID as a declared breaking
 change, with no in-place rename), or
@@ -657,14 +570,16 @@ never edits an old database.
 The peer-link schema is also a hard break. `remote_tasks.remote_host` is required
 for both `parent` and `child` rows. The read-only preflight rejects the old
 nullable-parent CHECK even when the old database contains zero `remote_tasks`
-rows; it leaves the database bytes unchanged. Backup the data directory, remove
-the old database (or the whole data directory), and restart.
+rows, leaving `webagent.db` and `webagent.db-wal` byte-identical. Backup the
+data directory, remove the old database (or the whole data directory), and
+restart.
 
 The 5-category `outbox` CHECK relaxation (allowing `notice` with a null
 `delivery_id`) uses the same read-only preflight: a database whose `outbox`
-table still carries the 3-category CHECK is refused before any write, even when
-`outbox` is empty, leaving the file byte-identical. Migrate the database with
-the offline migration script or back up and reset.
+table still carries the 3-category CHECK is refused before any writable open,
+even when `outbox` is empty, leaving `webagent.db` and `webagent.db-wal`
+byte-identical. Migrate the database with an explicitly documented offline
+procedure or back up and reset.
 
 ---
 

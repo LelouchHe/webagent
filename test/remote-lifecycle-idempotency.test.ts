@@ -167,6 +167,7 @@ describe("Remote lifecycle idempotency: HostConnection single-hop retries, befor
     });
     const ownerHttp = await startHttp(
       createRequestHandler({
+        attachmentSecret: Buffer.alloc(32, 7),
         store: owner.store,
         tasks: owner.tasks,
         taskOps: ownerLocalOps,
@@ -235,11 +236,11 @@ describe("Remote lifecycle idempotency: HostConnection single-hop retries, befor
         remote: hubRegistry,
         store: hub.store,
         tasks: hub.tasks,
-        broadcastCollaboration: () => {},
       }),
     };
     const hubHttp = await startHttp(
       createRequestHandler({
+        attachmentSecret: Buffer.alloc(32, 7),
         store: hub.store,
         tasks: hub.tasks,
         taskOps: hubTaskOps,
@@ -406,7 +407,6 @@ describe("Remote lifecycle idempotency: HostConnection single-hop retries, befor
         remote: cancelHubRegistry,
         store: cancelHub.store,
         tasks: cancelHub.tasks,
-        broadcastCollaboration: () => {},
       }),
     };
     await assert.rejects(

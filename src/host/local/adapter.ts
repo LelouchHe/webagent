@@ -11,12 +11,11 @@ import {
   type TaskManager,
 } from "../../task-manager.ts";
 import { expandHomePath } from "../../home-path.ts";
-import { errorMessage, type AgentEvent } from "../../types.ts";
+import { errorMessage } from "../../types.ts";
 import { recordTaskCancelEvent } from "../../task-cancel-record.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../../shared/time.ts";
 import { formatSilence } from "../../obligation-controller.ts";
 import { abbreviateHomePath } from "../../home-path.ts";
-import type { TaskCreatedBroadcastInput } from "../../task-created-message.ts";
 import type {
   TaskCaller,
   TaskCreateCaller,
@@ -42,25 +41,6 @@ import {
   normalizeTaskHistoryRange,
   uniqueTaskHistorySeqs,
 } from "../../task-history.ts";
-import type { CollaborationDeliveryStatus } from "../../shared/delivery-status.ts";
-
-export interface TaskCollaborationEvent {
-  messageId: string;
-  sourceTaskId: string;
-  targetTaskId: string;
-  /** Raw title of each side; the shared builder renders the title from them. */
-  sourceLabel: string;
-  targetLabel: string;
-  body: string;
-  /** The task this projection renders into. */
-  taskId: string;
-  role: "source" | "target";
-  deliveryStatus?: CollaborationDeliveryStatus;
-  deliveredAt?: string;
-  deliveryFailureReason?: string;
-}
-
-export type TaskCreatedEvent = TaskCreatedBroadcastInput;
 
 export function assertTaskCaller(
   tasks: Pick<TaskManager, "authority">,
@@ -88,8 +68,6 @@ export function assertTaskCaller(
  * frontend branch. A user-initiated cancel stays deliberately different and
  * writes nothing here.
  */
-export type TaskCancelNotice = Extract<AgentEvent, { type: "system_message" }>;
-
 function relationOrder(relation: TaskListItem["relation"]): number {
   return { self: 0, parent: 1, child: 2 }[relation];
 }
@@ -112,9 +90,8 @@ export function createLocalTaskOps(deps: {
   store: Store;
   tasks: TaskManager;
   cancelTimeoutMs?: number;
-  broadcastTaskCancelNotice?: (event: TaskCancelNotice) => void;
 }): TaskOps {
-  const { store, tasks, broadcastTaskCancelNotice } = deps;
+  const { store, tasks } = deps;
 
   /**
    * The single authority check for one MCP operation. It lives here because
@@ -567,7 +544,6 @@ export function createLocalTaskOps(deps: {
           const targetTask = store.getTaskIncludingDeleted(command.taskId);
           recordTaskCancelEvent({
             store,
-            broadcastTaskCancelNotice,
             role: "target",
             sourceTaskId: command.actor.sourceTaskId,
             sourceLabel: command.actor.sourceLabel,
@@ -598,7 +574,6 @@ export function createLocalTaskOps(deps: {
       for (const role of ["source", "target"] as const) {
         recordTaskCancelEvent({
           store,
-          broadcastTaskCancelNotice,
           role,
           sourceTaskId,
           sourceLabel,

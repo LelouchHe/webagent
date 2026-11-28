@@ -45,7 +45,7 @@ function pad2(n: number): string {
  * egress). A string without a marker is not part of the contract and is not
  * supported.
  *
- * TODO(timestamp-migration): the helper still *accepts* a bare
+ * TODO(timestamp-contract): the helper still *accepts* a bare
  * `YYYY-MM-DD HH:MM:SS` string because `Date` parses it (as local time), so a
  * contract violation is mis-rendered instead of refused. Reject unmarked
  * strings here (return an invalid `Date` so the UI shows `—`) in a follow-up

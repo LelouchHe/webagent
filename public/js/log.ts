@@ -159,12 +159,6 @@ export function resetLogLevelOverride(): LogLevelResolution {
   return resolved;
 }
 
-// Backward-compat no-op retained so callers wired before the level refactor
-// (e.g. tests that clear per-task DOM) don't break.
-export function resetForTask(): void {
-  // intentionally empty — inline messages live in #messages and are cleared by resetTaskUI.
-}
-
 // ============================================================
 // Logger implementation
 // ============================================================

@@ -1,7 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -77,7 +76,7 @@ describe("image signed URLs", () => {
   let server: http.Server;
   let port: number;
   let token: string;
-  const attachmentSecret = randomBytes(32);
+  const attachmentSecret = Buffer.alloc(32, 7);
 
   before(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), "webagent-img-sign-"));

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import { Store, type CollaborationMessageInput } from "../src/store.ts";
 import { RUNTIME_MESSAGE_KINDS } from "../src/collaboration-message.ts";
 
@@ -95,59 +95,6 @@ describe("Store collaboration records", () => {
     void created;
   });
 
-  it("normalizes legacy system payloads before replay", () => {
-    store.saveEvent(
-      "a1",
-      "system_message",
-      {
-        kind: "collaboration",
-        sourceTaskId: "a1",
-        sourceLabel: "a1",
-        targetTaskId: "a2",
-        targetLabel: "a2",
-        body: "@a1 sent @a2: 请检查接口定义",
-        messageBody: "请检查接口定义",
-      },
-      { from_ref: "msg:legacy" },
-    );
-    store.saveEvent(
-      "a1",
-      "system_message",
-      { kind: "notice", body: "Agent reloading..." },
-      { from_ref: "system" },
-    );
-    store.saveEvent(
-      "a1",
-      "system_message",
-      {
-        kind: "task_created",
-        taskId: "child-1",
-        title: "Child",
-        body: "Created task @Child",
-      },
-      { from_ref: "agent" },
-    );
-
-    store.close();
-    store = new Store(tmpDir);
-
-    const rows = store
-      .getEvents("a1")
-      .filter((row) => row.type === "system_message");
-    const collaboration = JSON.parse(rows[0].data) as Record<string, unknown>;
-    assert.equal(collaboration.title, "@a1 sent @a2");
-    assert.equal(collaboration.body, "请检查接口定义");
-    assert.equal("messageBody" in collaboration, false);
-
-    const notice = JSON.parse(rows[1].data) as Record<string, unknown>;
-    assert.equal(notice.title, "Agent reloading...");
-    assert.equal("body" in notice, false);
-
-    const taskCreated = JSON.parse(rows[2].data) as Record<string, unknown>;
-    assert.equal(taskCreated.title, "Created task @Child");
-    assert.equal("body" in taskCreated, false);
-  });
-
   it("uses the stored task titles as labels", () => {
     store.updateTaskTitle("a1", "审查");
     store.updateTaskTitle("a2", "修复");
@@ -227,31 +174,6 @@ describe("Store collaboration records", () => {
     );
     assert.equal(task.title, "unnamed-1");
     assert.equal(store.getTask("unnamed-1")?.title, "unnamed-1");
-  });
-
-  it("drops the legacy tasks.brief column on open", () => {
-    // A pre-0.10 database still carries the column the old one-step creation
-    // wrote. Reopening must migrate it instead of leaving two shapes around.
-    store.close();
-    const raw = new Database(join(tmpDir, "webagent.db"));
-    raw.exec("ALTER TABLE tasks ADD COLUMN brief TEXT NOT NULL DEFAULT ''");
-    raw.exec("UPDATE tasks SET brief = 'legacy'");
-    raw.close();
-
-    store = new Store(tmpDir);
-    const database = (store as unknown as { db: Database.Database }).db;
-    const columns = database.pragma("table_info(tasks)") as Array<{
-      name: string;
-    }>;
-    assert.equal(
-      columns.some((column) => column.name === "brief"),
-      false,
-      "the legacy column must be gone",
-    );
-    const row = database
-      .prepare("SELECT * FROM tasks WHERE id = ?")
-      .get("a1") as Record<string, unknown>;
-    assert.equal("brief" in row, false);
   });
 
   it("initializes tasks idle with no creation brief", () => {

@@ -109,7 +109,7 @@ test("moving a task to another agent starts from that agent's environment", asyn
   const taskId = ((await created.json()) as { id: string }).id;
 
   // A non-default choice on mock.
-  const written = await request.put(`/api/v1/tasks/${taskId}/model`, {
+  const written = await request.put(`/api/v1/tasks/${taskId}/config/model`, {
     data: { value: MOCK_OTHER_MODEL },
   });
   expect(written.ok()).toBeTruthy();

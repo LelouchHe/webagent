@@ -269,6 +269,7 @@ describe("turn slot", () => {
     writeFileSync(join(publicDir, "index.html"), "<h1>Test</h1>");
     server = http.createServer(
       createRequestHandler({
+        attachmentSecret: Buffer.alloc(32, 7),
         store,
         tasks,
         taskOps: createLocalTaskOps({ store, tasks }),
@@ -414,25 +415,6 @@ describe("turn slot", () => {
       releaseSummary();
       await waitFor(() => tasks.compactingTasks.size === 0);
       await waitFor(() => tasks.getTurn(id) === null);
-    });
-
-    it("opens a beta quick prompt's turn as interactive", async () => {
-      const pending = deferred();
-      openPrompts.push(pending);
-
-      const res = await makeRequest(
-        port,
-        "POST",
-        "/api/beta/prompt",
-        JSON.stringify({ text: "quick question" }),
-      );
-      assert.equal(res.status, 202);
-      const taskId = bodyOf(res).taskId;
-      assert.ok(taskId, "the beta route answers with the task it created");
-      assert.equal(tasks.getTurn(taskId)?.origin, "interactive");
-
-      pending.resolve();
-      await waitFor(() => tasks.getTurn(taskId) === null);
     });
   });
 

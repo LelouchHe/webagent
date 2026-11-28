@@ -66,13 +66,8 @@ describe("POST /api/v1/messages — ingress", () => {
       broadcasts.push(ev);
       origBroadcast(ev);
     };
-    const origBroadcastGlobal = sseManager.broadcastGlobal.bind(sseManager);
-    sseManager.broadcastGlobal = (ev: AgentEvent) => {
-      broadcasts.push(ev);
-      origBroadcastGlobal(ev);
-    };
-
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       sseManager,
       store,
       publicDir,

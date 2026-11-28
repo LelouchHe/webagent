@@ -139,13 +139,13 @@ describe("creating a task for a named agent", () => {
       const sourceId = String(source.json.id);
       const modelWrite = await harness.request(
         "PUT",
-        `/api/v1/tasks/${sourceId}/model`,
+        `/api/v1/tasks/${sourceId}/config/model`,
         { value: "model-a2" },
       );
       assert.equal(modelWrite.status, 200);
       const thinkWrite = await harness.request(
         "PUT",
-        `/api/v1/tasks/${sourceId}/reasoning-effort`,
+        `/api/v1/tasks/${sourceId}/config/reasoning-effort`,
         { value: "low" },
       );
       assert.equal(thinkWrite.status, 200);
@@ -189,12 +189,12 @@ describe("creating a task for a named agent", () => {
         agentId: AGENT_A,
       });
       const sourceId = String(source.json.id);
-      await harness.request("PUT", `/api/v1/tasks/${sourceId}/model`, {
+      await harness.request("PUT", `/api/v1/tasks/${sourceId}/config/model`, {
         value: "model-a2",
       });
       await harness.request(
         "PUT",
-        `/api/v1/tasks/${sourceId}/reasoning-effort`,
+        `/api/v1/tasks/${sourceId}/config/reasoning-effort`,
         {
           value: "low",
         },

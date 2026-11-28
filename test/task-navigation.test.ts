@@ -66,7 +66,7 @@ describe("shared task navigation", () => {
         if (delayedHistory) return delayedHistory;
         return response({ events: [] });
       }
-      if (url === "/api/v1/tasks/message-task/snapshot?warm=1") {
+      if (url === "/api/v1/tasks/message-task/snapshot") {
         if (delayedSnapshot) {
           onDelayedSnapshotFetch?.();
           return delayedSnapshot;
@@ -89,7 +89,7 @@ describe("shared task navigation", () => {
       if (url.startsWith("/api/v1/tasks/back-task/events?limit=")) {
         return response({ events: [] });
       }
-      if (url === "/api/v1/tasks/back-task/snapshot?warm=1") {
+      if (url === "/api/v1/tasks/back-task/snapshot") {
         return response({
           version: 1,
           seq: 0,
@@ -162,7 +162,7 @@ describe("shared task navigation", () => {
       }
       if (url.startsWith(`/api/v1/tasks/${rootId}/events`))
         return response({ events: [], streaming: {} });
-      if (url === `/api/v1/tasks/${rootId}/snapshot?warm=1`)
+      if (url === `/api/v1/tasks/${rootId}/snapshot`)
         return response({
           version: 1,
           seq: 0,
@@ -318,7 +318,7 @@ describe("shared task navigation", () => {
       if (url === "/api/v1/tasks/fast-task/events?flush=1&limit=500") {
         return response({ events: [], streaming: {} });
       }
-      if (url === "/api/v1/tasks/fast-task/snapshot?warm=1") {
+      if (url === "/api/v1/tasks/fast-task/snapshot") {
         return response({
           version: 1,
           seq: 0,
@@ -505,7 +505,7 @@ describe("shared task navigation", () => {
     assert.equal(state.taskId, "new-task");
     assert.equal(
       fetchCalls.some(
-        (call) => call.url === "/api/v1/tasks/message-task/snapshot?warm=1",
+        (call) => call.url === "/api/v1/tasks/message-task/snapshot",
       ),
       false,
     );

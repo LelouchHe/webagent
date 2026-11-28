@@ -16,6 +16,7 @@ import { Store } from "../src/store.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { TaskManager, type DeliveryBridge } from "../src/task-manager.ts";
 import { createRequestHandler } from "../src/http/routes.ts";
+import { signAttachmentUrl } from "../src/auth.ts";
 
 /**
  * Read paths under three genuinely different kinds of unavailability, plus the
@@ -35,6 +36,7 @@ import { createRequestHandler } from "../src/http/routes.ts";
 const FIXTURE = fileURLToPath(
   new URL("./fixtures/multi-agent-acp-agent.ts", import.meta.url),
 );
+const ATTACHMENT_SECRET = Buffer.alloc(32, 7);
 
 function request(
   port: number,
@@ -107,6 +109,7 @@ describe("reads with an unavailable execution", () => {
       agents: registry,
     });
     const handler = createRequestHandler({
+      attachmentSecret: ATTACHMENT_SECRET,
       store,
       tasks,
       sseManager: Object.assign(new SseManager(), { broadcast() {} }),
@@ -178,10 +181,11 @@ describe("reads with an unavailable execution", () => {
       ),
     );
     // Attachment bytes are served from disk by task id.
+    const attachmentPath = `/api/v1/tasks/${taskId}/attachments/note.txt`;
     const attachment = await request(
       port,
       "GET",
-      `/api/v1/tasks/${taskId}/attachments/note.txt`,
+      `${attachmentPath}?${signAttachmentUrl(attachmentPath, ATTACHMENT_SECRET, 3600)}`,
     );
     assert.equal(attachment.status, 200);
     assert.equal(attachment.body, "attachment body");
@@ -292,6 +296,7 @@ describe("snapshot warm-up is bounded", () => {
     });
     store.createTask("slow", dir, "auto", "agent-a", "existing-session");
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks,
       sseManager: Object.assign(new SseManager(), { broadcast() {} }),

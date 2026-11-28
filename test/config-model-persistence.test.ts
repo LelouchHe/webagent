@@ -9,7 +9,7 @@ import { createTaskManager } from "../src/task-manager.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
 
 describe("persisted model identity", () => {
-  it("canonicalizes values written in the previous composite encoding", () => {
+  it("does not rewrite values from the previous composite encoding on read", () => {
     const dir = mkdtempSync(join(tmpdir(), "model-identity-"));
     const encoded = JSON.stringify(["vendor-a", "model-one"]);
     let store: Store | undefined;
@@ -28,14 +28,14 @@ describe("persisted model identity", () => {
       }
 
       store = new Store(dir);
-      assert.equal(store.getTask("task-1")?.model, "vendor-a/model-one");
+      assert.equal(store.getTask("task-1")?.model, encoded);
 
       const db = new Database(join(dir, "webagent.db"), { readonly: true });
       try {
         const row = db
           .prepare("SELECT model FROM tasks WHERE id = ?")
           .get("task-1") as { model: string | null };
-        assert.equal(row.model, "vendor-a/model-one");
+        assert.equal(row.model, encoded);
       } finally {
         db.close();
       }
@@ -121,7 +121,7 @@ describe("persisted model identity", () => {
           ?.currentValue,
         "vendor-a/model-one",
       );
-      assert.equal(store.getTask("task-1")?.model, "vendor-a/model-one");
+      assert.equal(store.getTask("task-1")?.model, encoded);
     } finally {
       tasks.dispose();
       store.close();

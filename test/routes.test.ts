@@ -80,6 +80,7 @@ describe("HTTP routes", () => {
 
     store = new Store(tmpDir);
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       publicDir,
       dataDir: tmpDir,
@@ -522,6 +523,7 @@ describe("Image upload", () => {
       store.createTask(sid, "/tmp", "auto", "test-agent");
     }
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       publicDir,
       dataDir: tmpDir,
@@ -762,6 +764,7 @@ describe("Push API routes", () => {
       clientRegistry: registry,
     });
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       publicDir,
       dataDir: tmpDir,
@@ -884,6 +887,7 @@ describe("Push API routes", () => {
   it("GET /api/beta/push/vapid-key returns 404 when no push service", async () => {
     // Create handler without pushService
     const handler2 = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       publicDir,
       dataDir: tmpDir,
@@ -944,6 +948,7 @@ describe("POST /api/v1/bridge/reload", () => {
     tasks = createTaskManager(store, tmpDir, tmpDir);
     tasks.attachExecutionBridge(mockBridge as never);
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks,
       publicDir,
@@ -1065,6 +1070,7 @@ describe("POST /api/v1/bridge/reload", () => {
 
   it("returns 503 when bridge is not available", async () => {
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks: createTaskManager(store, tmpDir, tmpDir),
       publicDir,

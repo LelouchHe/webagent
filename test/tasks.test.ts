@@ -17,7 +17,6 @@ import { createRequestHandler } from "../src/http/routes.ts";
 import { createLocalTaskOps } from "../src/host/local/adapter.ts";
 import { createTaskHost } from "../src/host/tasks.ts";
 import { createTaskOpsCore } from "../src/task-ops.ts";
-import { buildTaskCreatedBroadcast } from "../src/task-created-message.ts";
 import type { ConfigOption, AgentEvent } from "../src/types.ts";
 import { mockBridgeStubs } from "./fixtures.ts";
 
@@ -159,9 +158,6 @@ describe("Task REST API", () => {
         }),
         store,
         tasks,
-        broadcastTaskCreated: (event) => {
-          broadcastEvents.push(buildTaskCreatedBroadcast(event));
-        },
         broadcastConfigUpdate: (event) => {
           broadcastEvents.push(event);
         },
@@ -169,6 +165,7 @@ describe("Task REST API", () => {
     };
 
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks,
       taskOps,
@@ -741,6 +738,7 @@ describe("Task REST API", () => {
     it("returns 503 when bridge is not ready", async () => {
       // Create handler with no bridge
       const handler = createRequestHandler({
+        attachmentSecret: Buffer.alloc(32, 7),
         store,
         tasks: createTaskManager(store, tmpDir, tmpDir),
         publicDir,
@@ -893,10 +891,7 @@ describe("Task REST API", () => {
       assert.deepEqual(mockBridge.retireCalls, ["agent-old"]);
     });
 
-    it("rotates a legacy cwd in place instead of folding it", async () => {
-      // A task stored with `..` before this build ran in the directory the old
-      // rule named; compaction and bare `/clear` name no new directory, so the
-      // stored spelling must survive them.
+    it("folds a stored cwd through resolveTaskCwd on rotation", async () => {
       mkdirSync(join(tmpDir, "y"), { recursive: true });
       mkdirSync(join(tmpDir, "x"), { recursive: true });
       symlinkSync(join("..", "y"), join(tmpDir, "x", "link"));
@@ -914,13 +909,10 @@ describe("Task REST API", () => {
       );
 
       assert.equal(res.status, 200);
-      assert.equal(store.getTask("s1")?.cwd, legacy);
+      assert.equal(store.getTask("s1")?.cwd, `${tmpDir}/x`);
     });
 
-    it("rotates a legacy relative cwd without refusing the request", async () => {
-      // The old `/clear <relative>` pass-through could store a relative row. It
-      // is not a reason to make that task impossible to compact. `test/` exists
-      // relative to the process cwd, which is how such a row resolves at all.
+    it("refuses a stored relative cwd instead of silently resolving it", async () => {
       store.createTask("s1", tmpDir, "auto", "test-agent", "agent-old");
       (store as any).db
         .prepare("UPDATE tasks SET cwd = ? WHERE id = ?")
@@ -933,7 +925,7 @@ describe("Task REST API", () => {
         JSON.stringify({}),
       );
 
-      assert.equal(res.status, 200);
+      assert.equal(res.status, 400);
       assert.equal(store.getTask("s1")?.cwd, "test");
     });
 
@@ -1609,6 +1601,7 @@ describe("Task REST API", () => {
       );
       // No bridge is attached, so Root cannot be rebuilt.
       const handler = createRequestHandler({
+        attachmentSecret: Buffer.alloc(32, 7),
         store,
         tasks: createTaskManager(store, tmpDir, tmpDir),
         publicDir,
@@ -1796,7 +1789,7 @@ describe("Task REST API", () => {
       const res = await makeRequest(
         port,
         "PUT",
-        `/api/v1/tasks/${id}/model`,
+        `/api/v1/tasks/${id}/config/model`,
         JSON.stringify({ value: "claude-haiku" }),
       );
       assert.equal(res.status, 200);
@@ -1811,7 +1804,7 @@ describe("Task REST API", () => {
       const res = await makeRequest(
         port,
         "PUT",
-        `/api/v1/tasks/${id}/mode`,
+        `/api/v1/tasks/${id}/config/mode`,
         JSON.stringify({ value: "agent#autopilot" }),
       );
       assert.equal(res.status, 200);
@@ -1849,7 +1842,7 @@ describe("Task REST API", () => {
       await makeRequest(
         port,
         "PUT",
-        `/api/v1/tasks/${id}/model`,
+        `/api/v1/tasks/${id}/config/model`,
         JSON.stringify({ value: "claude-haiku" }),
       );
       const update = broadcastEvents.find(
@@ -1862,7 +1855,7 @@ describe("Task REST API", () => {
       const res = await makeRequest(
         port,
         "PUT",
-        "/api/v1/tasks/nonexistent/model",
+        "/api/v1/tasks/nonexistent/config/model",
         JSON.stringify({ value: "x" }),
       );
       assert.equal(res.status, 404);
@@ -1875,7 +1868,7 @@ describe("Task REST API", () => {
       const res = await makeRequest(
         port,
         "PUT",
-        `/api/v1/tasks/${id}/model`,
+        `/api/v1/tasks/${id}/config/model`,
         "{}",
       );
       assert.equal(res.status, 400);
@@ -1888,7 +1881,7 @@ describe("Task REST API", () => {
       const res = await makeRequest(
         port,
         "PUT",
-        `/api/v1/tasks/${id}/model`,
+        `/api/v1/tasks/${id}/config/model`,
         "not-json",
       );
       assert.equal(res.status, 400);
@@ -1897,6 +1890,7 @@ describe("Task REST API", () => {
     it("returns 503 when bridge is not ready", async () => {
       store.createTask("no-bridge", tmpDir, "auto", "test-agent");
       const handler = createRequestHandler({
+        attachmentSecret: Buffer.alloc(32, 7),
         store,
         tasks: createTaskManager(store, tmpDir, tmpDir),
         publicDir,
@@ -1915,7 +1909,7 @@ describe("Task REST API", () => {
       const res = await makeRequest(
         p2,
         "PUT",
-        "/api/v1/tasks/no-bridge/model",
+        "/api/v1/tasks/no-bridge/config/model",
         JSON.stringify({ value: "x" }),
       );
       assert.equal(res.status, 503);

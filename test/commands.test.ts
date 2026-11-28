@@ -1392,7 +1392,7 @@ describe("commands", () => {
       assert.equal(handled, true);
       const putCall = fetchCalls.find(
         (c) =>
-          c.url.split("?")[0] === "/api/v1/tasks/s1/model" &&
+          c.url.split("?")[0] === "/api/v1/tasks/s1/config/model" &&
           c.init?.method === "PUT",
       );
       assert.ok(putCall, "expected a PUT call");

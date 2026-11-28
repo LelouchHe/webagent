@@ -1,7 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { randomBytes } from "node:crypto";
 import {
   mkdtempSync,
   rmSync,
@@ -74,7 +73,7 @@ describe("file viewer routes", () => {
   let server: http.Server;
   let port: number;
   let token: string;
-  const attachmentSecret = randomBytes(32);
+  const attachmentSecret = Buffer.alloc(32, 7);
 
   // Files created in before() — kept as paths under tmpDir.
   let textFile: string;

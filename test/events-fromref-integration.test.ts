@@ -5,7 +5,6 @@ import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { Store } from "../src/store.ts";
 import {
-  projectLegacyPerTaskEvent,
   projectStoredEvents,
   toEventFeedEntries,
 } from "../src/event-egress.ts";
@@ -44,8 +43,11 @@ describe("event writers populate from_ref correctly", () => {
     store.onEventsCommitted((rows) => {
       const projected = projectStoredEvents(rows, { store, tasks });
       for (const entry of toEventFeedEntries(projected)) {
-        const legacy = projectLegacyPerTaskEvent(entry.data);
-        if (legacy) broadcasts.push(legacy);
+        broadcasts.push({
+          ...JSON.parse(entry.data.data),
+          type: entry.data.type,
+          taskId: entry.data.task_id,
+        } as AgentEvent);
       }
     });
   });

@@ -147,13 +147,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
     persistence, and `ops.complete` failure keeping `pending` (`409 op_aborted`)
     without ever returning success
 - `test/http-ops-idempotency.test.ts` and `test/remote-lifecycle-idempotency.test.ts`
-  - fresh DB omits `client_ops`; upgraded DBs drop any legacy `client_ops`
-    table at boot and run permission, cancel, prompt, and ingress routes cleanly
-    through `ops`
+  - fresh DB omits `client_ops`; a database that still carries `client_ops`
+    is refused without modification
   - unified HTTP `ops` replay across opted-in routes (permission, prompt with
     raw `clientOpId` echo, cancel, ingress, `DELETE /tokens/:name` `204` empty
     body, `share` `Cache-Control: no-store`, `push/subscribe` buffered body
-    reader, `beta/prompt`, Root exit `replacedBy`, unmatched `404`, files `405`),
+    reader, Root exit `replacedBy`, unmatched `404`, files `405`),
     fingerprint conflict (`409 op_conflict` on method/URL/raw bytes), caller
     isolation, non-owning host rejection, demoted admin `403` before replay,
     headerless fast path, strict physical header validation (`400 invalid_op_id`),
@@ -808,7 +807,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - target removal: deleting or archiving the target reports `target_removed`; losing the source drops the account silently; dispose stops timers
 
 - `test/turn-slot.test.ts`
-  - one turn slot per task, and every real submission assigns its own origin: the interactive route, `/compact`, and the beta quick prompt are `interactive`; a collaboration drain is `delegated` for an all-agent/system batch and `interactive` for a batch containing one user message. Nothing inherits the previous turn's value
+  - one turn slot per task, and every real submission assigns its own origin: the interactive route and `/compact` are `interactive`; a collaboration drain is `delegated` for an all-agent/system batch and `interactive` for a batch containing one user message. Nothing inherits the previous turn's value
   - every per-path release point of the end-of-turn table closes the slot — `prompt_done`, agent error, drain rejection, interactive `finally`, `/compact` `finally`, `resetTaskRuntime` even under `preserveRuntimeState`, and an agent-scoped `clearAgentRuntime` — and the next turn on that task is interactive again; a cancel request alone ends nothing, because only the turn's own terminal does. The task-vanishing row is covered only through its production entries (next bullet), never by calling a private release method
   - a superseded turn's late terminal (including a late `prompt_done`) never releases or re-origins the turn that replaced it
   - the submission protocol is shared and survives awaits: a runtime reservation blocks an interactive submit and vice versa, the slot is held across `ensureResumed`, a submitter that wins during the transport resolution is the only one that reaches `bridge.prompt` (and the loser's delivery stays queued), and a reservation invalidated by a cancel during that await gives up without claiming or submitting
@@ -865,7 +864,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/store.test.ts`
   - a database whose `tasks.workflow_status` CHECK predates `waiting`, or whose `deliveries` CHECK still has `draining`, is refused at startup with the pre-1.0 reset message
   - task creation / deletion / updates
-  - a stored cwd has no `.` and no `..`: `a/b/..` and `a/link/..` both become `a` (shell folding) and a reopen leaves them unchanged; a store opened on a database holding legacy variants merges each into its canonical row keeping its newest use, while a legacy row that still carries `..` keeps its bytes so a running task cannot move
+  - a stored cwd has no `.` and no `..`: `a/b/..` and `a/link/..` both become `a` (shell folding) and a reopen leaves them unchanged
   - config persistence, including clearing one column with `null` without touching the others
   - an agent image is stored as an attachment (file + row) and referenced by its own `agent_image` record between the surrounding text blocks; the persisted row carries no base64, the live broadcast is the same reference, and an oversized image becomes visible text with no row
   - title persistence
@@ -885,20 +884,12 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - the empty-task GC still re-parents a surviving child under Root instead of deleting it
   - deleteEmptyTasks age gating
   - hasInterruptedTurn detection
-  - migration idempotency
+  - startup performs no data migration
 
-- `test/timestamp-migration.test.ts`
-  - legacy string timestamps (with and without milliseconds) convert to unix millis, checked against an independent `Date.parse`
-  - per-table row counts and every stored value are preserved (non-vacuous seeds)
-  - boundary values (`1970-01-01`, `9999-12-31`, a real leap day) convert without aborting
-  - the oldest live DDL shape (`datetime('now')` default, nullable `last_active_at`) converts, with a NULL falling back to the row's `created_at`
-  - the real historical `tasks` / `events` DDL layout (quoted table name, out-of-order columns) migrates without rewriting the non-timestamp parts
-  - migrated schema text is byte-identical to a freshly created database; every index on a rebuilt table is recreated byte-identically
-  - a malformed legacy value (`'0'`, empty, `'now'`, `T` separator, out-of-range, or calendar-invalid such as `2026-02-29` / `24:00:00` / `23:59:60`) aborts the migration with the offending row and rolls back with nothing changed
-  - an INTEGER column whose default is still the legacy expression is rebuilt and its values copied through untouched, including `shares.created_at` / `owner_prefs.updated_at` converging from the seconds-aligned default
-  - migration is idempotent and leaves an already-INTEGER database untouched
-  - the legacy task-only `agent_sessions` index is dropped during a timestamp table rebuild; per-(agent, task) uniqueness remains, while a second agent can no longer attach another binding to an already-bound task
-  - `foreign_key_check` / `integrity_check` pass after the rebuild
+- `test/schema-refusal.test.ts`
+  - old timestamp column declarations and legacy defaults are refused
+  - `idx_agent_sessions_task` and `tasks.brief` are refused
+  - refusal is read-only: `webagent.db` and any existing `webagent.db-wal` bytes are unchanged (SQLite may create/refresh a rebuildable `-shm` index for an uncheckpointed WAL)
 
 - `test/daemon.test.ts`
   - subcommand recognition
@@ -914,7 +905,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - task list is global (`?agent=` narrows); every list entry, task detail, snapshot, bootstrap/create/clear payload, and `task_created` broadcast carries `agentId`; only `/api/v1/config` reports `rootTaskId`, and responses and the SSE `connected` event do not repeat it
   - creating a child of a task carried by another configured agent targets that agent without rotating the parent; when the parent's agent is gone the child is created for `default_agent`
   - `POST /clear { agentId }` rescues a task onto another configured agent, leaves the `agent_rotation` record, and refuses an unconfigured / non-string `agentId`
-  - a cwd must be absolute once HOME is expanded: a relative create and a relative rotation both answer 400 without moving the task, while a rotation that names no new directory keeps a legacy `..` or relative row exactly as stored (no user input, so no silent move)
+  - a cwd must be absolute once HOME is expanded: relative create/rotation and a stored relative cwd are refused, while absolute stored cwd spellings are canonicalized through `resolveTaskCwd()`
   - REST and MCP callers cannot choose reserved task ids; bootstrap, clear, compact, and actual/synthetic task_created envelopes preserve Root identity
   - bootstrap materializes the Root as the workspace's first task (attach on a never-bound Root, materialize an exit's empty slot) instead of creating an unrelated task
   - config update (model, mode) and broadcast
@@ -980,16 +971,10 @@ spot gaps, and decide what still needs to be added without reading every spec.
 
 - `test/sse.test.ts`
   - SSE client ID generation and tracking
-  - global and per-task SSE streams include the current `rootTaskId` in their initial connected event
+  - the global SSE stream's `connected` event carries connection state without a task Root id
   - global SSE stream (broadcast from all tasks)
-  - per-task SSE stream (task filtering, Last-Event-ID replay)
   - `POST /api/beta/clients/:clientId/visibility` (update, taskId, validation)
   - heartbeat delivery
-
-- `test/quick-prompt.test.ts`
-  - task creation and prompt forwarding
-  - custom cwd and source=auto marking
-  - input validation and bridge-not-ready errors
 
 - `test/messages-route-actions.test.ts`, `test/messages-schema.test.ts`
   - Inbox consume creates a live ACP-backed task and never reloads it
@@ -1072,7 +1057,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
   - a handed-over delivery stays `delivered` across archive
 
 - `test/tasks.test.ts`
-  - default task detail does not warm or write config; `warm=1` retains the
+  - default task detail and snapshot do not warm or write config; `warm=1` retains the
     existing background restore and canonicalization behavior
   - default `/events` leaves buffers and event `seq` untouched; `flush=1`
     retains the existing persistence and streaming response

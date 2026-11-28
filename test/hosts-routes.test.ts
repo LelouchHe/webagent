@@ -59,6 +59,7 @@ describe("multi-host routes", () => {
       desk: { url: "http://desk.example", token: "wat_secret" },
     });
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       authStore,
       hostRegistry,
@@ -147,6 +148,7 @@ describe("task list egress with remote children", () => {
     hostToken = (await authStore.addToken("owner-hub", "host")).token;
     otherHostToken = (await authStore.addToken("other-hub", "host")).token;
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       authStore,
       hostRegistry: {

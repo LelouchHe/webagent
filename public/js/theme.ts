@@ -6,11 +6,6 @@
 // in their header but otherwise share no DOM/state, so this module
 // deliberately depends on nothing besides the button + `<html>` element.
 //
-// Callers that need to react to theme changes (e.g. hljs CSS swap) can
-// register via `onThemeChange(cb)`. Today hljs swap is CSS-only so the
-// callback is unused, but keeping the hook avoids breaking existing
-// wiring in app.ts.
-
 import { THEME_STORAGE_KEY } from "./local-reset.ts";
 
 const THEME_ICONS: Record<string, string> = {
@@ -24,12 +19,6 @@ function getTheme(): string {
   return localStorage.getItem(THEME_STORAGE_KEY) ?? "auto";
 }
 
-const themeChangeCallbacks: Array<() => void> = [];
-
-export function onThemeChange(cb: () => void): void {
-  themeChangeCallbacks.push(cb);
-}
-
 function applyTheme(t: string): void {
   document.documentElement.setAttribute("data-theme", t);
   const btn = document.getElementById("theme-btn");
@@ -38,7 +27,6 @@ function applyTheme(t: string): void {
     btn.title = `Theme: ${t}`;
   }
   localStorage.setItem(THEME_STORAGE_KEY, t);
-  for (const cb of themeChangeCallbacks) cb();
 }
 
 const btn = document.getElementById("theme-btn");

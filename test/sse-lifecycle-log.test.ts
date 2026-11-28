@@ -40,14 +40,13 @@ describe("sse lifecycle logging", () => {
     setLogLevel(previousLevel as "off");
   });
 
-  it("records a connect with the client and task it belongs to", () => {
+  it("records a connect with its client id", () => {
     const mgr = new SseManager();
-    mgr.add({ id: "cl-1", res: fakeRes(), taskId: "s-9" });
+    mgr.add({ id: "cl-1", res: fakeRes() });
 
     const line = lines.find((l) => l.includes("connected"));
     assert.ok(line, "connect must be logged");
     assert.ok(line.includes("cl-1"));
-    assert.ok(line.includes("s-9"));
   });
 
   it("distinguishes a write failure from an ordinary disconnect", () => {

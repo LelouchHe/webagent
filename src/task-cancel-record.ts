@@ -1,16 +1,8 @@
 import { formatFieldBlock } from "./shared/field-block.ts";
 import { formatTaskReference } from "./shared/task-reference.ts";
 import type { Store } from "./store.ts";
-import type { AgentEvent } from "./types.ts";
-
-export type TaskCancelNoticeEvent = Extract<
-  AgentEvent,
-  { type: "system_message" }
->;
-
 export function recordTaskCancelEvent(input: {
   store: Store;
-  broadcastTaskCancelNotice?: (event: TaskCancelNoticeEvent) => void;
   role: "source" | "target";
   sourceTaskId: string;
   sourceLabel: string;
@@ -45,11 +37,4 @@ export function recordTaskCancelEvent(input: {
     { ...identity, reason: input.reason, status: input.status, title, body },
     { from_ref: "agent" },
   );
-  input.broadcastTaskCancelNotice?.({
-    type: "system_message",
-    taskId,
-    ...identity,
-    title,
-    body,
-  });
 }

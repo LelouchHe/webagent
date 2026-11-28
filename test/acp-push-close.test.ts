@@ -141,6 +141,7 @@ describe("acp-push-close: handled signals fire sendClose", () => {
 
     sseManager = new SseManager();
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       sseManager,
       store,
       publicDir,

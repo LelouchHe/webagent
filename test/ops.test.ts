@@ -117,6 +117,7 @@ describe("Operations REST API", () => {
       cancelTimeoutMs: 10000,
     });
     const handler = createRequestHandler({
+      attachmentSecret: Buffer.alloc(32, 7),
       store,
       tasks,
       taskOps: {
@@ -230,6 +231,7 @@ describe("Operations REST API", () => {
       offlineTasks.activePrompts.add(taskId);
       offlineTasks.syncBusy(taskId);
       const handler = createRequestHandler({
+        attachmentSecret: Buffer.alloc(32, 7),
         store,
         tasks: offlineTasks,
         taskOps: createLocalTaskOps({
@@ -323,6 +325,7 @@ describe("Operations REST API", () => {
       offlineTasks.activePrompts.add(taskId);
 
       const handler = createRequestHandler({
+        attachmentSecret: Buffer.alloc(32, 7),
         store,
         tasks: offlineTasks,
         taskOps: createLocalTaskOps({
