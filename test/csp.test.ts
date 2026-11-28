@@ -142,6 +142,36 @@ describe("CSP header on HTML entrypoints", () => {
     );
   });
 
+  it("CSP does NOT allow blob: in script-src or worker-src (keeps img-src blob: for upload previews)", () => {
+    const directives = new Map<string, string>();
+    for (const part of CSP_POLICY.split(";")) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      const space = trimmed.indexOf(" ");
+      if (space === -1) continue;
+      directives.set(trimmed.slice(0, space), trimmed.slice(space + 1));
+    }
+    assert.equal(
+      (directives.get("script-src") ?? "").includes("blob:"),
+      false,
+      "script-src must not allow blob:",
+    );
+    assert.equal(
+      (
+        directives.get("worker-src") ??
+        directives.get("default-src") ??
+        ""
+      ).includes("blob:"),
+      false,
+      "worker-src/default-src must not allow blob:",
+    );
+    assert.equal(
+      (directives.get("img-src") ?? "").includes("blob:"),
+      true,
+      "img-src keeps blob: for upload previews",
+    );
+  });
+
   it("does NOT emit CSP header on non-HTML static assets", async () => {
     // Add a JS asset to publicDir and verify no CSP on it
     writeFileSync(join(publicDir, "asset.js"), "// noop");

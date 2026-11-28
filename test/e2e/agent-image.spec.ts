@@ -87,9 +87,9 @@ test("a reload replays the same stored image", async ({ page }) => {
   expect(events.ok()).toBeTruthy();
   const rows = (
     (await events.json()) as {
-      events: Array<{ type: string; data: string }>;
+      events: Array<{ data: { type: string; data: string } }>;
     }
-  ).events;
+  ).events.map((entry) => entry.data);
   const imageRows = rows.filter((row) => row.type === "agent_image");
   expect(imageRows).toHaveLength(1);
   expect(imageRows[0].data).not.toContain(AGENT_IMAGE_PNG);

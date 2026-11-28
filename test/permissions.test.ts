@@ -307,7 +307,7 @@ describe("Permissions REST API", () => {
         JSON.stringify({ optionId: "allow_once" }),
       );
       const resolved = broadcastEvents.find(
-        (e: any) => e.type === "permission_response",
+        (e: any) => e.data?.type === "permission_response",
       );
       assert.ok(resolved);
     });

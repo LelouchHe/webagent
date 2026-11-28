@@ -6,6 +6,7 @@ import {
   sendSyncRequest,
   SyncFeedConsumer,
   SyncFeedProtocolError,
+  SyncFeedTerminalError,
   SyncOutbox,
   type SyncFeedEntry,
   type SyncFeedTransport,
@@ -120,7 +121,9 @@ describe("shared/sync", () => {
       transport: {
         send: (_id, _request, requestSignal) => {
           signal = requestSignal;
-          return new Promise(() => undefined);
+          return new Promise<{ status: number; body: unknown }>(
+            () => undefined,
+          );
         },
       },
     });
@@ -613,6 +616,288 @@ describe("shared/sync", () => {
           /platform-neutral/.test(message.message),
       ),
     );
+  });
+
+  it("handles 409 op_aborted, unknown->4xx, malformed 2xx, 5xx diagnostic retention, backoff+beforeSend, and external signal", async () => {
+    const clock = new FakeClock();
+
+    // 409 op_aborted terminates immediately as unknown without retrying.
+    let abortedAttempts = 0;
+    const aborted = await sendSyncRequest({
+      opId: "op-aborted",
+      request: {},
+      timeoutMs: 100,
+      retries: 2,
+      timer: clock.api,
+      transport: {
+        send: async () => {
+          abortedAttempts += 1;
+          return {
+            status: 409,
+            body: { code: "op_aborted", error: "orphaned op" },
+          };
+        },
+      },
+    });
+    assert.equal(aborted.kind, "unknown");
+    assert.equal(abortedAttempts, 1);
+    assert.equal(aborted.status, 409);
+
+    // unknown -> 4xx stays unknown and stops retries.
+    let u2rAttempts = 0;
+    const u2r = await sendSyncRequest<
+      object,
+      { error: string; agentId?: string }
+    >({
+      opId: "op-u2r",
+      request: {},
+      timeoutMs: 100,
+      retries: 2,
+      timer: clock.api,
+      transport: {
+        send: async () => {
+          u2rAttempts += 1;
+          if (u2rAttempts === 1) {
+            return {
+              status: 503,
+              body: { error: "agent down", agentId: "copilot" },
+            };
+          }
+          return { status: 404, body: { error: "not found" } };
+        },
+      },
+    });
+    assert.equal(u2r.kind, "unknown");
+    assert.equal(u2rAttempts, 2);
+
+    // 5xx diagnostic body preserved when subsequent retry hits transport failure.
+    let diagAttempts = 0;
+    const diag = await sendSyncRequest({
+      opId: "op-diag",
+      request: {},
+      timeoutMs: 100,
+      retries: 1,
+      timer: clock.api,
+      transport: {
+        send: async () => {
+          diagAttempts += 1;
+          if (diagAttempts === 1) {
+            return {
+              status: 503,
+              body: { error: "spawn failed", agentId: "claude" },
+            };
+          }
+          throw new Error("socket closed");
+        },
+      },
+    });
+    assert.equal(diag.kind, "unknown");
+    assert.equal(diag.status, 503);
+    assert.deepEqual(diag.body, { error: "spawn failed", agentId: "claude" });
+
+    // Malformed non-204 2xx is unknown; 204 empty is success.
+    const malformed = await sendSyncRequest({
+      opId: null,
+      request: {},
+      timeoutMs: 100,
+      timer: clock.api,
+      transport: {
+        send: async () => ({ status: 201, body: null, bodyMalformed: true }),
+      },
+    });
+    assert.equal(malformed.kind, "unknown");
+    const empty204 = await sendSyncRequest({
+      opId: null,
+      request: {},
+      timeoutMs: 100,
+      timer: clock.api,
+      transport: {
+        send: async () => ({ status: 204, body: null, bodyMalformed: true }),
+      },
+    });
+    assert.equal(empty204.kind, "success");
+
+    // beforeSend(0) false -> skipped; throw -> propagates.
+    const skipped = await sendSyncRequest({
+      opId: "op-skip",
+      request: {},
+      timeoutMs: 100,
+      timer: clock.api,
+      beforeSend: () => false,
+      transport: {
+        send: async () => {
+          throw new Error("should not send");
+        },
+      },
+    });
+    assert.deepEqual(skipped, { kind: "skipped" });
+
+    await assert.rejects(
+      sendSyncRequest({
+        opId: "op-throw0",
+        request: {},
+        timeoutMs: 100,
+        timer: clock.api,
+        beforeSend: () => {
+          throw new Error("fence boom");
+        },
+        transport: {
+          send: async () => ({ status: 200, body: {} }),
+        },
+      }),
+      /fence boom/,
+    );
+
+    // Retry beforeSend runs AFTER backoff; false returns previous unknown.
+    const events: string[] = [];
+    const fencedPending = sendSyncRequest({
+      opId: "op-fence-retry",
+      request: {},
+      timeoutMs: 10_000,
+      retries: 2,
+      backoffMs: [250],
+      timer: clock.api,
+      beforeSend: (attempt) => {
+        events.push(`before:${attempt}`);
+        return attempt === 0;
+      },
+      transport: {
+        send: async () => {
+          events.push("send");
+          return { status: 503, body: { error: "busy" } };
+        },
+      },
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    assert.deepEqual(events, ["before:0", "send"]);
+    clock.advance(250);
+    const fencedResult = await fencedPending;
+    assert.equal(fencedResult.kind, "unknown");
+    assert.equal(fencedResult.status, 503);
+    assert.deepEqual(events, ["before:0", "send", "before:1"]);
+
+    // External AbortSignal cancels backoff wait immediately.
+    const ac = new AbortController();
+    const cancelPending = sendSyncRequest({
+      opId: "op-cancel",
+      request: {},
+      timeoutMs: 10_000,
+      retries: 2,
+      backoffMs: [1_000],
+      signal: ac.signal,
+      timer: clock.api,
+      transport: {
+        send: async () => ({ status: 503, body: null }),
+      },
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(clock.size(), 1);
+    ac.abort(new Error("navigated"));
+    const cancelResult = await cancelPending;
+    assert.equal(cancelResult.kind, "unknown");
+    assert.equal(clock.size(), 0);
+  });
+
+  it("SyncFeedConsumer serializes ephemeral frames, supports catchUpOnConnect/catchUp, external liveness, and terminal 404", async () => {
+    const clock = new FakeClock();
+    let applied = 0;
+    const order: string[] = [];
+    let watch:
+      Parameters<SyncFeedTransport<string, string>["watch"]>[0] | undefined;
+    let releaseRead: ((entries: SyncFeedEntry<string>[]) => void) | undefined;
+    const terminalErrors: SyncFeedTerminalError[] = [];
+
+    const consumer = new SyncFeedConsumer<string, string>({
+      liveness: "external",
+      catchUpOnConnect: true,
+      clock: clock.api,
+      retryDelay: () => 100,
+      onTerminalError: (err) => terminalErrors.push(err),
+      port: {
+        applied: () => applied,
+        apply: (entry) => {
+          applied = entry.pos;
+          order.push(`entry:${entry.pos}`);
+          return true;
+        },
+        applyEphemeral: (data) => {
+          order.push(`eph:${data}`);
+        },
+        beforeCatchUp: async () => ({
+          targetPos: 2,
+          commit: () => {
+            order.push("commit");
+          },
+        }),
+      },
+      transport: {
+        read: (after) =>
+          new Promise<SyncFeedEntry<string>[]>((resolveRead) => {
+            if (after === 0) {
+              releaseRead = resolveRead;
+            } else {
+              resolveRead([]);
+            }
+          }),
+        watch: async (input) => {
+          watch = input;
+          input.connected();
+          await new Promise<void>((_resolve, reject) => {
+            input.signal.addEventListener("abort", () => {
+              reject(new Error("aborted"));
+            });
+          });
+        },
+      },
+    });
+
+    consumer.start();
+    await waitUntil(() => releaseRead !== undefined && watch !== undefined);
+    // Queue an ephemeral frame while catchUp read is in flight: must NOT run ahead of catchUp!
+    const ephPromise = watch!.ephemeral?.("chunk-1");
+    assert.deepEqual(order, []);
+
+    // External liveness mode must NOT self-stall even after 120s of silence.
+    clock.advance(120_000);
+    assert.equal(watch!.signal.aborted, false);
+
+    releaseRead!([
+      { pos: 1, prev: 0, data: "a" },
+      { pos: 2, prev: 1, data: "b" },
+    ]);
+    await ephPromise;
+    assert.deepEqual(order, ["entry:1", "entry:2", "commit", "eph:chunk-1"]);
+
+    // Terminal error (404) stops consumer without retry.
+    const consumer404 = new SyncFeedConsumer<string, string>({
+      liveness: "external",
+      catchUpOnConnect: true,
+      clock: clock.api,
+      retryDelay: () => 100,
+      onTerminalError: (err) => terminalErrors.push(err),
+      port: {
+        applied: () => 0,
+        apply: () => true,
+        beforeCatchUp: async () => {
+          throw new SyncFeedTerminalError("gone", 404);
+        },
+      },
+      transport: {
+        read: async () => [],
+        watch: async (input) => {
+          input.connected();
+          await new Promise<void>((_resolve, reject) => {
+            input.signal.addEventListener("abort", () => {
+              reject(new Error("aborted"));
+            });
+          });
+        },
+      },
+    });
+    consumer404.start();
+    await waitUntil(() => terminalErrors.length === 1);
+    assert.equal(terminalErrors[0].status, 404);
+    consumer.stop();
   });
 });
 

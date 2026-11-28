@@ -36,7 +36,7 @@
               "agentId": "mock",
               "configOptions": [],
               "agentCommands": {
-                "epoch": "00000000-0000-4000-8000-000000000003",
+                "epoch": "00000000-0000-4000-8000-000000000004",
                 "revision": 1,
                 "commands": [
                   {
@@ -174,12 +174,6 @@
           "taskId": "00000000-0000-4000-8000-000000000001",
           "events": [
             {
-              "type": "user_message",
-              "taskId": "00000000-0000-4000-8000-000000000001",
-              "text": "inspect family",
-              "clientOpId": "00000000-0000-4000-8000-000000000004"
-            },
-            {
               "type": "state_patch",
               "taskId": "00000000-0000-4000-8000-000000000001",
               "seq": 1,
@@ -210,7 +204,11 @@
             {
               "type": "message_chunk",
               "taskId": "00000000-0000-4000-8000-000000000001",
-              "text": "Family inspected."
+              "text": "Family inspected.",
+              "epoch": "00000000-0000-4000-8000-000000000002",
+              "segmentId": 1,
+              "offset": 0,
+              "endOffset": 17
             },
             {
               "type": "state_patch",
@@ -234,12 +232,6 @@
                   }
                 }
               }
-            },
-            {
-              "type": "prompt_done",
-              "taskId": "00000000-0000-4000-8000-000000000001",
-              "stopReason": "end_turn",
-              "promptId": "prompt-1"
             }
           ]
         }
@@ -337,7 +329,7 @@
                   "content": [
                     {
                       "type": "text",
-                      "text": "{\"task_id\":\"00000000-0000-4000-8000-000000000001\",\"rows\":[{\"seq\":1,\"type\":\"user_message\",\"at\":\"2026-09-13T21:00:00.000Z\",\"from\":\"user\",\"data\":{\"text\":\"inspect family\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}}]}"
+                      "text": "{\"task_id\":\"00000000-0000-4000-8000-000000000001\",\"rows\":[{\"seq\":1,\"type\":\"user_message\",\"at\":\"2026-09-13T21:00:00.000Z\",\"from\":\"user\",\"data\":{\"text\":\"inspect family\",\"clientOpId\":\"00000000-0000-4000-8000-000000000005\"}}]}"
                     }
                   ]
                 },
@@ -359,7 +351,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 1,
                 "user_message",
-                "{\"text\":\"inspect family\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+                "{\"text\":\"inspect family\",\"clientOpId\":\"00000000-0000-4000-8000-000000000005\"}",
                 "user",
                 1789333200000
               ]
@@ -374,7 +366,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 2,
                 "assistant_message",
-                "{\"text\":\"Family inspected.\"}",
+                "{\"text\":\"Family inspected.\",\"epoch\":\"00000000-0000-4000-8000-000000000002\",\"segmentId\":1}",
                 "agent",
                 1789333200000
               ]
@@ -422,37 +414,48 @@
         "body": {
           "events": [
             {
-              "id": 1,
-              "task_id": "00000000-0000-4000-8000-000000000001",
-              "seq": 1,
-              "type": "user_message",
-              "data": "{\"text\":\"inspect family\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
-              "created_at": "2026-09-13T21:00:00.000Z",
-              "from_ref": "user"
+              "feed": "00000000-0000-4000-8000-000000000001",
+              "pos": 1,
+              "prev": 0,
+              "data": {
+                "id": 1,
+                "task_id": "00000000-0000-4000-8000-000000000001",
+                "seq": 1,
+                "type": "user_message",
+                "data": "{\"text\":\"inspect family\",\"clientOpId\":\"00000000-0000-4000-8000-000000000005\"}",
+                "created_at": "2026-09-13T21:00:00.000Z",
+                "from_ref": "user"
+              }
             },
             {
-              "id": 2,
-              "task_id": "00000000-0000-4000-8000-000000000001",
-              "seq": 2,
-              "type": "assistant_message",
-              "data": "{\"text\":\"Family inspected.\"}",
-              "created_at": "2026-09-13T21:00:00.000Z",
-              "from_ref": "agent"
+              "feed": "00000000-0000-4000-8000-000000000001",
+              "pos": 2,
+              "prev": 1,
+              "data": {
+                "id": 2,
+                "task_id": "00000000-0000-4000-8000-000000000001",
+                "seq": 2,
+                "type": "assistant_message",
+                "data": "{\"text\":\"Family inspected.\",\"epoch\":\"00000000-0000-4000-8000-000000000002\",\"segmentId\":1}",
+                "created_at": "2026-09-13T21:00:00.000Z",
+                "from_ref": "agent"
+              }
             },
             {
-              "id": 3,
-              "task_id": "00000000-0000-4000-8000-000000000001",
-              "seq": 3,
-              "type": "prompt_done",
-              "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
-              "created_at": "2026-09-13T21:00:00.000Z",
-              "from_ref": "agent"
+              "feed": "00000000-0000-4000-8000-000000000001",
+              "pos": 3,
+              "prev": 2,
+              "data": {
+                "id": 3,
+                "task_id": "00000000-0000-4000-8000-000000000001",
+                "seq": 3,
+                "type": "prompt_done",
+                "data": "{\"stopReason\":\"end_turn\",\"promptId\":\"prompt-1\"}",
+                "created_at": "2026-09-13T21:00:00.000Z",
+                "from_ref": "agent"
+              }
             }
           ],
-          "streaming": {
-            "thinking": false,
-            "assistant": false
-          },
           "imageReferences": []
         }
       },
@@ -496,7 +499,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 1,
         "type": "user_message",
-        "data": "{\"text\":\"inspect family\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+        "data": "{\"text\":\"inspect family\",\"clientOpId\":\"00000000-0000-4000-8000-000000000005\"}",
         "created_at": 1789333200000,
         "from_ref": "user"
       },
@@ -505,7 +508,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 2,
         "type": "assistant_message",
-        "data": "{\"text\":\"Family inspected.\"}",
+        "data": "{\"text\":\"Family inspected.\",\"epoch\":\"00000000-0000-4000-8000-000000000002\",\"segmentId\":1}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },

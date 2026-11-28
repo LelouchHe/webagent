@@ -297,10 +297,10 @@ describe("Prompt REST API", () => {
       assert.ok(stored);
       assert.equal(JSON.parse(stored.data).text, "//COMPACT  unresolved work");
       const broadcast = broadcastEvents.find(
-        (event) => event.type === "user_message",
-      );
+        (event: any) => event.data?.type === "user_message",
+      ) as any;
       assert.equal(
-        broadcast && "text" in broadcast ? broadcast.text : null,
+        broadcast ? JSON.parse(broadcast.data.data).text : null,
         "//COMPACT  unresolved work",
       );
     });
@@ -404,7 +404,7 @@ describe("Prompt REST API", () => {
         JSON.stringify({ text: "hello" }),
       );
       const userMsg = broadcastEvents.find(
-        (e: any) => e.type === "user_message",
+        (e: any) => e.data?.type === "user_message",
       );
       assert.ok(userMsg);
     });
@@ -425,12 +425,11 @@ describe("Prompt REST API", () => {
       assert.ok(stored);
       const storedOpId = JSON.parse(stored.data).clientOpId;
       const broadcast = broadcastEvents.find(
-        (event) => event.type === "user_message",
-      );
-      const broadcastOpId =
-        broadcast && "clientOpId" in broadcast
-          ? broadcast.clientOpId
-          : undefined;
+        (event: any) => event.data?.type === "user_message",
+      ) as any;
+      const broadcastOpId = broadcast
+        ? JSON.parse(broadcast.data.data).clientOpId
+        : undefined;
 
       assert.equal(typeof storedOpId, "string");
       assert.ok(storedOpId.length > 0);
@@ -962,8 +961,8 @@ describe("Prompt REST API", () => {
       assert.equal(res.status, 200);
       const body = JSON.parse(res.body);
       assert.equal(body.events.length, 2);
-      assert.equal(body.events[0].type, "user_message");
-      assert.equal(body.events[1].type, "assistant_message");
+      assert.equal(body.events[0].data.type, "user_message");
+      assert.equal(body.events[1].data.type, "assistant_message");
     });
 
     it("supports thinking filter", async () => {
@@ -994,7 +993,10 @@ describe("Prompt REST API", () => {
       );
       const body = JSON.parse(res.body);
       assert.equal(body.events.length, 2);
-      assert.ok(!body.events.some((e: any) => e.type === "thinking"));
+      assert.ok(!body.events.some((e: any) => e.data.type === "thinking"));
+      // Filtered projection preserves real DB prev = seq - 1, never fabricates prev.
+      assert.equal(body.events[1].pos, 3);
+      assert.equal(body.events[1].prev, 2);
     });
 
     it("supports after pagination", async () => {
@@ -1022,7 +1024,7 @@ describe("Prompt REST API", () => {
       );
       const body = JSON.parse(res.body);
       assert.equal(body.events.length, 1);
-      assert.equal(JSON.parse(body.events[0].data).text, "second");
+      assert.equal(JSON.parse(body.events[0].data.data).text, "second");
     });
 
     it("returns 404 for unknown task", async () => {

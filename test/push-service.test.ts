@@ -123,7 +123,9 @@ describe("PushService", () => {
     patch: { visible?: boolean; active?: string | null },
   ): void {
     if (!reg.get(id)) reg.register(id, { capabilities: [] });
-    reg.setVisibility(id, patch);
+    const visible = patch.visible !== false;
+    const taskIds = visible ? [patch.active ?? "__default_task__"] : [];
+    reg.setVisibility(id, taskIds);
   }
 
   beforeEach(() => {
@@ -393,8 +395,7 @@ describe("PushService", () => {
         clientRegistry: registry,
       });
       svc.registerClient("cl-1", "https://push.example.com/1");
-      visBoth(svc, registry, "cl-1", { visible: false });
-      visBoth(svc, registry, "cl-1", { active: "task-A" });
+      registry.setVisibility("cl-1", []);
 
       assert.equal(svc.isTaskVisibleToAnyClient("task-A"), false);
     });

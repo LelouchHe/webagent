@@ -209,34 +209,69 @@ describe("push — visibility reporting", () => {
     }) as any;
   });
 
-  it("sends visibility message when document visibility changes", () => {
-    state.clientId = "cl-test";
-    state.taskId = "sess-abc";
-
-    // Simulate visibilitychange
-    Object.defineProperty(document, "hidden", {
-      value: true,
-      configurable: true,
+  it("sends visibility message when document visibility changes", async () => {
+    const { SyncHub, createDirectPortPair } =
+      await import("../public/js/sync-hub.ts");
+    class FakeEs {
+      onmessage: ((e: MessageEvent) => void) | null = null;
+      onerror: (() => void) | null = null;
+      addEventListener() {}
+      close() {}
+      emit(data: unknown) {
+        this.onmessage?.({ data: JSON.stringify(data) } as MessageEvent);
+      }
+    }
+    const captured: FakeEs[] = [];
+    const hub = new SyncHub({
+      fetchImpl: (async (url: string, init?: RequestInit) => {
+        fetchCalls.push({ url, init });
+        if (url === "/api/v1/sse-ticket") {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ ticket: "tk-vis" }),
+          } as Response;
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true }),
+        } as Response;
+      }) as typeof fetch,
+      EventSourceImpl: class extends FakeEs {
+        constructor() {
+          super();
+          captured.push(this);
+        }
+      } as unknown as typeof EventSource,
     });
-    const event = new (globalThis.window as any).Event("visibilitychange");
-    document.dispatchEvent(event);
+    const { hubPort, tabPort } = createDirectPortPair();
+    hub.attach(hubPort);
+    tabPort.postMessage({
+      type: "hello",
+      token: "tok",
+      visible: true,
+      taskId: "sess-abc",
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    captured
+      .at(-1)
+      ?.emit({ type: "connected", clientId: "cl-test", pendingCount: 0 });
+    fetchCalls = [];
+
+    tabPort.postMessage({
+      type: "visibility",
+      visible: false,
+      taskId: "sess-abc",
+    });
 
     const visCall = fetchCalls.find((c) => c.url.includes("/visibility"));
     assert.ok(visCall, "expected a visibility fetch call");
     assert.equal(visCall.url, "/api/beta/clients/cl-test/visibility");
     assert.equal(visCall.init?.method, "POST");
     const body = JSON.parse(visCall.init?.body);
-    assert.equal(body.visible, false);
-    assert.equal(
-      body.taskId,
-      "sess-abc",
-      "should include taskId in visibility report",
-    );
-
-    // Restore
-    Object.defineProperty(document, "hidden", {
-      value: false,
-      configurable: true,
-    });
+    assert.deepEqual(body, { taskIds: [] });
+    const headers = visCall.init?.headers as Record<string, string>;
+    assert.equal(headers["X-Visibility-Rev"], "2");
   });
 });

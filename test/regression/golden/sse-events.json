@@ -36,7 +36,7 @@
               "agentId": "mock",
               "configOptions": [],
               "agentCommands": {
-                "epoch": "00000000-0000-4000-8000-000000000003",
+                "epoch": "00000000-0000-4000-8000-000000000004",
                 "revision": 1,
                 "commands": [
                   {
@@ -159,12 +159,6 @@
           "taskId": "00000000-0000-4000-8000-000000000001",
           "events": [
             {
-              "type": "user_message",
-              "taskId": "00000000-0000-4000-8000-000000000001",
-              "text": "emit response",
-              "clientOpId": "00000000-0000-4000-8000-000000000004"
-            },
-            {
               "type": "state_patch",
               "taskId": "00000000-0000-4000-8000-000000000001",
               "seq": 1,
@@ -195,7 +189,11 @@
             {
               "type": "message_chunk",
               "taskId": "00000000-0000-4000-8000-000000000001",
-              "text": "SSE response."
+              "text": "SSE response.",
+              "epoch": "00000000-0000-4000-8000-000000000002",
+              "segmentId": 1,
+              "offset": 0,
+              "endOffset": 13
             },
             {
               "type": "state_patch",
@@ -219,12 +217,6 @@
                   }
                 }
               }
-            },
-            {
-              "type": "prompt_done",
-              "taskId": "00000000-0000-4000-8000-000000000001",
-              "stopReason": "end_turn",
-              "promptId": "prompt-1"
             }
           ]
         }
@@ -253,7 +245,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 1,
                 "user_message",
-                "{\"text\":\"emit response\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+                "{\"text\":\"emit response\",\"clientOpId\":\"00000000-0000-4000-8000-000000000005\"}",
                 "user",
                 1789333200000
               ]
@@ -268,7 +260,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 2,
                 "assistant_message",
-                "{\"text\":\"SSE response.\"}",
+                "{\"text\":\"SSE response.\",\"epoch\":\"00000000-0000-4000-8000-000000000002\",\"segmentId\":1}",
                 "agent",
                 1789333200000
               ]
@@ -342,7 +334,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 1,
         "type": "user_message",
-        "data": "{\"text\":\"emit response\",\"clientOpId\":\"00000000-0000-4000-8000-000000000004\"}",
+        "data": "{\"text\":\"emit response\",\"clientOpId\":\"00000000-0000-4000-8000-000000000005\"}",
         "created_at": 1789333200000,
         "from_ref": "user"
       },
@@ -351,7 +343,7 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 2,
         "type": "assistant_message",
-        "data": "{\"text\":\"SSE response.\"}",
+        "data": "{\"text\":\"SSE response.\",\"epoch\":\"00000000-0000-4000-8000-000000000002\",\"segmentId\":1}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },

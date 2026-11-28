@@ -1075,10 +1075,10 @@ describe("Task REST API", () => {
       assert.equal(store.getAgentSessionId("s1"), "mock-task-1");
       assert.ok(
         broadcastEvents.some(
-          (event) =>
-            event.type === "assistant_message" &&
-            event.taskId === "s1" &&
-            event.text === "summary of the current work",
+          (event: any) =>
+            event.feed === "s1" &&
+            event.data?.type === "assistant_message" &&
+            JSON.parse(event.data.data).text === "summary of the current work",
         ),
       );
       assert.ok(broadcastEvents.some((event) => event.type === "task_created"));
@@ -2137,42 +2137,19 @@ describe("Task REST API", () => {
       assert.equal(res.status, 200);
       assert.equal(store.getEvents(taskId).length, beforeEvents);
       assert.equal(store.getLastEventSeq(taskId), beforeSeq);
-      assert.equal(tasks.assistantBuffers.get(taskId), "partial reply");
-      assert.deepEqual(body.streaming, {
-        thinking: false,
-        assistant: false,
-      });
+      assert.equal(
+        tasks.getStreamingSnapshot(taskId).assistant?.text,
+        "partial reply",
+      );
+      assert.equal(body.streaming, undefined);
     });
 
-    it("flushes pending thinking buffer and signals streaming", async () => {
+    it("GET /events?flush=1 is a pure read and does not flush buffers or advance seq", async () => {
       const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       const taskId = JSON.parse(createRes.body).id;
-      // Simulate agent mid-thinking: buffer has unflushed content
       tasks.appendThinking(taskId, "partial thought");
-
-      const res = await makeRequest(
-        port,
-        "GET",
-        `/api/v1/tasks/${taskId}/events?flush=1`,
-      );
-      const body = JSON.parse(res.body);
-      assert.equal(body.streaming.thinking, true);
-      assert.equal(body.streaming.assistant, false);
-      // The flushed thinking event should be in the events list
-      const thinkingEvt = body.events.find(
-        (e: { type: string }) => e.type === "thinking",
-      );
-      assert.ok(thinkingEvt, "should include flushed thinking event");
-      const data = JSON.parse(thinkingEvt.data);
-      assert.equal(data.text, "partial thought");
-      // Buffer should be empty after flush
-      assert.equal(tasks.thinkingBuffers.has(taskId), false);
-    });
-
-    it("flushes pending assistant buffer and signals streaming", async () => {
-      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
-      const taskId = JSON.parse(createRes.body).id;
       tasks.appendAssistant(taskId, "partial reply");
+      const beforeSeq = store.getLastEventSeq(taskId);
 
       const res = await makeRequest(
         port,
@@ -2180,90 +2157,52 @@ describe("Task REST API", () => {
         `/api/v1/tasks/${taskId}/events?flush=1`,
       );
       const body = JSON.parse(res.body);
-      assert.equal(body.streaming.thinking, false);
-      assert.equal(body.streaming.assistant, true);
-      const msgEvt = body.events.find(
-        (e: { type: string }) => e.type === "assistant_message",
+      assert.equal(res.status, 200);
+      assert.equal(store.getLastEventSeq(taskId), beforeSeq);
+      assert.equal(body.streaming, undefined);
+      assert.equal(
+        tasks.getStreamingSnapshot(taskId).thinking?.text,
+        "partial thought",
       );
-      assert.ok(msgEvt, "should include flushed assistant_message event");
-      assert.equal(tasks.assistantBuffers.has(taskId), false);
+      assert.equal(
+        tasks.getStreamingSnapshot(taskId).assistant?.text,
+        "partial reply",
+      );
     });
 
-    it("returns streaming false when no buffers are pending", async () => {
+    it("GET /snapshot returns streaming watermark and active buffers without flushing", async () => {
       const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
       const taskId = JSON.parse(createRes.body).id;
-      store.saveEvent(
-        taskId,
-        "user_message",
-        { text: "hi" },
-        { from_ref: "user" },
+      const beforeSeq = store.getLastEventSeq(taskId);
+
+      const emptySnap = JSON.parse(
+        (await makeRequest(port, "GET", `/api/v1/tasks/${taskId}/snapshot`))
+          .body,
       );
+      assert.equal(typeof emptySnap.streaming.epoch, "string");
+      assert.equal(emptySnap.streaming.lastSegmentId, 0);
+      assert.equal(emptySnap.streaming.thinking, undefined);
+      assert.equal(emptySnap.streaming.assistant, undefined);
 
-      const res = await makeRequest(
-        port,
-        "GET",
-        `/api/v1/tasks/${taskId}/events?flush=1`,
+      tasks.appendThinking(taskId, "partial thought");
+      tasks.appendAssistant(taskId, "partial reply");
+      const snap = JSON.parse(
+        (await makeRequest(port, "GET", `/api/v1/tasks/${taskId}/snapshot`))
+          .body,
       );
-      const body = JSON.parse(res.body);
-      assert.equal(body.streaming.thinking, false);
-      assert.equal(body.streaming.assistant, false);
-    });
-
-    it("does not signal streaming for empty buffers", async () => {
-      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
-      const taskId = JSON.parse(createRes.body).id;
-      tasks.assistantBuffers.set(taskId, "");
-      tasks.thinkingBuffers.set(taskId, "");
-
-      const res = await makeRequest(
-        port,
-        "GET",
-        `/api/v1/tasks/${taskId}/events?flush=1`,
-      );
-      const body = JSON.parse(res.body);
-
-      assert.deepEqual(body.streaming, {
-        thinking: false,
-        assistant: false,
+      assert.equal(store.getLastEventSeq(taskId), beforeSeq);
+      assert.equal(snap.streaming.epoch, emptySnap.streaming.epoch);
+      assert.equal(snap.streaming.lastSegmentId, 2);
+      assert.deepEqual(snap.streaming.thinking, {
+        segmentId: 1,
+        endOffset: "partial thought".length,
+        text: "partial thought",
       });
-      assert.equal(tasks.assistantBuffers.has(taskId), false);
-      assert.equal(tasks.thinkingBuffers.has(taskId), false);
-    });
-
-    it("keeps an active stream open when its pending buffer is empty", async () => {
-      const createRes = await makeRequest(port, "POST", "/api/v1/tasks", "{}");
-      const taskId = JSON.parse(createRes.body).id;
-      store.saveEvent(
-        taskId,
-        "user_message",
-        { text: "question" },
-        { from_ref: "user" },
-      );
-      store.saveEvent(
-        taskId,
-        "assistant_message",
-        { text: "partial reply" },
-        { from_ref: "agent" },
-      );
-      tasks.assistantBuffers.set(taskId, "");
-      tasks.state.patch(taskId, {
-        runtime: {
-          streaming: { thinking: false, assistant: true },
-        },
+      assert.deepEqual(snap.streaming.assistant, {
+        segmentId: 2,
+        endOffset: "partial reply".length,
+        text: "partial reply",
       });
-
-      const res = await makeRequest(
-        port,
-        "GET",
-        `/api/v1/tasks/${taskId}/events?flush=1`,
-      );
-      const body = JSON.parse(res.body);
-
-      assert.deepEqual(body.streaming, {
-        thinking: false,
-        assistant: true,
-      });
-      assert.equal(tasks.assistantBuffers.has(taskId), false);
     });
   });
 });

@@ -262,11 +262,11 @@ describe("input", () => {
     assert.ok(state.sentMessageOpId, "op id must be set");
   });
 
-  it("clears the own-echo guard when the prompt request fails", async () => {
+  it("clears the own-echo guard when the prompt request is rejected (4xx)", async () => {
     setFetch(() => ({
       ok: false,
-      status: 500,
-      json: async () => ({ error: "Agent not ready" }),
+      status: 409,
+      json: async () => ({ error: "Task busy" }),
     }));
     state.taskId = "s1";
     state.clientId = "cl-1";
@@ -276,8 +276,6 @@ describe("input", () => {
     assert.equal(state.awaitingOwnUserEcho, true);
     await new Promise((resolve) => setImmediate(resolve));
 
-    // A failed send never produces a user_message echo, so the guard must be
-    // released here or every later prompt_done/error is dropped forever.
     assert.equal(state.awaitingOwnUserEcho, false);
     assert.equal(state.sentMessageOpId, null);
     assert.equal(state.busy, false);
@@ -535,6 +533,7 @@ describe("input", () => {
   it("shows cancel REST failures instead of swallowing them", async () => {
     setFetch(() => ({
       ok: false,
+      status: 400,
       json: async () => ({ error: "Agent not ready" }),
     }));
     state.taskId = "s1";
@@ -648,9 +647,9 @@ describe("input", () => {
   it("rolls the mode back and reports err when the write fails", async () => {
     setFetch(() => ({
       ok: false,
-      status: 500,
+      status: 400,
       json: async () => ({ error: "refused by test" }),
-      text: async () => "",
+      text: async () => '{"error":"refused by test"}',
     }));
     state.taskId = "s1";
     state.clientId = "cl-1";

@@ -426,11 +426,18 @@ describe("coordinate entries", () => {
     );
     state.taskAgentId = "mock";
     let releaseClear!: (response: Response) => void;
+    let clearCalls = 0;
     handler = (url, init) => {
       if (url.endsWith("/clear") && init?.method === "POST") {
-        return new Promise<Response>((resolve) => {
-          releaseClear = resolve;
-        });
+        clearCalls += 1;
+        if (clearCalls === 1) {
+          return new Promise<Response>((resolve) => {
+            releaseClear = resolve;
+          });
+        }
+        return Promise.resolve(
+          json({ error: "Agent copilot is not available: nope" }, 503),
+        );
       }
       return defaultHandler(url, init);
     };

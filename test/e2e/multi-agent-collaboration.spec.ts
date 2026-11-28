@@ -61,9 +61,10 @@ test("a cross-agent account is readable live and identical after a reload", asyn
     `/api/v1/tasks/${parentId}/events`,
   );
   expect(eventsResponse.ok()).toBeTruthy();
-  const { events: rows } = (await eventsResponse.json()) as {
-    events: Array<{ type: string; data: string }>;
+  const { events: entries } = (await eventsResponse.json()) as {
+    events: Array<{ data: { type: string; data: string } }>;
   };
+  const rows = entries.map((entry) => entry.data);
   const persisted = rows
     .filter((row) => row.type === "system_message")
     .map((row) => JSON.parse(row.data) as Record<string, unknown>)

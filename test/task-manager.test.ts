@@ -437,8 +437,8 @@ describe("TaskManager", () => {
     it("cleans up all state", async () => {
       store.createTask("s1", "/x", "auto", "test-agent");
       sm.liveTasks.add("s1");
-      sm.assistantBuffers.set("s1", "partial");
-      sm.thinkingBuffers.set("s1", "hmm");
+      sm.appendAssistant("s1", "partial");
+      sm.appendThinking("s1", "hmm");
       sm.updateAgentCommands("s1", [
         { name: "context", description: "Show context usage" },
       ]);
@@ -446,8 +446,8 @@ describe("TaskManager", () => {
       await sm.deleteTask(undefined, "s1");
 
       assert.ok(!sm.liveTasks.has("s1"));
-      assert.ok(!sm.assistantBuffers.has("s1"));
-      assert.ok(!sm.thinkingBuffers.has("s1"));
+      assert.equal(sm.getStreamingSnapshot("s1").assistant, undefined);
+      assert.equal(sm.getStreamingSnapshot("s1").thinking, undefined);
       const commands = sm.getAgentCommands("s1");
       assert.ok(commands.epoch);
       assert.deepEqual(commands, {
@@ -518,7 +518,7 @@ describe("TaskManager", () => {
       );
       sm.liveTasks.add("parent");
       sm.liveTasks.add("child");
-      sm.assistantBuffers.set("child", "partial answer");
+      sm.appendAssistant("child", "partial answer");
       const retired: string[] = [];
       const bridge = {
         async newSession() {
@@ -544,7 +544,7 @@ describe("TaskManager", () => {
       assert.deepEqual(retired.sort(), ["agent-child", "agent-parent"]);
       assert.ok(!sm.liveTasks.has("parent"));
       assert.ok(!sm.liveTasks.has("child"));
-      assert.ok(!sm.assistantBuffers.has("child"));
+      assert.equal(sm.getStreamingSnapshot("child").assistant, undefined);
       assert.ok(!sm.pendingPromptSubmissions.has("child"));
     });
 
@@ -1395,8 +1395,8 @@ describe("TaskManager", () => {
     it("clears runtime buffers and command snapshots for the replacement execution", async () => {
       store.createTask("web-1", tmpDir, "auto", "test-agent", "agent-old");
       sm.liveTasks.add("web-1");
-      sm.assistantBuffers.set("web-1", "partial answer");
-      sm.thinkingBuffers.set("web-1", "partial thought");
+      sm.appendAssistant("web-1", "partial answer");
+      sm.appendThinking("web-1", "partial thought");
       sm.pendingPermissions.set("request-1", {
         requestId: "request-1",
         taskId: "web-1",
@@ -1420,9 +1420,10 @@ describe("TaskManager", () => {
       };
 
       await sm.clearTask(bridge, "web-1");
-
-      assert.equal(sm.assistantBuffers.has("web-1"), false);
-      assert.equal(sm.thinkingBuffers.has("web-1"), false);
+      const clearedSnap = sm.getStreamingSnapshot("web-1");
+      assert.equal(clearedSnap.assistant, undefined);
+      assert.equal(clearedSnap.thinking, undefined);
+      assert.equal(clearedSnap.lastSegmentId, 2);
       assert.equal(sm.pendingPermissions.has("request-1"), false);
       assert.deepEqual(sm.getAgentCommands("web-1").commands, []);
       assert.equal(sm.state.getState("web-1").runtime.busy, null);
@@ -2151,75 +2152,64 @@ describe("TaskManager", () => {
 
       sm.appendAssistant("s1", "Hello ");
       sm.appendAssistant("s1", "world");
-      assert.equal(sm.assistantBuffers.get("s1"), "Hello world");
+      assert.equal(
+        sm.getStreamingSnapshot("s1").assistant?.text,
+        "Hello world",
+      );
 
       sm.flushBuffers("s1");
 
-      assert.ok(!sm.assistantBuffers.has("s1"));
+      assert.equal(sm.getStreamingSnapshot("s1").assistant, undefined);
       const events = store.getEvents("s1");
-      assert.equal(events.length, 1);
-      assert.equal(events[0].type, "assistant_message");
-      assert.deepEqual(JSON.parse(events[0].data), { text: "Hello world" });
+      assert.equal(events[0]?.type, "assistant_message");
+      const flushedData = JSON.parse(events[0].data);
+      assert.equal(flushedData.text, "Hello world");
+      assert.equal(flushedData.segmentId, 1);
     });
 
     it("appends and flushes thinking buffer", () => {
       store.createTask("s1", "/x", "auto", "test-agent");
-
       sm.appendThinking("s1", "Let me think...");
       sm.flushBuffers("s1");
-
-      const events = store.getEvents("s1");
-      assert.equal(events.length, 1);
-      assert.equal(events[0].type, "thinking");
+      assert.equal(store.getEvents("s1")[0]?.type, "thinking");
     });
 
     it("flush is a no-op when buffers are empty", () => {
       store.createTask("s1", "/x", "auto", "test-agent");
-      sm.flushBuffers("s1"); // should not throw
+      sm.flushBuffers("s1");
       assert.deepEqual(store.getEvents("s1"), []);
     });
 
     it("discards late buffers for a deleted task", () => {
       store.createTask("s1", "/x", "auto", "test-agent");
       store.deleteTask("s1");
-      sm.assistantBuffers.set("s1", "late answer");
-      sm.thinkingBuffers.set("s1", "late thought");
-
+      sm.appendAssistant("s1", "late answer");
+      sm.appendThinking("s1", "late thought");
       assert.doesNotThrow(() => {
         sm.flushBuffers("s1");
       });
-      assert.equal(sm.assistantBuffers.has("s1"), false);
-      assert.equal(sm.thinkingBuffers.has("s1"), false);
+      assert.equal(sm.getStreamingSnapshot("s1").assistant, undefined);
+      assert.equal(sm.getStreamingSnapshot("s1").thinking, undefined);
     });
 
     it("flushAssistantBuffer saves only the assistant buffer", () => {
       store.createTask("s1", "/x", "auto", "test-agent");
       sm.appendAssistant("s1", "Hello");
       sm.appendThinking("s1", "hmm");
-
       sm.flushAssistantBuffer("s1");
-
-      // Assistant saved, thinking still buffered
-      assert.ok(!sm.assistantBuffers.has("s1"));
-      assert.equal(sm.thinkingBuffers.get("s1"), "hmm");
-      const events = store.getEvents("s1");
-      assert.equal(events.length, 1);
-      assert.equal(events[0].type, "assistant_message");
+      assert.equal(sm.getStreamingSnapshot("s1").assistant, undefined);
+      assert.equal(sm.getStreamingSnapshot("s1").thinking?.text, "hmm");
+      assert.equal(store.getEvents("s1")[0]?.type, "assistant_message");
     });
 
     it("flushThinkingBuffer saves only the thinking buffer", () => {
       store.createTask("s1", "/x", "auto", "test-agent");
       sm.appendAssistant("s1", "Hello");
       sm.appendThinking("s1", "hmm");
-
       sm.flushThinkingBuffer("s1");
-
-      // Thinking saved, assistant still buffered
-      assert.ok(!sm.thinkingBuffers.has("s1"));
-      assert.equal(sm.assistantBuffers.get("s1"), "Hello");
-      const events = store.getEvents("s1");
-      assert.equal(events.length, 1);
-      assert.equal(events[0].type, "thinking");
+      assert.equal(sm.getStreamingSnapshot("s1").thinking, undefined);
+      assert.equal(sm.getStreamingSnapshot("s1").assistant?.text, "Hello");
+      assert.equal(store.getEvents("s1")[0]?.type, "thinking");
     });
   });
 

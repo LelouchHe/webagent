@@ -675,26 +675,20 @@ describe("api module", () => {
 
   // --- Visibility ---
 
-  it("postVisibility sends POST /api/beta/clients/:clientId/visibility", async () => {
-    await api.postVisibility("cl-abc", true);
+  it("postVisibility sends POST /api/beta/clients/:clientId/visibility with taskIds", async () => {
+    await api.postVisibility("cl-abc", ["task-123"], 2);
     assert.equal(fetchCalls[0].url, "/api/beta/clients/cl-abc/visibility");
     assert.equal(fetchCalls[0].init!.method, "POST");
     const body = JSON.parse(fetchCalls[0].init!.body as string);
-    assert.equal(body.visible, true);
+    assert.deepEqual(body, { taskIds: ["task-123"] });
+    const headers = fetchCalls[0].init!.headers as Record<string, string>;
+    assert.equal(headers["X-Visibility-Rev"], "2");
   });
 
-  it("postVisibility includes taskId when provided", async () => {
-    await api.postVisibility("cl-abc", true, "task-123");
+  it("postVisibility sends empty taskIds array when hidden", async () => {
+    await api.postVisibility("cl-abc", []);
     const body = JSON.parse(fetchCalls[0].init!.body as string);
-    assert.equal(body.visible, true);
-    assert.equal(body.taskId, "task-123");
-  });
-
-  it("postVisibility omits taskId when undefined", async () => {
-    await api.postVisibility("cl-abc", false);
-    const body = JSON.parse(fetchCalls[0].init!.body as string);
-    assert.equal(body.visible, false);
-    assert.equal(body.taskId, undefined);
+    assert.deepEqual(body, { taskIds: [] });
   });
 
   // --- Status ---

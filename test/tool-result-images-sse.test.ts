@@ -117,32 +117,36 @@ describe("tool-result images: the live frame", () => {
 
     const frame = frames.join("");
     // Prove this is a real SSE write, not an empty capture.
-    assert.match(frame, /^data: \{/);
+    assert.match(frame, /(?:^|\n)data: \{/);
     assert.equal(
       frame.includes(base64),
       false,
       "the wire frame must not carry the image's base64",
     );
 
-    const updateFrame = frames
-      .map((chunk) => chunk.replace(/^data: /, "").trim())
-      .find((chunk) => chunk.includes('"rawOutput"'));
+    const parsedFrames = frames.map(
+      (chunk) =>
+        JSON.parse(chunk.replace(/^(?:id: \d+\n)?data: /, "").trim()) as Record<
+          string,
+          unknown
+        >,
+    );
+    const updateFrame = parsedFrames.find(
+      (f) => f.type === "tool_call_update",
+    ) as { content: ToolContentItem[] } | undefined;
     assert.ok(updateFrame, "the tool_call_update frame must reach the client");
-    const payload = JSON.parse(updateFrame) as {
-      content: ToolContentItem[];
-      rawOutput: {
-        progress: number;
-        result: {
-          output: Array<Record<string, unknown>>;
-          note: string;
-        };
-        attempts: number[];
-      };
-    };
-    assert.equal(attachmentOf(payload.content[1])?.kind, "image");
-    assert.equal("data" in (payload.content[1] as object), false);
+    assert.equal(attachmentOf(updateFrame.content[1])?.kind, "image");
+    assert.equal("data" in (updateFrame.content[1] as object), false);
+
+    const rawOutputFrame = parsedFrames.find(
+      (f) => f.type === "tool_call_raw_output",
+    ) as { rawOutput: Record<string, unknown> } | undefined;
+    assert.ok(
+      rawOutputFrame,
+      "the tool_call_raw_output frame must reach the client",
+    );
     // `rawOutput` keeps its shape and every field, minus the payload.
-    assert.deepEqual(payload.rawOutput, {
+    assert.deepEqual(rawOutputFrame.rawOutput, {
       progress: 100,
       result: {
         output: [
@@ -239,7 +243,7 @@ describe("tool-result images: the live frame", () => {
     assert.equal(stored.includes(base64), false, "SQLite must not hold it");
 
     const frame = frames.join("");
-    assert.match(frame, /^data: \{/);
+    assert.match(frame, /(?:^|\n)data: \{/);
     assert.equal(frame.includes(base64), false, "the frame must not carry it");
   });
 
@@ -276,7 +280,7 @@ describe("tool-result images: the live frame", () => {
       1,
     );
     const frame = frames.join("");
-    assert.match(frame, /^data: \{/);
+    assert.match(frame, /(?:^|\n)data: \{/);
 
     // The item is rebuilt from the fields the card reads, so the extension slot
     // never reaches storage or the wire.
@@ -321,7 +325,7 @@ describe("tool-result images: the live frame", () => {
       1,
     );
     const frame = frames.join("");
-    assert.match(frame, /^data: \{/);
+    assert.match(frame, /(?:^|\n)data: \{/);
 
     // Nothing renders that item, so nothing persists it; `content` stays [].
     assert.equal(harness.store.countAttachments("t1", "image"), 0);
@@ -363,7 +367,7 @@ describe("tool-result images: the live frame", () => {
       1,
     );
     const frame = frames.join("");
-    assert.match(frame, /^data: \{/);
+    assert.match(frame, /(?:^|\n)data: \{/);
 
     // The count only names new files, so both pictures are still stored.
     const content = harness.storedContent();
@@ -405,7 +409,7 @@ describe("tool-result images: the live frame", () => {
 
     const stored = JSON.stringify(harness.store.getEvents("t1"));
     const frame = frames.join("");
-    assert.match(frame, /^data: \{/);
+    assert.match(frame, /(?:^|\n)data: \{/);
     for (const payload of [first, second]) {
       assert.equal(stored.includes(payload), false, "SQLite must stay clean");
       assert.equal(frame.includes(payload), false, "the frame must stay clean");

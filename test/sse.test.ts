@@ -432,7 +432,7 @@ describe("SSE REST API", () => {
         port,
         "POST",
         `/api/beta/clients/${clientId}/visibility`,
-        JSON.stringify({ visible: true }),
+        JSON.stringify({ taskIds: [] }),
       );
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), { ok: true });
@@ -443,12 +443,12 @@ describe("SSE REST API", () => {
         port,
         "POST",
         "/api/beta/clients/unknown/visibility",
-        JSON.stringify({ visible: true }),
+        JSON.stringify({ taskIds: [] }),
       );
       assert.equal(res.status, 404);
     });
 
-    it("returns 400 for missing visible field", async () => {
+    it("returns 400 for missing taskIds field", async () => {
       const sse = openSse(port, "/api/v1/events/stream");
       sseCleanups.push(sse.close);
       await sse.response;
@@ -480,7 +480,7 @@ describe("SSE REST API", () => {
       assert.equal(res.status, 400);
     });
 
-    it("accepts optional taskId in visibility update", async () => {
+    it("accepts taskIds list in visibility update", async () => {
       const sse = openSse(port, "/api/v1/events/stream");
       sseCleanups.push(sse.close);
       await sse.response;
@@ -491,7 +491,7 @@ describe("SSE REST API", () => {
         port,
         "POST",
         `/api/beta/clients/${clientId}/visibility`,
-        JSON.stringify({ visible: true, taskId: "task-123" }),
+        JSON.stringify({ taskIds: ["task-123"] }),
       );
       assert.equal(res.status, 200);
       assert.deepEqual(JSON.parse(res.body), { ok: true });

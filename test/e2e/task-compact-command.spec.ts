@@ -33,10 +33,10 @@ test("/compact shows an assistant handoff and injects it into the next prompt", 
 
   const events = await page.evaluate(async (id) => {
     const response = await fetch(`/api/v1/tasks/${id}/events`);
-    const body = (await response.json()) as
-      | Array<{ type: string; data: string }>
-      | { events: Array<{ type: string; data: string }> };
-    return Array.isArray(body) ? body : body.events;
+    const body = (await response.json()) as {
+      events: Array<{ data: { type: string; data: string } }>;
+    };
+    return body.events.map((entry) => entry.data);
   }, taskId);
   const userMessage = events
     .reverse()

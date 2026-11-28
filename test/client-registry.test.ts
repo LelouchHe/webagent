@@ -8,15 +8,15 @@ describe("ClientRegistry", () => {
     const e = r.register("c1", { capabilities: ["sse"] });
     assert.equal(e.id, "c1");
     assert.deepEqual(e.capabilities, ["sse"]);
-    assert.equal(e.visible, false);
-    assert.equal(e.active, null);
+    assert.equal(e.visibleTaskIds.size, 0);
+    assert.equal(e.lastVisibilityRev, 0);
     assert.ok(e.lastSeen <= Date.now());
   });
 
   it("re-register same id updates capabilities + lastSeen, preserves identity state", () => {
     const r = new ClientRegistry();
     r.register("c1", { capabilities: [] });
-    r.setVisibility("c1", { visible: true, active: "sess-A" });
+    r.setVisibility("c1", ["sess-A"], 1);
     const before = r.get("c1")!.lastSeen;
     // sleep one tick
     const start = Date.now();
@@ -25,8 +25,8 @@ describe("ClientRegistry", () => {
     }
     const e = r.register("c1", { capabilities: ["push"] });
     assert.deepEqual(e.capabilities, ["push"]);
-    assert.equal(e.visible, true);
-    assert.equal(e.active, "sess-A");
+    assert.equal(e.visibleTaskIds.has("sess-A"), true);
+    assert.equal(e.lastVisibilityRev, 1);
     assert.ok(e.lastSeen >= before);
   });
 

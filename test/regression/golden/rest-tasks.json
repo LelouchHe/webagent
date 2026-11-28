@@ -4,7 +4,7 @@
       "name": "setup",
       "response": {
         "rootId": "00000000-0000-4000-8000-000000000001",
-        "childId": "00000000-0000-4000-8000-000000000004"
+        "childId": "00000000-0000-4000-8000-000000000005"
       },
       "sse": [
         {
@@ -37,7 +37,7 @@
               "agentId": "mock",
               "configOptions": [],
               "agentCommands": {
-                "epoch": "00000000-0000-4000-8000-000000000003",
+                "epoch": "00000000-0000-4000-8000-000000000004",
                 "revision": 1,
                 "commands": [
                   {
@@ -117,7 +117,7 @@
       "response": {
         "status": 201,
         "body": {
-          "id": "00000000-0000-4000-8000-000000000004",
+          "id": "00000000-0000-4000-8000-000000000005",
           "cwd": "/",
           "cwdDisplay": "/",
           "parentId": "00000000-0000-4000-8000-000000000001",
@@ -188,7 +188,7 @@
             }
           ],
           "agentCommands": {
-            "epoch": "00000000-0000-4000-8000-000000000003",
+            "epoch": "00000000-0000-4000-8000-000000000004",
             "revision": 1,
             "commands": [
               {
@@ -208,28 +208,11 @@
       },
       "sse": [
         {
-          "taskId": "00000000-0000-4000-8000-000000000001",
-          "events": [
-            {
-              "type": "system_message",
-              "taskId": "00000000-0000-4000-8000-000000000001",
-              "kind": "task_created",
-              "messageId": "00000000-0000-4000-8000-000000000005",
-              "sourceTaskId": "00000000-0000-4000-8000-000000000001",
-              "targetTaskId": "00000000-0000-4000-8000-000000000004",
-              "taskTitle": "REST child",
-              "role": "source",
-              "title": "Created task @\"REST child\"",
-              "body": "Task ID: 00000000-0000-4000-8000-000000000004\nagent: mock\ncwd: /\nmodel: mock-model\nthinking: medium"
-            }
-          ]
-        },
-        {
-          "taskId": "00000000-0000-4000-8000-000000000004",
+          "taskId": "00000000-0000-4000-8000-000000000005",
           "events": [
             {
               "type": "available_commands_update",
-              "taskId": "00000000-0000-4000-8000-000000000004",
+              "taskId": "00000000-0000-4000-8000-000000000005",
               "commands": [
                 {
                   "name": "context",
@@ -243,12 +226,12 @@
                   }
                 }
               ],
-              "epoch": "00000000-0000-4000-8000-000000000003",
+              "epoch": "00000000-0000-4000-8000-000000000004",
               "revision": 1
             },
             {
               "type": "task_created",
-              "taskId": "00000000-0000-4000-8000-000000000004",
+              "taskId": "00000000-0000-4000-8000-000000000005",
               "agentId": "mock",
               "cwd": "/",
               "cwdDisplay": "/",
@@ -317,7 +300,7 @@
                 }
               ],
               "agentCommands": {
-                "epoch": "00000000-0000-4000-8000-000000000003",
+                "epoch": "00000000-0000-4000-8000-000000000004",
                 "revision": 1,
                 "commands": [
                   {
@@ -336,7 +319,7 @@
             },
             {
               "type": "config_option_update",
-              "taskId": "00000000-0000-4000-8000-000000000004",
+              "taskId": "00000000-0000-4000-8000-000000000005",
               "configOptions": [
                 {
                   "type": "select",
@@ -426,7 +409,7 @@
                 "00000000-0000-4000-8000-000000000001",
                 1,
                 "system_message",
-                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000004\",\"taskTitle\":\"REST child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"REST child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000004\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+                "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"REST child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"REST child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
                 "user",
                 1789333200000
               ]
@@ -438,7 +421,7 @@
               "method": "run",
               "sql": "INSERT INTO tasks\n           (id, cwd, source, parent_id, title, workflow_status, created_at, last_active_at)\n           VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000004",
+                "00000000-0000-4000-8000-000000000005",
                 "/",
                 "auto",
                 "00000000-0000-4000-8000-000000000001",
@@ -455,7 +438,7 @@
               "args": [
                 "mock",
                 "00000000-0000-4000-8000-000000000002",
-                "00000000-0000-4000-8000-000000000004",
+                "00000000-0000-4000-8000-000000000005",
                 1789333200000
               ]
             }
@@ -465,7 +448,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET mode = ? WHERE id = ?",
-              "args": ["agent", "00000000-0000-4000-8000-000000000004"]
+              "args": ["agent", "00000000-0000-4000-8000-000000000005"]
             }
           ],
           [
@@ -473,7 +456,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET model = ? WHERE id = ?",
-              "args": ["mock-model", "00000000-0000-4000-8000-000000000004"]
+              "args": ["mock-model", "00000000-0000-4000-8000-000000000005"]
             }
           ],
           [
@@ -481,7 +464,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET reasoning_effort = ? WHERE id = ?",
-              "args": ["medium", "00000000-0000-4000-8000-000000000004"]
+              "args": ["medium", "00000000-0000-4000-8000-000000000005"]
             }
           ]
         ],
@@ -498,17 +481,11 @@
       },
       "sse": [
         {
-          "taskId": "00000000-0000-4000-8000-000000000004",
+          "taskId": "00000000-0000-4000-8000-000000000005",
           "events": [
             {
-              "type": "user_message",
-              "taskId": "00000000-0000-4000-8000-000000000004",
-              "text": "wait for cancel",
-              "clientOpId": "00000000-0000-4000-8000-000000000006"
-            },
-            {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000004",
+              "taskId": "00000000-0000-4000-8000-000000000005",
               "seq": 1,
               "patch": {
                 "runtime": {
@@ -523,7 +500,7 @@
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000004",
+              "taskId": "00000000-0000-4000-8000-000000000005",
               "seq": 2,
               "patch": {
                 "runtime": {
@@ -536,8 +513,12 @@
             },
             {
               "type": "message_chunk",
-              "taskId": "00000000-0000-4000-8000-000000000004",
-              "text": "REGRESSION_WAIT: rest-cancel"
+              "taskId": "00000000-0000-4000-8000-000000000005",
+              "text": "REGRESSION_WAIT: rest-cancel",
+              "epoch": "00000000-0000-4000-8000-000000000002",
+              "segmentId": 1,
+              "offset": 0,
+              "endOffset": 28
             }
           ]
         }
@@ -568,10 +549,10 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000004",
+                "00000000-0000-4000-8000-000000000005",
                 1,
                 "user_message",
-                "{\"text\":\"wait for cancel\",\"clientOpId\":\"00000000-0000-4000-8000-000000000006\"}",
+                "{\"text\":\"wait for cancel\",\"clientOpId\":\"00000000-0000-4000-8000-000000000007\"}",
                 "user",
                 1789333200000
               ]
@@ -590,7 +571,7 @@
               "kind": "write",
               "method": "run",
               "sql": "UPDATE tasks SET last_active_at = ? WHERE id = ?",
-              "args": [1789333200000, "00000000-0000-4000-8000-000000000004"]
+              "args": [1789333200000, "00000000-0000-4000-8000-000000000005"]
             }
           ]
         ],
@@ -608,11 +589,11 @@
       },
       "sse": [
         {
-          "taskId": "00000000-0000-4000-8000-000000000004",
+          "taskId": "00000000-0000-4000-8000-000000000005",
           "events": [
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000004",
+              "taskId": "00000000-0000-4000-8000-000000000005",
               "seq": 3,
               "patch": {
                 "runtime": {
@@ -627,7 +608,7 @@
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000004",
+              "taskId": "00000000-0000-4000-8000-000000000005",
               "seq": 4,
               "patch": {
                 "runtime": {
@@ -637,7 +618,7 @@
             },
             {
               "type": "state_patch",
-              "taskId": "00000000-0000-4000-8000-000000000004",
+              "taskId": "00000000-0000-4000-8000-000000000005",
               "seq": 5,
               "patch": {
                 "runtime": {
@@ -647,12 +628,6 @@
                   }
                 }
               }
-            },
-            {
-              "type": "prompt_done",
-              "taskId": "00000000-0000-4000-8000-000000000004",
-              "stopReason": "cancelled",
-              "promptId": "prompt-1"
             }
           ]
         }
@@ -681,10 +656,10 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000004",
+                "00000000-0000-4000-8000-000000000005",
                 2,
                 "assistant_message",
-                "{\"text\":\"REGRESSION_WAIT: rest-cancel\"}",
+                "{\"text\":\"REGRESSION_WAIT: rest-cancel\",\"epoch\":\"00000000-0000-4000-8000-000000000002\",\"segmentId\":1}",
                 "agent",
                 1789333200000
               ]
@@ -696,7 +671,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000004",
+                "00000000-0000-4000-8000-000000000005",
                 3,
                 "prompt_done",
                 "{\"stopReason\":\"cancelled\",\"promptId\":\"prompt-1\"}",
@@ -734,7 +709,7 @@
             "archived": false
           },
           {
-            "id": "00000000-0000-4000-8000-000000000004",
+            "id": "00000000-0000-4000-8000-000000000005",
             "cwd": "/",
             "title": "REST child",
             "workflow_status": "idle",
@@ -767,26 +742,13 @@
         "status": 200,
         "body": {
           "status": "archived",
-          "taskId": "00000000-0000-4000-8000-000000000004",
+          "taskId": "00000000-0000-4000-8000-000000000005",
           "parentId": "00000000-0000-4000-8000-000000000001",
           "parentPath": "@/",
           "pendingAccount": false
         }
       },
-      "sse": [
-        {
-          "taskId": "00000000-0000-4000-8000-000000000004",
-          "events": [
-            {
-              "type": "system_message",
-              "taskId": "00000000-0000-4000-8000-000000000004",
-              "kind": "task_archive",
-              "title": "Task archived",
-              "body": "original parent: @/ (00000000-0000-4000-8000-000000000001)"
-            }
-          ]
-        }
-      ],
+      "sse": [],
       "mock": [],
       "sql": {
         "writes": [
@@ -796,7 +758,7 @@
               "method": "run",
               "sql": "UPDATE tasks SET parent_id = NULL WHERE id = ? AND parent_id = ?",
               "args": [
-                "00000000-0000-4000-8000-000000000004",
+                "00000000-0000-4000-8000-000000000005",
                 "00000000-0000-4000-8000-000000000001"
               ]
             },
@@ -805,7 +767,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000004",
+                "00000000-0000-4000-8000-000000000005",
                 4,
                 "system_message",
                 "{\"kind\":\"task_archive\",\"title\":\"Task archived\",\"body\":\"original parent: @/ (00000000-0000-4000-8000-000000000001)\",\"originalParentId\":\"00000000-0000-4000-8000-000000000001\",\"originalParentPath\":\"@/\"}",
@@ -824,7 +786,7 @@
         "status": 200,
         "body": [
           {
-            "id": "00000000-0000-4000-8000-000000000004",
+            "id": "00000000-0000-4000-8000-000000000005",
             "cwd": "/",
             "title": "REST child",
             "workflow_status": "idle",
@@ -857,25 +819,12 @@
         "status": 200,
         "body": {
           "status": "unarchived",
-          "taskId": "00000000-0000-4000-8000-000000000004",
+          "taskId": "00000000-0000-4000-8000-000000000005",
           "parentId": "00000000-0000-4000-8000-000000000001",
           "parentPath": "@/"
         }
       },
-      "sse": [
-        {
-          "taskId": "00000000-0000-4000-8000-000000000004",
-          "events": [
-            {
-              "type": "system_message",
-              "taskId": "00000000-0000-4000-8000-000000000004",
-              "kind": "task_unarchive",
-              "title": "Task unarchived",
-              "body": "parent: @/ (00000000-0000-4000-8000-000000000001)"
-            }
-          ]
-        }
-      ],
+      "sse": [],
       "mock": [],
       "sql": {
         "writes": [
@@ -886,7 +835,7 @@
               "sql": "UPDATE tasks SET parent_id = ? WHERE id = ?",
               "args": [
                 "00000000-0000-4000-8000-000000000001",
-                "00000000-0000-4000-8000-000000000004"
+                "00000000-0000-4000-8000-000000000005"
               ]
             },
             {
@@ -894,7 +843,7 @@
               "method": "run",
               "sql": "INSERT INTO events (task_id, seq, type, data, from_ref, created_at) VALUES (?, ?, ?, ?, ?, ?)",
               "args": [
-                "00000000-0000-4000-8000-000000000004",
+                "00000000-0000-4000-8000-000000000005",
                 5,
                 "system_message",
                 "{\"kind\":\"task_unarchive\",\"title\":\"Task unarchived\",\"body\":\"parent: @/ (00000000-0000-4000-8000-000000000001)\",\"parentId\":\"00000000-0000-4000-8000-000000000001\",\"parentPath\":\"@/\"}",
@@ -926,7 +875,7 @@
         "last_active_at": 1789333200000
       },
       {
-        "id": "00000000-0000-4000-8000-000000000004",
+        "id": "00000000-0000-4000-8000-000000000005",
         "cwd": "/",
         "title": "REST child",
         "workflow_status": "idle",
@@ -951,7 +900,7 @@
       {
         "agent_key": "mock",
         "agent_session_id": "00000000-0000-4000-8000-000000000002",
-        "task_id": "00000000-0000-4000-8000-000000000004",
+        "task_id": "00000000-0000-4000-8000-000000000005",
         "created_at": 1789333200000
       }
     ],
@@ -961,31 +910,31 @@
         "task_id": "00000000-0000-4000-8000-000000000001",
         "seq": 1,
         "type": "system_message",
-        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000004\",\"taskTitle\":\"REST child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"REST child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000004\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
+        "data": "{\"kind\":\"task_created\",\"taskId\":\"00000000-0000-4000-8000-000000000005\",\"taskTitle\":\"REST child\",\"agentId\":\"mock\",\"cwd\":\"/\",\"model\":\"mock-model\",\"thinking\":\"medium\",\"title\":\"Created task @\\\"REST child\\\"\",\"body\":\"Task ID: 00000000-0000-4000-8000-000000000005\\nagent: mock\\ncwd: /\\nmodel: mock-model\\nthinking: medium\"}",
         "created_at": 1789333200000,
         "from_ref": "user"
       },
       {
         "id": 2,
-        "task_id": "00000000-0000-4000-8000-000000000004",
+        "task_id": "00000000-0000-4000-8000-000000000005",
         "seq": 1,
         "type": "user_message",
-        "data": "{\"text\":\"wait for cancel\",\"clientOpId\":\"00000000-0000-4000-8000-000000000006\"}",
+        "data": "{\"text\":\"wait for cancel\",\"clientOpId\":\"00000000-0000-4000-8000-000000000007\"}",
         "created_at": 1789333200000,
         "from_ref": "user"
       },
       {
         "id": 3,
-        "task_id": "00000000-0000-4000-8000-000000000004",
+        "task_id": "00000000-0000-4000-8000-000000000005",
         "seq": 2,
         "type": "assistant_message",
-        "data": "{\"text\":\"REGRESSION_WAIT: rest-cancel\"}",
+        "data": "{\"text\":\"REGRESSION_WAIT: rest-cancel\",\"epoch\":\"00000000-0000-4000-8000-000000000002\",\"segmentId\":1}",
         "created_at": 1789333200000,
         "from_ref": "agent"
       },
       {
         "id": 4,
-        "task_id": "00000000-0000-4000-8000-000000000004",
+        "task_id": "00000000-0000-4000-8000-000000000005",
         "seq": 3,
         "type": "prompt_done",
         "data": "{\"stopReason\":\"cancelled\",\"promptId\":\"prompt-1\"}",
@@ -994,7 +943,7 @@
       },
       {
         "id": 5,
-        "task_id": "00000000-0000-4000-8000-000000000004",
+        "task_id": "00000000-0000-4000-8000-000000000005",
         "seq": 4,
         "type": "system_message",
         "data": "{\"kind\":\"task_archive\",\"title\":\"Task archived\",\"body\":\"original parent: @/ (00000000-0000-4000-8000-000000000001)\",\"originalParentId\":\"00000000-0000-4000-8000-000000000001\",\"originalParentPath\":\"@/\"}",
@@ -1003,7 +952,7 @@
       },
       {
         "id": 6,
-        "task_id": "00000000-0000-4000-8000-000000000004",
+        "task_id": "00000000-0000-4000-8000-000000000005",
         "seq": 5,
         "type": "system_message",
         "data": "{\"kind\":\"task_unarchive\",\"title\":\"Task unarchived\",\"body\":\"parent: @/ (00000000-0000-4000-8000-000000000001)\",\"parentId\":\"00000000-0000-4000-8000-000000000001\",\"parentPath\":\"@/\"}",

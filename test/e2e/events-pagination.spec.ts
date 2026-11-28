@@ -26,12 +26,12 @@ test("events API supports pagination with limit and before params", async ({
   expect(typeof body.hasMore).toBe("boolean");
   // Events should be in ascending seq order
   for (let i = 1; i < body.events.length; i++) {
-    expect(body.events[i].seq).toBeGreaterThan(body.events[i - 1].seq);
+    expect(body.events[i].pos).toBeGreaterThan(body.events[i - 1].pos);
   }
 
   // If hasMore, fetch older page using before cursor
   if (body.hasMore) {
-    const firstSeq = body.events[0].seq;
+    const firstSeq = body.events[0].pos;
     const res2 = await page.request.get(
       `/api/v1/tasks/${taskId}/events?limit=4&before=${firstSeq}`,
     );
@@ -39,7 +39,7 @@ test("events API supports pagination with limit and before params", async ({
     const body2 = await res2.json();
     // All events should be before firstSeq
     for (const evt of body2.events) {
-      expect(evt.seq).toBeLessThan(firstSeq);
+      expect(evt.pos).toBeLessThan(firstSeq);
     }
   }
 });

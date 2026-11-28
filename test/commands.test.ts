@@ -1549,7 +1549,7 @@ describe("commands", () => {
       it("shows error on reload failure", async () => {
         setFetch(() => ({
           ok: false,
-          status: 500,
+          status: 400,
           json: async () => ({ error: "agent crashed" }),
           text: async () => '{"error":"agent crashed"}',
         }));
@@ -1560,7 +1560,7 @@ describe("commands", () => {
         assert.equal(handled, true);
         assert.ok(
           messageLines().some(
-            (l) => l.includes("agent crashed") ?? l.includes("Failed"),
+            (l: string) => l.includes("agent crashed") || l.includes("Failed"),
           ),
         );
       });

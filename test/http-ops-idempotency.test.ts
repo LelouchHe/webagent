@@ -747,13 +747,10 @@ describe("HTTP ops idempotency, legacy client_ops removal, and fixed task create
       promptOp,
     );
     const sseUserEvents = h.broadcasts.filter(
-      (e) => e.type === "user_message" && e.taskId === taskId,
-    );
+      (e: any) => e.feed === taskId && e.data?.type === "user_message",
+    ) as any[];
     assert.equal(sseUserEvents.length, 1);
-    assert.equal(
-      (sseUserEvents[0] as { clientOpId?: string }).clientOpId,
-      promptOp,
-    );
+    assert.equal(JSON.parse(sseUserEvents[0].data.data).clientOpId, promptOp);
 
     // 4. Message ingress replays exact id and creates only one row.
     const [m1] = await sendPair({

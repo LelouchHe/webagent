@@ -183,9 +183,9 @@ describe("image signed URLs", () => {
 
     assert.equal(response.status, 200);
     const payload = JSON.parse(response.body) as {
-      events: Array<{ data: string }>;
+      events: Array<{ data: { data: string } }>;
     };
-    const eventData = JSON.parse(payload.events.at(-1)!.data) as {
+    const eventData = JSON.parse(payload.events.at(-1)!.data.data) as {
       imageUrl: string;
     };
     const parsed = new URL(eventData.imageUrl, "http://localhost");
@@ -283,9 +283,11 @@ describe("image signed URLs", () => {
     });
     assert.equal(response.status, 200);
     const payload = JSON.parse(response.body) as {
-      events: Array<{ type: string; data: string }>;
+      events: Array<{ data: { type: string; data: string } }>;
     };
-    const row = payload.events.find((event) => event.type === "agent_image");
+    const row = payload.events.find(
+      (event) => event.data.type === "agent_image",
+    )?.data;
     assert.ok(row);
     assert.equal(
       row.data.includes(PNG.toString("base64")),

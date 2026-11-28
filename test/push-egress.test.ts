@@ -18,7 +18,9 @@ function visBoth(
   patch: { visible?: boolean; active?: string | null },
 ): void {
   if (!reg.get(id)) reg.register(id, { capabilities: [] });
-  reg.setVisibility(id, patch);
+  const visible = patch.visible !== false;
+  const taskIds = visible && patch.active ? [patch.active] : [];
+  reg.setVisibility(id, taskIds);
 }
 
 class StubbedPushService extends PushService {

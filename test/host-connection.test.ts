@@ -456,12 +456,17 @@ describe("host connection helpers", () => {
       {
         events: [
           {
-            task_id: "child-1",
-            seq: 1,
-            type: "task_update",
-            created_at: "2026-09-13T21:00:00.000Z",
-            from_ref: "agent",
-            data: JSON.stringify({ status: "done", body: "ok" }),
+            feed: "child-1",
+            pos: 1,
+            prev: 0,
+            data: {
+              task_id: "child-1",
+              seq: 1,
+              type: "task_update",
+              created_at: "2026-09-13T21:00:00.000Z",
+              from_ref: "agent",
+              data: JSON.stringify({ status: "done", body: "ok" }),
+            },
           },
         ],
       },

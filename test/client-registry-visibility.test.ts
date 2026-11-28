@@ -22,182 +22,96 @@ function newClock(start = 1_000_000): {
   };
 }
 
-describe("ClientRegistry visibility (Plan C Step 1)", () => {
-  it("register initializes visible=false, active=null, visibleSince=0", () => {
+describe("ClientRegistry declarative visibility", () => {
+  it("register initializes empty visibleTaskIds, lastVisibilityRev=0, visibleSince=0", () => {
     const r = new ClientRegistry();
     const e = r.register("c1", { capabilities: [] });
-    assert.equal(e.visible, false);
-    assert.equal(e.active, null);
+    assert.equal(e.visibleTaskIds.size, 0);
+    assert.equal(e.lastVisibilityRev, 0);
     assert.equal(e.visibleSince, 0);
   });
 
   it("setVisibility on unknown client is no-op (no throw, no entry created)", () => {
     const r = new ClientRegistry();
-    const result = r.setVisibility("ghost", { visible: true, active: "s1" });
-    assert.equal(result.becameVisibleFor, null);
+    const result = r.setVisibility("ghost", ["s1"], 1);
+    assert.equal(result.applied, false);
+    assert.deepEqual(result.newlyVisibleTaskIds, []);
     assert.equal(r.get("ghost"), undefined);
   });
 
-  it("setVisibility { visible:true } stamps visibleSince from injected now()", () => {
+  it("setVisibility non-empty stamps visibleSince and empty resets visibleSince to 0", () => {
     const clock = newClock(50_000);
     const r = new ClientRegistry({ now: clock.now });
     r.register("c1", { capabilities: [] });
-    r.setVisibility("c1", { visible: true });
-    const e = r.get("c1")!;
-    assert.equal(e.visible, true);
-    assert.equal(e.visibleSince, 50_000);
-  });
+    r.setVisibility("c1", ["sA"], 1);
+    assert.equal(r.get("c1")!.visibleSince, 50_000);
+    assert.equal(r.isVisibleForTask("c1", "sA"), true);
 
-  it("setVisibility { visible:false } resets visibleSince to 0", () => {
-    const clock = newClock();
-    const r = new ClientRegistry({ now: clock.now });
-    r.register("c1", { capabilities: [] });
-    r.setVisibility("c1", { visible: true });
-    r.setVisibility("c1", { visible: false });
-    const e = r.get("c1")!;
-    assert.equal(e.visible, false);
-    assert.equal(e.visibleSince, 0);
-  });
-
-  it("setVisibility omitting active preserves; null clears; string replaces", () => {
-    const r = new ClientRegistry();
-    r.register("c1", { capabilities: [] });
-    r.setVisibility("c1", { visible: true, active: "sA" });
-    assert.equal(r.get("c1")!.active, "sA");
-
-    // omit active — preserve
-    r.setVisibility("c1", { visible: true });
-    assert.equal(r.get("c1")!.active, "sA");
-
-    // explicit null — clear
-    r.setVisibility("c1", { visible: true, active: null });
-    assert.equal(r.get("c1")!.active, null);
-
-    // replace
-    r.setVisibility("c1", { visible: true, active: "sB" });
-    assert.equal(r.get("c1")!.active, "sB");
-  });
-
-  it("becameVisibleFor: invisible/no-task → visible+task returns the task", () => {
-    const r = new ClientRegistry();
-    r.register("c1", { capabilities: [] });
-    const result = r.setVisibility("c1", { visible: true, active: "sA" });
-    assert.equal(result.becameVisibleFor, "sA");
-  });
-
-  it("becameVisibleFor: heartbeat refresh (same visible+task) returns null", () => {
-    const r = new ClientRegistry();
-    r.register("c1", { capabilities: [] });
-    r.setVisibility("c1", { visible: true, active: "sA" });
-    const refresh = r.setVisibility("c1", { visible: true, active: "sA" });
-    assert.equal(refresh.becameVisibleFor, null);
-  });
-
-  it("becameVisibleFor: task switch while visible (sA → sB) returns sB", () => {
-    const r = new ClientRegistry();
-    r.register("c1", { capabilities: [] });
-    r.setVisibility("c1", { visible: true, active: "sA" });
-    const sw = r.setVisibility("c1", { visible: true, active: "sB" });
-    assert.equal(sw.becameVisibleFor, "sB");
-  });
-
-  it("becameVisibleFor: visible:true patch-only after task change still resets TTL", () => {
-    // Mirrors push-service: when the only thing that changed is taskId
-    // (without an explicit visible field), TTL must reset so the new task
-    // doesn't inherit the old task's staleness clock.
-    const clock = newClock(1000);
-    const r = new ClientRegistry({ now: clock.now });
-    r.register("c1", { capabilities: [] });
-    r.setVisibility("c1", { visible: true, active: "sA" });
-    assert.equal(r.get("c1")!.visibleSince, 1000);
-
-    clock.tick(5_000);
-    const sw = r.setVisibility("c1", { active: "sB" }); // taskId-only patch
-    assert.equal(sw.becameVisibleFor, "sB");
-    assert.equal(r.get("c1")!.visibleSince, 6_000);
-  });
-
-  it("becameVisibleFor: visible:false transition returns null", () => {
-    const r = new ClientRegistry();
-    r.register("c1", { capabilities: [] });
-    r.setVisibility("c1", { visible: true, active: "sA" });
-    const hide = r.setVisibility("c1", { visible: false });
-    assert.equal(hide.becameVisibleFor, null);
-  });
-
-  it("isVisibleForTask: true iff visible && active===sid && within TTL", () => {
-    const clock = newClock();
-    const r = new ClientRegistry({ now: clock.now, visibilityTtlMs: 60_000 });
-    r.register("c1", { capabilities: [] });
-
+    r.setVisibility("c1", [], 2);
+    assert.equal(r.get("c1")!.visibleSince, 0);
     assert.equal(r.isVisibleForTask("c1", "sA"), false);
+  });
 
-    r.setVisibility("c1", { visible: true, active: "sA" });
+  it("setVisibility enforces monotonic X-Visibility-Rev (ignores stale or equal rev)", () => {
+    const r = new ClientRegistry();
+    r.register("c1", { capabilities: [] });
+    const first = r.setVisibility("c1", ["sA"], 5);
+    assert.equal(first.applied, true);
+    assert.deepEqual(first.newlyVisibleTaskIds, ["sA"]);
+
+    const stale = r.setVisibility("c1", ["sB"], 4);
+    assert.equal(stale.applied, false);
+    assert.deepEqual(stale.newlyVisibleTaskIds, []);
     assert.equal(r.isVisibleForTask("c1", "sA"), true);
     assert.equal(r.isVisibleForTask("c1", "sB"), false);
 
-    r.setVisibility("c1", { visible: false });
-    assert.equal(r.isVisibleForTask("c1", "sA"), false);
+    const dup = r.setVisibility("c1", ["sB"], 5);
+    assert.equal(dup.applied, false);
+    assert.equal(r.isVisibleForTask("c1", "sA"), true);
   });
 
-  it("isVisibleForTask: false after TTL elapsed even if visible flag still true", () => {
+  it("newlyVisibleTaskIds only reports newly added tasks (heartbeat refresh returns empty)", () => {
+    const r = new ClientRegistry();
+    r.register("c1", { capabilities: [] });
+    const initial = r.setVisibility("c1", ["sA"], 1);
+    assert.deepEqual(initial.newlyVisibleTaskIds, ["sA"]);
+
+    const refresh = r.setVisibility("c1", ["sA"], 2);
+    assert.equal(refresh.applied, true);
+    assert.deepEqual(refresh.newlyVisibleTaskIds, []);
+
+    const addSecond = r.setVisibility("c1", ["sA", "sB"], 3);
+    assert.deepEqual(addSecond.newlyVisibleTaskIds, ["sB"]);
+
+    const hide = r.setVisibility("c1", [], 4);
+    assert.deepEqual(hide.newlyVisibleTaskIds, []);
+  });
+
+  it("isVisibleForTask and isTaskVisibleToAnyClient honor TTL expiry", () => {
     const clock = newClock(0);
     const r = new ClientRegistry({ now: clock.now, visibilityTtlMs: 60_000 });
     r.register("c1", { capabilities: [] });
-    r.setVisibility("c1", { visible: true, active: "sA" });
-    assert.equal(r.isVisibleForTask("c1", "sA"), true);
-
-    clock.tick(60_001);
-    assert.equal(r.isVisibleForTask("c1", "sA"), false);
-  });
-
-  it("isVisibleForTask: unknown client → false", () => {
-    const r = new ClientRegistry();
-    assert.equal(r.isVisibleForTask("ghost", "sA"), false);
-  });
-
-  it("isTaskVisibleToAnyClient: any fresh visible client matching", () => {
-    const r = new ClientRegistry();
-    r.register("c1", { capabilities: [] });
     r.register("c2", { capabilities: [] });
-    r.setVisibility("c1", { visible: true, active: "sA" });
-    r.setVisibility("c2", { visible: true, active: "sB" });
+    r.setVisibility("c1", ["sA"], 1);
+    r.setVisibility("c2", ["sB"], 1);
 
+    assert.equal(r.isVisibleForTask("c1", "sA"), true);
+    assert.equal(r.isVisibleForTask("c1", "sB"), false);
     assert.equal(r.isTaskVisibleToAnyClient("sA"), true);
     assert.equal(r.isTaskVisibleToAnyClient("sB"), true);
     assert.equal(r.isTaskVisibleToAnyClient("sZ"), false);
-  });
-
-  it("isTaskVisibleToAnyClient: ignores stale records past TTL", () => {
-    const clock = newClock(0);
-    const r = new ClientRegistry({ now: clock.now, visibilityTtlMs: 60_000 });
-    r.register("c1", { capabilities: [] });
-    r.setVisibility("c1", { visible: true, active: "sA" });
-    assert.equal(r.isTaskVisibleToAnyClient("sA"), true);
-
-    clock.tick(60_001);
-    assert.equal(r.isTaskVisibleToAnyClient("sA"), false);
-  });
-
-  it("hasAnyVisibleClient: true iff at least one fresh visible client", () => {
-    const clock = newClock(0);
-    const r = new ClientRegistry({ now: clock.now, visibilityTtlMs: 60_000 });
-    assert.equal(r.hasAnyVisibleClient(), false);
-
-    r.register("c1", { capabilities: [] });
-    assert.equal(r.hasAnyVisibleClient(), false);
-
-    r.setVisibility("c1", { visible: true, active: null });
     assert.equal(r.hasAnyVisibleClient(), true);
 
     clock.tick(60_001);
+    assert.equal(r.isVisibleForTask("c1", "sA"), false);
+    assert.equal(r.isTaskVisibleToAnyClient("sA"), false);
     assert.equal(r.hasAnyVisibleClient(), false);
   });
 
   it("remove drops visibility along with the entry", () => {
     const r = new ClientRegistry();
     r.register("c1", { capabilities: [] });
-    r.setVisibility("c1", { visible: true, active: "sA" });
+    r.setVisibility("c1", ["sA"], 1);
     r.remove("c1");
     assert.equal(r.hasAnyVisibleClient(), false);
     assert.equal(r.isTaskVisibleToAnyClient("sA"), false);

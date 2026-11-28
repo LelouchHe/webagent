@@ -41,9 +41,9 @@ test("inbox consume keeps the new task streaming and persisting", async ({
   );
   expect(eventsResponse.ok()).toBe(true);
   const { events } = (await eventsResponse.json()) as {
-    events: Array<{ type: string }>;
+    events: Array<{ data: { type: string } }>;
   };
-  const types = events.map((event) => event.type);
+  const types = events.map((event) => event.data.type);
   expect(types).toContain("tool_call");
   expect(types).toContain("assistant_message");
   expect(types).toContain("prompt_done");
