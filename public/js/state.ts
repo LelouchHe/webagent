@@ -16,6 +16,8 @@ import {
   formatModeLabel,
 } from "../../src/mode-bucket.ts";
 import * as api from "./api.ts";
+import type { StatePatchPayload, TaskSnapshot } from "./preview-reconciler.ts";
+export type { StatePatchPayload, TaskSnapshot };
 import { HTTP_STATUS } from "../../src/http-status.ts";
 import { getDefaultAgentId, installAgentDirectory } from "./agent-directory.ts";
 import {
@@ -491,54 +493,18 @@ subscribeTaskTopology(updateStatusBar);
 
 // --- Snapshot / state_patch (client-server-split M1) ---
 
-export interface TaskSnapshot {
-  version: number;
-  seq: number;
-  task: {
-    id: string;
-    title: string | null;
-    cwd: string;
-    cwdDisplay?: string;
-    model: string | null;
-    mode: string | null;
-    createdAt: string | null;
-    lastEventSeq: number;
-  };
-  runtime: {
-    busy: {
-      kind: "agent" | "bash";
-      since: string;
-      promptId: string | null;
-      cancelStatus?: "requested" | "unconfirmed" | null;
-    } | null;
-    pendingPermissions?: unknown[];
-    streaming?: { assistant: boolean; thinking: boolean };
-    plan?: PlanEntry[] | null;
-    contextUsage?: ContextUsage | null;
-  };
-  agentCommands?: AgentCommandSnapshot;
-}
-
-export interface StatePatchPayload {
-  runtime?: {
-    busy?: {
-      kind: "agent" | "bash";
-      since: string;
-      promptId: string | null;
-      cancelStatus?: "requested" | "unconfirmed" | null;
-    } | null;
-    plan?: PlanEntry[] | null;
-    contextUsage?: ContextUsage | null;
-  };
-}
-
 let planStateApplier: (plan: PlanEntry[] | null) => void = () => {};
 export function setPlanStateApplier(
   fn: (plan: PlanEntry[] | null) => void,
 ): void {
   planStateApplier = fn;
 }
-
+let snapshotExtrasApplier: (snap: TaskSnapshot) => void = () => {};
+export function setSnapshotExtrasApplier(
+  fn: (snap: TaskSnapshot) => void,
+): void {
+  snapshotExtrasApplier = fn;
+}
 function applyRuntimePlan(plan: PlanEntry[] | null): void {
   state.plan = plan?.map((entry) => ({ ...entry })) ?? null;
   planStateApplier(state.plan);
@@ -562,7 +528,9 @@ export function applySnapshot(snap: TaskSnapshot): void {
   state.contextUsage = snap.runtime.contextUsage
     ? { ...snap.runtime.contextUsage }
     : null;
-  state.taskCwdDisplay = snap.task.cwdDisplay ?? snap.task.cwd;
+  const cwdDisplay = snap.task.cwdDisplay ?? snap.task.cwd;
+  if (cwdDisplay) state.taskCwdDisplay = cwdDisplay;
+  snapshotExtrasApplier(snap);
   applyAgentCommandSnapshot(
     snap.agentCommands ?? { epoch: "", revision: 0, commands: [] },
   );

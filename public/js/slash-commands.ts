@@ -100,22 +100,16 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
 async function subscribePush(): Promise<void> {
   try {
     const reg = await navigator.serviceWorker.ready;
-    const res = await fetch("/api/beta/push/vapid-key");
-    if (!res.ok) return;
-    const { publicKey } = (await res.json()) as { publicKey: string };
+    const { publicKey } = await api.getPushVapidKey();
     const sub = await reg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(publicKey) as BufferSource,
     });
     const json = sub.toJSON();
-    await fetch("/api/beta/push/subscribe", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        endpoint: json.endpoint,
-        keys: json.keys,
-        clientId: state.clientId,
-      }),
+    await api.subscribePushEndpoint({
+      endpoint: json.endpoint,
+      keys: json.keys,
+      clientId: state.clientId,
     });
   } catch (err) {
     log.scope("push").error("subscribe failed", { err });
@@ -129,11 +123,7 @@ async function unsubscribePush(): Promise<void> {
     if (!sub) return;
     const endpoint = sub.endpoint;
     await sub.unsubscribe();
-    await fetch("/api/beta/push/unsubscribe", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ endpoint }),
-    });
+    await api.unsubscribePushEndpoint(endpoint);
   } catch (err) {
     log.scope("push").error("unsubscribe failed", { err });
   }
@@ -147,15 +137,7 @@ interface PathItem {
   time: string;
 }
 export async function listRecentPaths(): Promise<PathItem[]> {
-  const limit = state.recentPathsLimit;
-  const url =
-    limit > 0 ? `/api/v1/recent-paths?limit=${limit}` : "/api/v1/recent-paths";
-  const res = await fetch(url);
-  const data = (await res.json()) as Array<{
-    cwd: string;
-    cwdDisplay?: string;
-    last_used_at: string;
-  }>;
+  const data = await api.getRecentPaths(state.recentPathsLimit);
   return data.map((p) => ({
     cwd: p.cwd,
     cwdDisplay: p.cwdDisplay ?? p.cwd,

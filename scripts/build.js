@@ -110,7 +110,7 @@ function injectModulePreload(html, chunks, prefix = "/js/") {
 }
 
 async function copyStaticAssets(bundles) {
-  // bundles = { app, login, viewer } — each is the JS filename (hashed in prod).
+  // bundles = { app, login, viewer, syncWorker } — each is the JS filename (hashed in prod).
   // Copy static assets (everything except js/)
   for (const entry of await readdir(SRC)) {
     if (entry === "js") continue;
@@ -130,6 +130,10 @@ async function copyStaticAssets(bundles) {
     html = html.replace(
       'type="module" src="/js/app.js"',
       `type="module" src="/js/${bundles.app}"`,
+    );
+    html = html.replace(
+      'content="/js/sync-worker.js"',
+      `content="/js/${bundles.syncWorker}"`,
     );
     await writeFile(join(OUT, "index.html"), html);
 
@@ -187,6 +191,10 @@ async function copyStaticAssets(bundles) {
       'type="module" src="/js/app.js"',
       `type="module" src="/js/${bundles.app}"`,
     );
+    html = html.replace(
+      'content="/js/sync-worker.js"',
+      `content="/js/${bundles.syncWorker}"`,
+    );
     html = injectModulePreload(html, appChunks);
     await writeFile(join(OUT, "index.html"), html);
 
@@ -211,7 +219,7 @@ async function copyStaticAssets(bundles) {
     await writeFile(join(OUT, "share-viewer.html"), svHtml);
 
     console.log(
-      `Build complete → ${bundles.app} (+${appChunks.length} chunk${appChunks.length === 1 ? "" : "s"}), ${bundles.login}, ${bundles.viewer} (+${viewerChunks.length} chunk${viewerChunks.length === 1 ? "" : "s"}), ${newCss}, ${newSvCss}`,
+      `Build complete → ${bundles.app} (+${appChunks.length} chunk${appChunks.length === 1 ? "" : "s"}), ${bundles.login}, ${bundles.viewer} (+${viewerChunks.length} chunk${viewerChunks.length === 1 ? "" : "s"}), ${bundles.syncWorker}, ${newCss}, ${newSvCss}`,
     );
   }
 }
@@ -255,6 +263,17 @@ async function pruneOldHashedAssets() {
   );
   const keepViewer = viewerSorted.slice(0, KEEP_HASHED_VERSIONS);
   for (const f of viewerSorted.slice(KEEP_HASHED_VERSIONS)) {
+    await rm(join(jsDir, f), { force: true });
+  }
+
+  const workerEntries = (await readdir(jsDir, { withFileTypes: true })).filter(
+    (e) => e.isFile() && /^sync-worker\.[a-zA-Z0-9]+\.js$/.test(e.name),
+  );
+  const workerSorted = await sortByMtimeDesc(
+    jsDir,
+    workerEntries.map((e) => e.name),
+  );
+  for (const f of workerSorted.slice(KEEP_HASHED_VERSIONS)) {
     await rm(join(jsDir, f), { force: true });
   }
 
@@ -374,15 +393,33 @@ async function main() {
     define: { __DEV__: String(isDev) },
   };
 
+  const workerEsbuildOptions = {
+    entryPoints: [join(SRC, "js", "sync-worker.ts")],
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+    target: "es2022",
+    outdir: join(OUT, "js"),
+    entryNames: isDev ? "[name]" : "[name].[hash]",
+    splitting: false,
+    minify: !isDev,
+    external: [],
+    define: { __DEV__: String(isDev) },
+  };
+
   if (isWatch) {
     const ctx = await context(esbuildOptions);
+    const workerCtx = await context(workerEsbuildOptions);
     await ctx.watch();
+    await workerCtx.watch();
     // Initial build
     await ctx.rebuild();
+    await workerCtx.rebuild();
     await copyStaticAssets({
       app: "app.js",
       login: "login.js",
       viewer: "share/viewer.js",
+      syncWorker: "sync-worker.js",
     });
     console.log(`Dev build ready (watching for changes)…`);
 
@@ -397,6 +434,7 @@ async function main() {
               app: "app.js",
               login: "login.js",
               viewer: "share/viewer.js",
+              syncWorker: "sync-worker.js",
             });
           }
         }
@@ -408,9 +446,11 @@ async function main() {
     process.on("SIGINT", () => {
       ac.abort();
       ctx.dispose();
+      workerCtx.dispose();
     });
   } else {
     await build(esbuildOptions);
+    await build(workerEsbuildOptions);
 
     const jsFiles = await readdir(join(OUT, "js"));
     const appCandidates = jsFiles.filter(
@@ -423,6 +463,10 @@ async function main() {
     const viewerCandidates = jsFiles.filter(
       (f) => /^viewer\.[A-Za-z0-9]+\.js$/.test(f) || f === "viewer.js",
     );
+    const workerCandidates = jsFiles.filter(
+      (f) =>
+        /^sync-worker\.[A-Za-z0-9]+\.js$/.test(f) || f === "sync-worker.js",
+    );
     // esbuild may have left older hashed bundles; pick newest by mtime per family.
     const appSorted = await sortByMtimeDesc(join(OUT, "js"), appCandidates);
     const loginSorted = await sortByMtimeDesc(join(OUT, "js"), loginCandidates);
@@ -430,17 +474,22 @@ async function main() {
       join(OUT, "js"),
       viewerCandidates,
     );
+    const workerSorted = await sortByMtimeDesc(
+      join(OUT, "js"),
+      workerCandidates,
+    );
     const bundles = {
       app: appSorted[0],
       login: loginSorted[0],
       viewer: viewerSorted[0],
+      syncWorker: workerSorted[0],
     };
     await copyStaticAssets(bundles);
     await pruneOldHashedAssets();
 
     if (isDev)
       console.log(
-        `Dev build complete → ${bundles.app}, ${bundles.login}, ${bundles.viewer}`,
+        `Dev build complete → ${bundles.app}, ${bundles.login}, ${bundles.viewer}, ${bundles.syncWorker}`,
       );
   }
 }

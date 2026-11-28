@@ -262,31 +262,41 @@ function handleSendError(
     attachments: typeof state.pendingAttachments;
   },
 ) {
-  state.awaitingOwnUserEcho = false;
-  state.sentMessageOpId = null;
-  // Without this, a fire-and-forget POST that returns non-2xx (e.g. 500
-  // when ensureResumed fails because the agent doesn't recognize the
-  // task) leaves the UI stuck in busy state with no visible reason.
   setBusy(false);
   hideWaiting();
-  if (
-    context?.isAgentCommand &&
-    err instanceof api.ApiError &&
-    err.status === HTTP_STATUS.UNPROCESSABLE_CONTENT
-  ) {
-    context.messageEl.remove();
-    state.sentMessageForTask = null;
-    setInputValue(context.text);
-    state.pendingAttachments.push(...context.attachments);
-    renderAttachPreview();
-    const command = agentCommandToken(context.text);
-    addSystem(
-      `err: Unknown command "${command}". Type // to see available commands.`,
-    );
+  if (api.isRejectedApiError(err)) {
+    state.awaitingOwnUserEcho = false;
+    state.sentMessageOpId = null;
+    if (
+      context?.isAgentCommand &&
+      err.status === HTTP_STATUS.UNPROCESSABLE_CONTENT
+    ) {
+      context.messageEl.remove();
+      state.sentMessageForTask = null;
+      setInputValue(context.text);
+      state.pendingAttachments.push(...context.attachments);
+      renderAttachPreview();
+      const command = agentCommandToken(context.text);
+      addSystem(
+        `err: Unknown command "${command}". Type // to see available commands.`,
+      );
+      return;
+    }
+    addSystem(`err: ${err.message}`);
     return;
   }
+
+  // Unknown outcome (network/timeout/5xx/409 op_aborted): do NOT treat as a
+  // definite server refusal or re-submit with a new opId. Keep the optimistic
+  // bubble claimable by (taskId, opId) and trigger catch-up reconciliation.
+  if (context?.messageEl) {
+    context.messageEl.setAttribute("data-optimistic-unknown", "1");
+  }
   const msg = err instanceof Error ? err.message : String(err);
-  addSystem(`err: ${msg}`);
+  addSystem(`warn: send outcome unknown (${msg}) — syncing…`);
+  if (state.taskId) {
+    void import("./connection.ts").then((m) => m.triggerCatchUp());
+  }
 }
 
 function doCancel() {

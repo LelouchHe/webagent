@@ -21,6 +21,7 @@ import { updateModeUI } from "../state.ts";
 import { addSystem } from "../render.ts";
 import { log } from "../log.ts";
 import { HTTP_STATUS } from "../../../src/http-status.ts";
+import * as api from "../api.ts";
 
 const slog = log.scope("share");
 
@@ -79,44 +80,32 @@ export async function createPreview(): Promise<void> {
   }
   const taskId = state.taskId;
   try {
-    const res = await fetch(
-      `/api/v1/tasks/${encodeURIComponent(taskId)}/share`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-        credentials: "same-origin",
-      },
-    );
-    if (!res.ok) {
-      const errText = await res.text();
-      if (res.status === HTTP_STATUS.CONFLICT) {
+    const data = await api.createSharePreview<PreviewResponse>(taskId);
+    state.previewToken = data.token;
+    updateModeUI();
+
+    const action = data.reused ? "reused" : "ready";
+    addSystem(`share: preview ${action} — ^P publish · ^C cancel`);
+  } catch (err) {
+    if (err instanceof api.ApiError && err.status > 0) {
+      if (err.status === HTTP_STATUS.CONFLICT) {
         addSystem(
           "share: task busy (agent streaming) — retry after the response completes",
         );
-      } else if (res.status === HTTP_STATUS.FORBIDDEN) {
+      } else if (err.status === HTTP_STATUS.FORBIDDEN) {
         addSystem("share: forbidden (not owner)");
       } else if (
-        res.status === HTTP_STATUS.BAD_REQUEST &&
-        errText.includes("sanitize")
+        err.status === HTTP_STATUS.BAD_REQUEST &&
+        err.message.includes("sanitize")
       ) {
-        addSystem(`share: ✗ sanitize blocked this task — ${errText}`);
+        addSystem(`share: ✗ sanitize blocked this task — ${err.message}`);
       } else {
         addSystem(
-          `share: create failed ${res.status} — ${errText.slice(0, 200)}`,
+          `share: create failed ${err.status} — ${err.message.slice(0, 200)}`,
         );
       }
       return;
     }
-    const data = (await res.json()) as PreviewResponse;
-    state.previewToken = data.token;
-    updateModeUI();
-
-    // Input is disabled in preview mode — the only paths out are the
-    // ^P/^C buttons (or their Ctrl shortcuts). Slash hints would be wrong.
-    const action = data.reused ? "reused" : "ready";
-    addSystem(`share: preview ${action} — ^P publish · ^C cancel`);
-  } catch (err) {
     slog.error("preview create error", { err });
     addSystem(`share: network error — ${String(err)}`);
   }
@@ -138,29 +127,7 @@ export async function publishPreview(): Promise<void> {
   const taskId = state.taskId;
   const token = state.previewToken;
   try {
-    const res = await fetch(
-      `/api/v1/tasks/${encodeURIComponent(taskId)}/share/publish`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
-        credentials: "same-origin",
-      },
-    );
-    if (!res.ok) {
-      const text = await res.text();
-      if (res.status === HTTP_STATUS.FORBIDDEN) {
-        addSystem("share: forbidden (not owner)");
-      } else if (res.status === HTTP_STATUS.NOT_FOUND) {
-        addSystem("share: token not found (already revoked?)");
-      } else {
-        addSystem(
-          `share: publish failed ${res.status} — ${text.slice(0, 200)}`,
-        );
-      }
-      return;
-    }
-    const data = (await res.json()) as PublishResponse;
+    const data = await api.publishSharePreview<PublishResponse>(taskId, token);
     const url = publicUrl(data.public_url, data.token);
     state.previewToken = null;
     updateModeUI();
@@ -177,6 +144,18 @@ export async function publishPreview(): Promise<void> {
     a.rel = "noopener noreferrer";
     el.appendChild(a);
   } catch (err) {
+    if (err instanceof api.ApiError && err.status > 0) {
+      if (err.status === HTTP_STATUS.FORBIDDEN) {
+        addSystem("share: forbidden (not owner)");
+      } else if (err.status === HTTP_STATUS.NOT_FOUND) {
+        addSystem("share: token not found (already revoked?)");
+      } else {
+        addSystem(
+          `share: publish failed ${err.status} — ${err.message.slice(0, 200)}`,
+        );
+      }
+      return;
+    }
     slog.error("publish error", { err });
     addSystem(`share: network error — ${String(err)}`);
   }
@@ -202,11 +181,7 @@ export function cancelPreview(): void {
  * into the menu / list view.
  */
 export async function listOwnerShares(): Promise<ShareListRow[]> {
-  const res = await fetch("/api/v1/shares", { credentials: "same-origin" });
-  if (!res.ok) {
-    throw new Error(`list failed ${res.status}`);
-  }
-  const data = (await res.json()) as { shares: ShareListRow[] };
+  const data = await api.listShares<ShareListRow>();
   return data.shares.filter((s) => s.shared_at != null);
 }
 
@@ -221,47 +196,28 @@ export async function revokeShare(token: string): Promise<void> {
     return;
   }
   try {
-    const all = await fetchAllSharesForRevoke();
+    const all = await listOwnerShares();
     const row = all.find((s) => s.token === token);
     if (!row) {
       addSystem("share: token not found (already revoked?)");
       return;
     }
-    const res = await fetch(
-      `/api/v1/tasks/${encodeURIComponent(row.task_id)}/share`,
-      {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
-        credentials: "same-origin",
-      },
-    );
-    if (!res.ok) {
-      if (res.status === HTTP_STATUS.FORBIDDEN)
-        addSystem("share: forbidden (not owner)");
-      else if (res.status === HTTP_STATUS.NOT_FOUND)
-        addSystem(`share: ${token} already revoked`);
-      else addSystem(`share: revoke failed ${res.status}`);
-      return;
-    }
-    const j = (await res.json()) as { revoked: boolean };
+    const j = await api.revokeTaskShare(row.task_id, token);
     addSystem(
       j.revoked ? `share: revoked ${token}` : `share: ${token} already revoked`,
     );
   } catch (err) {
+    if (err instanceof api.ApiError && err.status > 0) {
+      if (err.status === HTTP_STATUS.FORBIDDEN)
+        addSystem("share: forbidden (not owner)");
+      else if (err.status === HTTP_STATUS.NOT_FOUND)
+        addSystem(`share: ${token} already revoked`);
+      else addSystem(`share: revoke failed ${err.status}`);
+      return;
+    }
     slog.error("revoke error", { err });
     addSystem(`share: network error — ${String(err)}`);
   }
-}
-
-// Revoke needs the full list (including any active rows the caller may
-// have for other tasks); listOwnerShares already filters that, so this
-// internal helper hits the raw endpoint.
-async function fetchAllSharesForRevoke(): Promise<ShareListRow[]> {
-  const res = await fetch("/api/v1/shares", { credentials: "same-origin" });
-  if (!res.ok) throw new Error(`list failed ${res.status}`);
-  const data = (await res.json()) as { shares: ShareListRow[] };
-  return data.shares.filter((s) => s.shared_at != null);
 }
 
 /**
@@ -285,11 +241,7 @@ export function openShare(token: string): void {
  */
 export async function getDefaultDisplayName(): Promise<string | null> {
   try {
-    const res = await fetch("/api/v1/share/by", {
-      credentials: "same-origin",
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { value: string | null };
+    const data = await api.getShareDisplayName();
     return data.value;
   } catch {
     return null;
@@ -306,33 +258,16 @@ export async function setDefaultDisplayName(
   name: string | null,
 ): Promise<void> {
   try {
-    const res = await fetch("/api/v1/share/by", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: name }),
-      credentials: "same-origin",
-    });
-    if (!res.ok) {
-      const text = await res.text();
-      addSystem(
-        `share: set author failed ${res.status} — ${text.slice(0, 200)}`,
-      );
-      return;
-    }
-    const data = (await res.json()) as { value: string | null };
+    const data = await api.setShareDisplayName(name);
 
     // Best-effort: reflect the change on the in-flight preview, if any.
     if (state.previewToken && state.taskId) {
       try {
-        await fetch(`/api/v1/tasks/${encodeURIComponent(state.taskId)}/share`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            token: state.previewToken,
-            display_name: data.value ?? "",
-          }),
-          credentials: "same-origin",
-        });
+        await api.patchSharePreview(
+          state.taskId,
+          state.previewToken,
+          data.value ?? "",
+        );
       } catch (err) {
         slog.warn("by: preview patch failed", { err });
       }
@@ -344,6 +279,12 @@ export async function setDefaultDisplayName(
         : "share: author cleared (publish anonymously)",
     );
   } catch (err) {
+    if (err instanceof api.ApiError && err.status > 0) {
+      addSystem(
+        `share: set author failed ${err.status} — ${err.message.slice(0, 200)}`,
+      );
+      return;
+    }
     slog.error("by error", { err });
     addSystem(`share: network error — ${String(err)}`);
   }

@@ -269,19 +269,34 @@ export function parseDiff(rawInput: RawInput | undefined): DiffLine[] | null {
   return null;
 }
 
-/** Normalize events API response: supports both envelope and legacy array formats. */
+/** Normalize events API response: supports FeedEntry<StoredEvent>[], StoredEvent[], and envelope formats. */
 export function normalizeEventsResponse(
   body: unknown,
 ): NormalizedEventsResponse {
+  const unwrap = (rawList: unknown[]): StoredEvent[] =>
+    rawList.map((item) => {
+      if (
+        item &&
+        typeof item === "object" &&
+        "feed" in item &&
+        "data" in item &&
+        (item as { data?: unknown }).data &&
+        typeof (item as { data?: unknown }).data === "object"
+      ) {
+        return (item as { data: StoredEvent }).data;
+      }
+      return item as StoredEvent;
+    });
   if (Array.isArray(body)) {
     return {
-      events: body as StoredEvent[],
+      events: unwrap(body),
       streaming: { thinking: false, assistant: false },
     };
   }
   const envelope = body as Record<string, unknown>;
+  const rawEvents = Array.isArray(envelope.events) ? envelope.events : [];
   return {
-    events: (envelope.events ?? []) as StoredEvent[],
+    events: unwrap(rawEvents),
     streaming: (envelope.streaming ?? {
       thinking: false,
       assistant: false,

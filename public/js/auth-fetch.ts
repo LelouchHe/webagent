@@ -16,10 +16,56 @@ interface AuthFetchOptions {
 }
 
 let originalFetch: typeof fetch | null = null;
+let installedOnUnauthorized: ((loginUrl: string) => void) | null = null;
+const tokenChangeListeners = new Set<(token: string | null) => void>();
 
 function defaultRedirect(loginUrl: string): void {
   // Use replace() so the user can't "Back" into the unauthenticated state.
   location.replace(loginUrl);
+}
+
+export function getStoredToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function onStoredTokenChange(
+  listener: (token: string | null) => void,
+): () => void {
+  tokenChangeListeners.add(listener);
+  return () => {
+    tokenChangeListeners.delete(listener);
+  };
+}
+
+/**
+ * Conditional 401 invalidation shared by `auth-fetch.ts` and `SyncHub`:
+ * clears the stored token and redirects to `/login` ONLY when the token sent
+ * on the failing request still matches the current token in `localStorage`.
+ * Prevents a stale 401 from an old tab/worker from wiping a fresh login.
+ */
+export function handleUnauthorizedToken(
+  sentToken: string | null,
+  onUnauthorized?: (loginUrl: string) => void,
+): boolean {
+  const current = getStoredToken();
+  if (sentToken !== null && current !== null && current !== sentToken) {
+    return false;
+  }
+  if (sentToken === null && current !== null) {
+    return false;
+  }
+  try {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+  } catch {
+    // ignore storage failures (private mode, quota); redirect anyway
+  }
+  for (const listener of tokenChangeListeners) listener(null);
+  (onUnauthorized ?? installedOnUnauthorized ?? defaultRedirect)("/login");
+  return true;
 }
 
 /** Same-origin pathname, or null for malformed/cross-origin URLs. */
@@ -48,9 +94,30 @@ function extractInputUrl(input: RequestInfo | URL): string {
   return input.url;
 }
 
+function extractBearerToken(headers: Headers): string | null {
+  const raw = headers.get("Authorization");
+  if (!raw) return null;
+  const match = /^Bearer\s+(.+)$/i.exec(raw.trim());
+  return match ? match[1] : null;
+}
+
+let storageListenerInstalled = false;
+function handleStorageEvent(event: StorageEvent): void {
+  if (event.key !== TOKEN_STORAGE_KEY) return;
+  for (const listener of tokenChangeListeners) {
+    listener(event.newValue ?? null);
+  }
+}
+
 export function installAuthFetch(opts: AuthFetchOptions = {}): () => void {
   const base = opts.baseFetch ?? globalThis.fetch.bind(globalThis);
   const onUnauthorized = opts.onUnauthorized ?? defaultRedirect;
+  installedOnUnauthorized = onUnauthorized;
+
+  if (!storageListenerInstalled && typeof window !== "undefined") {
+    window.addEventListener("storage", handleStorageEvent);
+    storageListenerInstalled = true;
+  }
 
   // Stash original so uninstall can restore.
   originalFetch ??= globalThis.fetch;
@@ -61,18 +128,19 @@ export function installAuthFetch(opts: AuthFetchOptions = {}): () => void {
     const isApi = pathname?.startsWith("/api/") ?? false;
 
     let nextInit = init;
+    let sentToken: string | null = null;
     if (isApi) {
-      const token = localStorage.getItem(TOKEN_STORAGE_KEY);
-      if (token) {
-        // Merge in our header without clobbering an explicit one.
-        const baseHeaders =
-          init?.headers ??
-          (input instanceof Request ? input.headers : undefined);
-        const headers = new Headers(baseHeaders);
-        if (!headers.has("Authorization")) {
+      const baseHeaders =
+        init?.headers ?? (input instanceof Request ? input.headers : undefined);
+      const headers = new Headers(baseHeaders);
+      sentToken = extractBearerToken(headers);
+      if (sentToken === null) {
+        const token = getStoredToken();
+        if (token) {
           headers.set("Authorization", `Bearer ${token}`);
+          sentToken = token;
+          nextInit = { ...(init ?? {}), headers };
         }
-        nextInit = { ...(init ?? {}), headers };
       }
     }
 
@@ -84,12 +152,7 @@ export function installAuthFetch(opts: AuthFetchOptions = {}): () => void {
       pathname !== null &&
       !usesUrlCapability(pathname)
     ) {
-      try {
-        localStorage.removeItem(TOKEN_STORAGE_KEY);
-      } catch {
-        // ignore storage failures (private mode, quota); redirect anyway
-      }
-      onUnauthorized("/login");
+      handleUnauthorizedToken(sentToken, onUnauthorized);
     }
 
     return res;
@@ -104,4 +167,5 @@ export function uninstallAuthFetch(): void {
     globalThis.fetch = originalFetch;
     originalFetch = null;
   }
+  installedOnUnauthorized = null;
 }
