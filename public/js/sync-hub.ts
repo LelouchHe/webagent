@@ -47,7 +47,11 @@ export type TabToHubMessage =
 
 export type HubToTabMessage =
   | { type: "ready" }
-  | { type: "connecting"; authGen: number }
+  | {
+      type: "connection_status";
+      status: "connecting" | "disconnected";
+      authGen: number;
+    }
   | {
       type: "connected";
       clientId: string;
@@ -149,7 +153,8 @@ export class SyncHub {
   private debugLevel: string | undefined;
   private pendingCount = 0;
   private sseConnected = false;
-  private sseConnecting = false;
+  private connectionPhase: "idle" | "connecting" | "connected" | "backoff" =
+    "idle";
   private supervisorRunning = false;
   private hasConnectedOnce = false;
   private eventSource: EventSource | null = null;
@@ -180,7 +185,7 @@ export class SyncHub {
         failure.kind === "stalled" ? 0 : RECONNECT_DELAY_MS,
       run: (attempt) => this.openStream(attempt, this.authGen, this.token),
       onFailure: () => {
-        this.teardownEventSource();
+        this.teardownEventSource({ enterBackoff: true });
       },
       clock: this.clock,
     });
@@ -298,12 +303,7 @@ export class SyncHub {
         reconnected: false,
       });
     } else {
-      if (this.sseConnecting) {
-        entry.port.postMessage({
-          type: "connecting",
-          authGen: this.authGen,
-        });
-      }
+      this.sendCurrentIndicatorStatus(entry);
       this.startSupervisor();
     }
     this.flushVisibilityIfChanged();
@@ -341,12 +341,7 @@ export class SyncHub {
           reconnected: false,
         });
       } else {
-        if (this.sseConnecting) {
-          entry.port.postMessage({
-            type: "connecting",
-            authGen: this.authGen,
-          });
-        }
+        this.sendCurrentIndicatorStatus(entry);
         this.startSupervisor();
       }
       this.flushVisibilityIfChanged();
@@ -439,8 +434,12 @@ export class SyncHub {
       return;
     }
 
-    this.sseConnecting = true;
-    this.broadcastAuthenticated({ type: "connecting", authGen });
+    this.connectionPhase = "connecting";
+    this.broadcastAuthenticated({
+      type: "connection_status",
+      status: "connecting",
+      authGen,
+    });
 
     let ticket: string;
     try {
@@ -503,7 +502,7 @@ export class SyncHub {
     es.onerror = () => {
       es.close();
       if (!attempt.isCurrent() || authGen !== this.authGen) return;
-      this.teardownEventSource();
+      this.teardownEventSource({ enterBackoff: true });
       this.supervisor.reconnect(attempt);
     };
   }
@@ -515,7 +514,7 @@ export class SyncHub {
   ): void {
     const reconnected = this.hasConnectedOnce;
     this.hasConnectedOnce = true;
-    this.sseConnecting = false;
+    this.connectionPhase = "connected";
     this.sseConnected = true;
     this.clientId = raw.clientId as string;
     this.visibilityRev = 0;
@@ -626,7 +625,23 @@ export class SyncHub {
     }
   }
 
-  private teardownEventSource(): void {
+  private sendCurrentIndicatorStatus(entry: PortState): void {
+    if (this.connectionPhase === "connecting") {
+      entry.port.postMessage({
+        type: "connection_status",
+        status: "connecting",
+        authGen: this.authGen,
+      });
+    } else if (this.connectionPhase === "backoff") {
+      entry.port.postMessage({
+        type: "connection_status",
+        status: "disconnected",
+        authGen: this.authGen,
+      });
+    }
+  }
+
+  private teardownEventSource(opts?: { enterBackoff?: boolean }): void {
     const es = this.eventSource;
     this.eventSource = null;
     if (es) {
@@ -634,18 +649,22 @@ export class SyncHub {
       es.onmessage = null;
       es.close();
     }
-    const wasActive =
-      Boolean(es) ||
-      this.sseConnected ||
-      this.sseConnecting ||
-      this.clientId !== null;
-    this.sseConnecting = false;
-    if (wasActive) {
+    const hadPhysicalStream =
+      Boolean(es) || this.sseConnected || this.clientId !== null;
+    const wasConnecting = this.connectionPhase === "connecting";
+    this.connectionPhase = opts?.enterBackoff ? "backoff" : "idle";
+    if (hadPhysicalStream) {
       this.sseConnected = false;
       this.clientId = null;
       this.lastSentTaskIdsKey = null;
       this.broadcastAuthenticated({
         type: "disconnected",
+        authGen: this.authGen,
+      });
+    } else if (wasConnecting && opts?.enterBackoff) {
+      this.broadcastAuthenticated({
+        type: "connection_status",
+        status: "disconnected",
         authGen: this.authGen,
       });
     }

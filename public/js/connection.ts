@@ -542,8 +542,8 @@ function handleHubMessage(msg: HubToTabMessage): void {
   switch (msg.type) {
     case "ready":
       return;
-    case "connecting":
-      setConnectionStatus("connecting", "connecting");
+    case "connection_status":
+      setConnectionStatus(msg.status, msg.status);
       return;
     case "connected":
       handleHubConnected(msg);

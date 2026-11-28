@@ -853,11 +853,13 @@ describe("contract-08 browser sync mechanisms", () => {
         taskId: "t1",
       });
 
-      // Dialing started -> tab1 sees connecting.
+      // Dialing started -> tab1 sees connecting indicator.
       assert.equal(
-        tab1Msgs.some((m) => m.type === "connecting"),
+        tab1Msgs.some(
+          (m) => m.type === "connection_status" && m.status === "connecting",
+        ),
         true,
-        "initial dial must broadcast connecting",
+        "initial dial must broadcast connecting status",
       );
 
       // A second tab joins while the first dial is still awaiting /sse-ticket.
@@ -872,29 +874,79 @@ describe("contract-08 browser sync mechanisms", () => {
         taskId: "t1",
       });
       assert.equal(
-        tab2Msgs.filter((m) => m.type === "connecting").length,
+        tab2Msgs.filter(
+          (m) => m.type === "connection_status" && m.status === "connecting",
+        ).length,
         1,
         "tab joining while connecting must receive connecting immediately",
       );
 
-      // First dial fails (500) -> transitions back to disconnected.
+      // First dial fails (500 before EventSource) -> indicator-only disconnected
+      // (NOT physical `disconnected` that would abort initial bootstrap).
       resolveTicket!({
         ok: false,
         status: 500,
         json: async () => ({}),
       } as Response);
       await new Promise((r) => setTimeout(r, 10));
-      assert.equal(tab1Msgs.at(-1)?.type, "disconnected");
-      assert.equal(tab2Msgs.at(-1)?.type, "disconnected");
+      assert.deepEqual(tab1Msgs.at(-1), {
+        type: "connection_status",
+        status: "disconnected",
+        authGen: 1,
+      });
+      assert.deepEqual(tab2Msgs.at(-1), {
+        type: "connection_status",
+        status: "disconnected",
+        authGen: 1,
+      });
+      assert.equal(
+        tab1Msgs.some((m) => m.type === "disconnected"),
+        false,
+        "failed /sse-ticket before handshake must not emit physical disconnected",
+      );
 
-      // Backoff timer fires -> both tabs see connecting again.
+      // A third tab joins during retry backoff -> immediately sees red (disconnected) indicator.
+      const tab3 = createDirectPortPair();
+      const tab3Msgs: HubToTabMessage[] = [];
+      tab3.tabPort.onMessage((m) => tab3Msgs.push(m));
+      hub.attach(tab3.hubPort);
+      tab3.tabPort.postMessage({
+        type: "hello",
+        token: "tok",
+        visible: true,
+        taskId: "t1",
+      });
+      assert.deepEqual(
+        tab3Msgs.at(-1),
+        {
+          type: "connection_status",
+          status: "disconnected",
+          authGen: 1,
+        },
+        "tab joining during retry backoff must immediately receive disconnected status",
+      );
+
+      // Backoff timer fires -> all tabs see connecting again.
       const retry = scheduledTimers.pop();
       assert.ok(retry, "backoff timer must be scheduled after failed ticket");
       retry.cb();
-      assert.equal(tab1Msgs.at(-1)?.type, "connecting");
-      assert.equal(tab2Msgs.at(-1)?.type, "connecting");
+      assert.deepEqual(tab1Msgs.at(-1), {
+        type: "connection_status",
+        status: "connecting",
+        authGen: 1,
+      });
+      assert.deepEqual(tab2Msgs.at(-1), {
+        type: "connection_status",
+        status: "connecting",
+        authGen: 1,
+      });
+      assert.deepEqual(tab3Msgs.at(-1), {
+        type: "connection_status",
+        status: "connecting",
+        authGen: 1,
+      });
 
-      // Ticket resolves and handshake arrives -> both tabs see connected.
+      // Ticket resolves and handshake arrives -> all tabs see connected.
       resolveTicket!({
         ok: true,
         status: 200,
@@ -910,6 +962,7 @@ describe("contract-08 browser sync mechanisms", () => {
       } as MessageEvent);
       assert.equal(tab1Msgs.at(-1)?.type, "connected");
       assert.equal(tab2Msgs.at(-1)?.type, "connected");
+      assert.equal(tab3Msgs.at(-1)?.type, "connected");
 
       hub.dispose();
     });
