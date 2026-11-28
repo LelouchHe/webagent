@@ -196,6 +196,9 @@ export class SseManager {
       if (client.receiveBusinessEvents === false) continue;
       if (client.taskId) {
         if (client.taskId !== entry.feed) continue;
+        // Per-task SSE consumers receive ephemeral `bash_done` as the bash
+        // terminator; omit the persisted `bash_result` duplicate at this edge.
+        if (entry.data.type === "bash_result") continue;
         if (legacyFrame === null) {
           const legacy = projectLegacyPerTaskEvent(entry.data);
           if (!legacy) continue;

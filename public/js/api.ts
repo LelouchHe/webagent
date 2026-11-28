@@ -87,6 +87,7 @@ function postWrite<T = unknown>(
     retries: number;
     backoffMs?: readonly number[];
   } = SYNC_REQUEST_DEFAULTS.write,
+  expectEmpty?: boolean,
 ): Promise<T> {
   return request<T>(url, {
     method: "POST",
@@ -95,6 +96,7 @@ function postWrite<T = unknown>(
     timeoutMs: preset.timeoutMs,
     retries: preset.retries,
     backoffMs: preset.backoffMs,
+    expectEmpty,
   });
 }
 
@@ -102,12 +104,14 @@ function putWrite<T = unknown>(
   url: string,
   body: Record<string, unknown>,
   clientOpId?: string,
+  expectEmpty?: boolean,
 ): Promise<T> {
   return request<T>(url, {
     method: "PUT",
     body,
     opId: clientOpId ?? newOpId(),
     ...SYNC_REQUEST_DEFAULTS.write,
+    expectEmpty,
   });
 }
 
@@ -115,12 +119,14 @@ function deleteWrite<T = unknown>(
   url: string,
   body?: Record<string, unknown>,
   clientOpId?: string,
+  expectEmpty?: boolean,
 ): Promise<T> {
   return request<T>(url, {
     method: "DELETE",
     ...(body !== undefined ? { body } : {}),
     opId: clientOpId ?? newOpId(),
     ...SYNC_REQUEST_DEFAULTS.write,
+    expectEmpty,
   });
 }
 
@@ -518,6 +524,8 @@ export function resolvePermission(
     "/api/v1/tasks/" + taskId + "/permissions/" + requestId,
     { optionId },
     newOpId(),
+    SYNC_REQUEST_DEFAULTS.write,
+    true,
   );
 }
 
@@ -529,6 +537,8 @@ export function denyPermission(
     "/api/v1/tasks/" + taskId + "/permissions/" + requestId,
     { denied: true },
     newOpId(),
+    SYNC_REQUEST_DEFAULTS.write,
+    true,
   );
 }
 
@@ -541,11 +551,21 @@ export function setConfig(
 ): Promise<void> {
   const urlId = configId.replace(/_/g, "-");
   const path = typeof value === "boolean" ? "config/" + urlId : urlId;
-  return putWrite("/api/v1/tasks/" + taskId + "/" + path, { value });
+  return putWrite(
+    "/api/v1/tasks/" + taskId + "/" + path,
+    { value },
+    undefined,
+    true,
+  );
 }
 
 export function setTitle(taskId: string, title: string): Promise<void> {
-  return putWrite("/api/v1/tasks/" + taskId + "/title", { value: title });
+  return putWrite(
+    "/api/v1/tasks/" + taskId + "/title",
+    { value: title },
+    undefined,
+    true,
+  );
 }
 
 // --- Bash ---
@@ -555,7 +575,13 @@ export function execBash(taskId: string, command: string): Promise<unknown> {
 }
 
 export function cancelBash(taskId: string): Promise<void> {
-  return postWrite("/api/v1/tasks/" + taskId + "/bash/cancel", {});
+  return postWrite(
+    "/api/v1/tasks/" + taskId + "/bash/cancel",
+    {},
+    undefined,
+    SYNC_REQUEST_DEFAULTS.write,
+    true,
+  );
 }
 
 // --- Visibility ---
@@ -563,17 +589,17 @@ export function cancelBash(taskId: string): Promise<void> {
 export function postVisibility(
   clientId: string,
   taskIds: readonly string[],
-  rev?: number,
+  rev = 1,
 ): Promise<void> {
   return request(
     "/api/beta/clients/" + encodeURIComponent(clientId) + "/visibility",
     {
       method: "POST",
       body: { taskIds: [...taskIds] },
-      headers:
-        rev !== undefined ? { "X-Visibility-Rev": String(rev) } : undefined,
+      headers: { "X-Visibility-Rev": String(rev) },
       opId: null,
       timeoutMs: FAST_TIMEOUT_MS,
+      expectEmpty: true,
     },
   );
 }
@@ -606,6 +632,7 @@ export function reloadAgent(taskId?: string): Promise<void> {
     taskId === undefined ? {} : { taskId },
     undefined,
     SYNC_REQUEST_DEFAULTS.slowWrite,
+    true,
   );
 }
 
@@ -638,11 +665,20 @@ export function subscribePushEndpoint(payload: {
   return postWrite(
     "/api/beta/push/subscribe",
     payload as Record<string, unknown>,
+    undefined,
+    SYNC_REQUEST_DEFAULTS.write,
+    true,
   );
 }
 
 export function unsubscribePushEndpoint(endpoint: string): Promise<void> {
-  return postWrite("/api/beta/push/unsubscribe", { endpoint });
+  return postWrite(
+    "/api/beta/push/unsubscribe",
+    { endpoint },
+    undefined,
+    SYNC_REQUEST_DEFAULTS.write,
+    true,
+  );
 }
 
 export function registerPushClient(
@@ -654,6 +690,7 @@ export function registerPushClient(
     body: { clientId, endpoint },
     opId: null,
     timeoutMs: FAST_TIMEOUT_MS,
+    expectEmpty: true,
   });
 }
 
@@ -711,6 +748,7 @@ export function patchSharePreview(
     body: { token, display_name: displayName },
     opId: newOpId(),
     ...SYNC_REQUEST_DEFAULTS.write,
+    expectEmpty: true,
   });
 }
 
@@ -744,7 +782,12 @@ export function consumeMessage(
 }
 
 export function ackMessage(id: string): Promise<void> {
-  return deleteWrite(`/api/v1/messages/${encodeURIComponent(id)}`);
+  return deleteWrite(
+    `/api/v1/messages/${encodeURIComponent(id)}`,
+    undefined,
+    undefined,
+    true,
+  );
 }
 
 // --- Tokens (admin scope only) ---
@@ -775,5 +818,10 @@ export function createApiToken(
 }
 
 export function revokeToken(name: string): Promise<void> {
-  return deleteWrite("/api/v1/tokens/" + encodeURIComponent(name));
+  return deleteWrite(
+    "/api/v1/tokens/" + encodeURIComponent(name),
+    undefined,
+    undefined,
+    true,
+  );
 }

@@ -43,6 +43,11 @@ export async function switchToTask(taskId: string): Promise<NavigationResult> {
     connectionEpoch === state.connectionEpoch &&
     state.pendingNavigationTaskId === taskId;
 
+  // Route focus at navigation intent BEFORE warm: true can emit task_runtime_warmed.
+  void import("./connection.ts").then((m) => {
+    m.focusTask(taskId, { needTailLoad: false });
+  });
+
   try {
     const [task, loaded] = await Promise.all([
       getTask(taskId, { warm: true }),

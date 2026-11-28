@@ -120,11 +120,22 @@ function sendMessage() {
   // same turn boundary locally before mounting the optimistic user bubble.
   // Otherwise a late assistant stream from the prior turn remains current and
   // the next response is appended above the user's new message.
+  // Keep provisional idle preview DOM addressable by (epoch, segmentId) so a
+  // /prompt-triggered flush seals it in-place above the optimistic user bubble
+  // rather than duplicating or appending below it.
+  if (state.currentThinkingEl) {
+    state.currentThinkingEl.dataset.previewProvisional = "1";
+  }
+  if (state.currentAssistantEl) {
+    state.currentAssistantEl.dataset.previewProvisional = "1";
+  }
   finishThinking();
   finishAssistant();
   state.awaitingOwnUserEcho = true;
   state.reconcileAfterOwnUserEcho = false;
   const promptOpId = api.newOpId();
+  const submitTaskId = state.taskId;
+  const submitGen = state.taskSwitchGen;
   state.sentMessageOpId = promptOpId;
 
   // Render user_message body locally with attachment markers so the on-send
@@ -162,6 +173,9 @@ function sendMessage() {
 
   const onSendError = (err: unknown) => {
     handleSendError(err, {
+      taskId: submitTaskId,
+      gen: submitGen,
+      opId: promptOpId,
       text,
       isAgentCommand,
       messageEl: msgEl,
@@ -256,23 +270,44 @@ function sendMessage() {
 function handleSendError(
   err: unknown,
   context?: {
+    taskId: string | null;
+    gen: number;
+    opId: string;
     text: string;
     isAgentCommand: boolean;
     messageEl: HTMLElement;
     attachments: typeof state.pendingAttachments;
   },
 ) {
-  setBusy(false);
-  hideWaiting();
+  // Ignore stale errors from a previous task or navigation generation.
+  if (
+    context &&
+    (context.taskId !== state.taskId || context.gen !== state.taskSwitchGen)
+  ) {
+    return;
+  }
+
+  // Positive echo wins: if this optimistic bubble was already claimed by the
+  // persisted user_message, ignore a late/transport error on the POST response.
+  if (context && !context.messageEl.hasAttribute("data-optimistic-op-id")) {
+    return;
+  }
+
+  const isLatestSubmission = !context || state.sentMessageOpId === context.opId;
+
   if (api.isRejectedApiError(err)) {
-    state.awaitingOwnUserEcho = false;
-    state.sentMessageOpId = null;
+    if (isLatestSubmission) {
+      state.awaitingOwnUserEcho = false;
+      state.sentMessageOpId = null;
+      setBusy(false);
+      hideWaiting();
+    }
     if (
       context?.isAgentCommand &&
       err.status === HTTP_STATUS.UNPROCESSABLE_CONTENT
     ) {
       context.messageEl.remove();
-      state.sentMessageForTask = null;
+      if (isLatestSubmission) state.sentMessageForTask = null;
       setInputValue(context.text);
       state.pendingAttachments.push(...context.attachments);
       renderAttachPreview();
@@ -287,8 +322,8 @@ function handleSendError(
   }
 
   // Unknown outcome (network/timeout/5xx/409 op_aborted): do NOT treat as a
-  // definite server refusal or re-submit with a new opId. Keep the optimistic
-  // bubble claimable by (taskId, opId) and trigger catch-up reconciliation.
+  // definite server refusal, do NOT unconditionally clobber busy/waiting if a
+  // newer submission took over, and let catchUp + snapshot reconcile busy.
   if (context?.messageEl) {
     context.messageEl.setAttribute("data-optimistic-unknown", "1");
   }

@@ -56,6 +56,7 @@ import {
   previewReconciler,
   applySnapshotStreaming as applySnapshotStreamingImpl,
   applyPersistedEventImpl,
+  reconcileSnapshotPermissions,
 } from "./persisted-event.ts";
 export { previewReconciler };
 import {
@@ -558,12 +559,18 @@ export function applySnapshotStreaming(streaming: StreamingSnapshot): void {
 }
 
 setSnapshotExtrasApplier((snap) => {
-  if (snap.imageReferences !== undefined && state.taskId === snap.task.id) {
+  if (state.taskId !== snap.task.id) return;
+  if (snap.imageReferences !== undefined) {
     setMarkdownImageReferenceScope(snap.task.id, snap.imageReferences);
   }
-  if (snap.streaming && state.taskId === snap.task.id) {
+  if (snap.streaming) {
     applySnapshotStreaming(snap.streaming);
   }
+  reconcileSnapshotPermissions(
+    snap.task.id,
+    snap.runtime.pendingPermissions,
+    handleEvent,
+  );
 });
 
 /**
@@ -2006,8 +2013,9 @@ export function handleEvent(msg: AgentEvent) {
       break;
 
     case "state_patch": {
-      // client-server-split M1: runtime state (busy, future: pending perms,
-      // streaming) flows through snapshot + patch, not replay.
+      // Skip already-covered patches (seq <= installed snapshot/patch seq)
+      // without triggering redundant snapshot GETs.
+      if (msg.seq <= state.lastStateSeq) break;
       const previousCancelStatus = state.cancelStatus;
       const applied = applyStatePatch({ seq: msg.seq, patch: msg.patch });
       if (
@@ -2020,7 +2028,7 @@ export function handleEvent(msg: AgentEvent) {
         );
       }
       if (!applied && state.taskId === msg.taskId) {
-        // seq gap (missed patches) → reload the authoritative snapshot
+        // Real seq gap (missed patches) → reload authoritative snapshot.
         const taskId = state.taskId;
         void reloadSnapshot(taskId, () => state.taskId === taskId);
       }
@@ -2194,6 +2202,14 @@ export function handleEvent(msg: AgentEvent) {
       if (action.action === "start") {
         if (state.currentAssistantEl) finishAssistant();
         state.currentAssistantEl = addMessage("assistant", "");
+        if (typeof msg.epoch === "string") {
+          state.currentAssistantEl.dataset.previewEpoch = msg.epoch;
+        }
+        if (typeof msg.segmentId === "number") {
+          state.currentAssistantEl.dataset.previewSegmentId = String(
+            msg.segmentId,
+          );
+        }
         state.currentAssistantText = action.text;
       } else {
         if (!state.currentAssistantEl) {
@@ -2234,6 +2250,14 @@ export function handleEvent(msg: AgentEvent) {
         state.currentThinkingEl.className = "thinking";
         state.currentThinkingEl.innerHTML =
           '<summary class="active">⠿ thinking...</summary><div class="thinking-content"></div>';
+        if (typeof msg.epoch === "string") {
+          state.currentThinkingEl.dataset.previewEpoch = msg.epoch;
+        }
+        if (typeof msg.segmentId === "number") {
+          state.currentThinkingEl.dataset.previewSegmentId = String(
+            msg.segmentId,
+          );
+        }
         state.currentThinkingText = action.text;
         appendMessageElement(state.currentThinkingEl);
       } else {

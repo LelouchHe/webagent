@@ -20,13 +20,11 @@ import {
   addSystem,
   discardAssistantPreview,
   discardThinkingPreview,
-  finishBash,
   scrollToBottom,
 } from "./render.ts";
 import {
   handleEvent,
   applyPersistedEvent,
-  applySnapshotStreaming,
   drainNavigationEvents,
   loadHistory,
   fallbackToNextTask,
@@ -47,18 +45,10 @@ import {
   beginTaskTopologyGeneration,
   loadStartupTaskList,
   loadTaskList,
-  noteTaskArchived,
-  noteTaskUnarchived,
-  observeTaskCreated,
-  observeTaskDeleted,
   refreshTaskListBaseline,
   setViewedTaskArchived,
 } from "./task-topology.ts";
-import {
-  noteTaskCreated,
-  noteTaskDeleted,
-  noteTaskTitleUpdated,
-} from "./task-ref-marks.ts";
+import { handleHubControlEvent } from "./persisted-event.ts";
 import { applyConnectedLogLevel, log } from "./log.ts";
 import type { AgentEvent, TaskDetail } from "../../src/types.ts";
 import {
@@ -94,6 +84,9 @@ let fallbackHub: SyncHub | null = null;
 let usingFallback = false;
 let hubConnected = false;
 let hubClientId: string | null = null;
+let hubAuthGen = 0;
+let tabCapturedToken: string | null = null;
+let physicalConnectionGen = 0;
 let focusGen = 0;
 let ackedFocusTaskId: string | null = null;
 let ackedFocusGen = 0;
@@ -141,11 +134,13 @@ function sendToHub(msg: TabToHubMessage): void {
 }
 
 function sendHello(): void {
+  tabCapturedToken = getStoredToken();
   sendToHub({
     type: "hello",
-    token: getStoredToken(),
+    token: tabCapturedToken,
     visible: !document.hidden,
     taskId: state.taskId,
+    expectedAuthGen: hubAuthGen,
   });
 }
 
@@ -180,17 +175,22 @@ function maybeFireDualGate(): void {
 
 function startTaskFeedConsumer(
   taskId: string,
-  opts: { needTailLoad: boolean },
+  opts: { needTailLoad: boolean; forceRestart?: boolean },
 ): void {
-  if (activeConsumerTaskId === taskId && activeConsumer) {
-    sendFocus(taskId);
+  if (!opts.forceRestart && activeConsumerTaskId === taskId && activeConsumer) {
     return;
   }
   stopTaskFeedConsumer();
   activeConsumerTaskId = taskId;
   let needTailLoad = opts.needTailLoad;
-  let catchUpTargetPos: number | undefined;
   let catchingUp = false;
+  const consumerConnGen = physicalConnectionGen;
+  const consumerFocusGen = sendFocus(taskId);
+  const isCurrentRecovery = (signal: AbortSignal): boolean =>
+    !signal.aborted &&
+    consumerConnGen === physicalConnectionGen &&
+    consumerFocusGen === focusGen &&
+    state.taskId === taskId;
 
   const consumer = new SyncFeedConsumer<
     api.StoredEventRow,
@@ -202,7 +202,13 @@ function startTaskFeedConsumer(
     port: {
       applied: () => state.lastEventSeq,
       apply: (entry) => {
-        if (state.taskId !== taskId) return true;
+        if (
+          consumerConnGen !== physicalConnectionGen ||
+          consumerFocusGen !== focusGen ||
+          state.taskId !== taskId
+        ) {
+          return true;
+        }
         return applyPersistedEvent(
           {
             feed: taskId,
@@ -214,18 +220,24 @@ function startTaskFeedConsumer(
         );
       },
       applyEphemeral: (event) => {
-        if (state.taskId !== taskId) return;
+        if (
+          consumerConnGen !== physicalConnectionGen ||
+          consumerFocusGen !== focusGen ||
+          state.taskId !== taskId
+        ) {
+          return;
+        }
         handleEvent(event as unknown as AgentEvent);
       },
       beforeCatchUp: async (signal) => {
         catchingUp = true;
-        if (state.taskId !== taskId) {
+        if (!isCurrentRecovery(signal)) {
           catchingUp = false;
           return;
         }
         if (needTailLoad) {
           const ok = await loadHistory(taskId);
-          if (signal.aborted || state.taskId !== taskId) {
+          if (!isCurrentRecovery(signal)) {
             catchingUp = false;
             return;
           }
@@ -251,7 +263,7 @@ function startTaskFeedConsumer(
           }
           throw err;
         }
-        if (signal.aborted || state.taskId !== taskId) {
+        if (!isCurrentRecovery(signal)) {
           catchingUp = false;
           return;
         }
@@ -259,14 +271,13 @@ function startTaskFeedConsumer(
           typeof snap.task.lastEventSeq === "number"
             ? snap.task.lastEventSeq
             : state.lastEventSeq;
-        catchUpTargetPos = targetPos;
         return {
           targetPos,
           commit: () => {
             catchingUp = false;
-            if (signal.aborted || state.taskId !== taskId) return;
+            if (!isCurrentRecovery(signal)) return;
+            // applySnapshot invokes snapshotExtrasApplier (streaming, imageReferences, pendingPermissions).
             applySnapshot(snap);
-            if (snap.streaming) applySnapshotStreaming(snap.streaming);
             reconcileReplayedPendingTools();
             markReplayCompletion();
             scrollToBottom(false);
@@ -275,11 +286,12 @@ function startTaskFeedConsumer(
       },
     },
     transport: {
-      read: async (after, signal) => {
+      read: async (after, signal, readOpts) => {
         try {
+          // Pass upTo ONLY when supplied by bounded catch-up; live gap reads stay uncapped.
           const res = await api.getTaskEvents(taskId, {
             after,
-            upTo: catchUpTargetPos,
+            ...(readOpts?.upTo !== undefined ? { upTo: readOpts.upTo } : {}),
             limit: CATCHUP_PAGE_SIZE,
             signal,
           });
@@ -341,7 +353,6 @@ function startTaskFeedConsumer(
 
   activeConsumer = consumer;
   consumer.start();
-  sendFocus(taskId);
 }
 
 function stopTaskFeedConsumer(): void {
@@ -364,56 +375,17 @@ export function triggerCatchUp(): Promise<void> {
   return activeConsumer.catchUp();
 }
 
+let navigationOwnerTaskId: string | null = null;
+
 setTaskFocusNotifier((taskId) => {
+  // Synthetic task_created from installTaskFromDetail is owned by resumeAndLoad /
+  // switchToTask; only auto-start a consumer for newly created tasks (/new).
+  if (navigationOwnerTaskId === taskId) return;
   focusTask(taskId, { needTailLoad: false });
 });
 
 function handleControlEvent(raw: Record<string, unknown>): void {
-  if (raw.type === "topology_feed_entry") {
-    const entry = raw.entry as api.TaskEventFeedEntry | undefined;
-    if (!entry) return;
-    try {
-      const data = JSON.parse(entry.data.data) as { kind?: string };
-      if (data.kind === "task_archive") noteTaskArchived(entry.feed);
-      else if (data.kind === "task_unarchive") noteTaskUnarchived(entry.feed);
-    } catch {
-      /* ignore malformed topology entry */
-    }
-    return;
-  }
-  if (raw.type === "task_created" && typeof raw.taskId === "string") {
-    observeTaskCreated(
-      raw.taskId,
-      typeof raw.agentId === "string" ? raw.agentId : null,
-    );
-    noteTaskCreated(raw.taskId);
-    if (
-      state.awaitingNewTask ||
-      state.pendingNavigationTaskId === raw.taskId ||
-      state.taskId === raw.taskId
-    ) {
-      handleEvent(raw as unknown as AgentEvent);
-    }
-    return;
-  }
-  if (raw.type === "task_deleted" && typeof raw.taskId === "string") {
-    observeTaskDeleted(raw.taskId);
-    noteTaskDeleted(raw.taskId);
-    if (state.taskId === raw.taskId) {
-      handleEvent(raw as unknown as AgentEvent);
-    }
-    return;
-  }
-  if (raw.type === "task_title_updated" && typeof raw.taskId === "string") {
-    if (typeof raw.title === "string") {
-      noteTaskTitleUpdated(raw.taskId, raw.title);
-    }
-    if (state.taskId === raw.taskId) {
-      handleEvent(raw as unknown as AgentEvent);
-    }
-    return;
-  }
-  handleEvent(raw as unknown as AgentEvent);
+  handleHubControlEvent(raw, handleEvent);
 }
 
 function handleHubConnected(
@@ -422,6 +394,7 @@ function handleHubConnected(
   const prevClientId = hubClientId;
   hubConnected = true;
   hubClientId = msg.clientId;
+  hubAuthGen = msg.authGen;
   state.clientId = msg.clientId;
   applyConnectedLogLevel(msg.debugLevel);
   updateInboxCount(msg.pendingCount);
@@ -431,26 +404,44 @@ function handleHubConnected(
   void refreshTaskListBaseline().catch(() => {});
   if (!initializedOnce) initializedOnce = true;
   setConnectionStatus("connected", "connected");
-  if (activeConsumerTaskId && state.taskId === activeConsumerTaskId) {
-    watchDualGateFired = false;
-    maybeFireDualGate();
+  const resumeTaskId = activeConsumerTaskId ?? state.taskId;
+  if (resumeTaskId && state.taskId === resumeTaskId) {
+    if (!activeConsumer) {
+      // Physical reconnect after disconnect stopped the old attempt: start fresh
+      // bounded recovery while preserving state.lastEventSeq.
+      startTaskFeedConsumer(resumeTaskId, {
+        needTailLoad: false,
+        forceRestart: true,
+      });
+    } else {
+      watchDualGateFired = false;
+      maybeFireDualGate();
+    }
   }
 }
 
 function handleHubMessage(msg: HubToTabMessage): void {
   switch (msg.type) {
     case "ready":
-    case "auth_gen":
       return;
     case "connected":
       handleHubConnected(msg);
       return;
-    case "disconnected":
+    case "disconnected": {
       hubConnected = false;
       hubClientId = null;
       watchDualGateFired = false;
+      physicalConnectionGen += 1;
+      // Abort any in-flight logical recovery owned by the dead physical stream,
+      // preserving activeConsumerTaskId and state.lastEventSeq for reconnect.
+      const savedTaskId = activeConsumerTaskId;
+      activeConsumer?.stop();
+      activeConsumer = null;
+      watchHooks = null;
+      activeConsumerTaskId = savedTaskId;
       cleanup();
       return;
+    }
     case "focus_ack":
       if (msg.gen !== focusGen) return;
       ackedFocusTaskId = msg.taskId;
@@ -482,7 +473,20 @@ function handleHubMessage(msg: HubToTabMessage): void {
       handleControlEvent(msg.event);
       return;
     case "auth_invalid":
-      handleUnauthorizedToken(msg.sentToken);
+      if (msg.authGen === hubAuthGen) {
+        handleUnauthorizedToken(tabCapturedToken);
+      }
+      return;
+    case "auth_gen":
+      if (msg.authGen > hubAuthGen) {
+        hubAuthGen = msg.authGen;
+        tabCapturedToken = getStoredToken();
+        sendToHub({
+          type: "auth_update",
+          token: tabCapturedToken,
+          expectedAuthGen: hubAuthGen,
+        });
+      }
       return;
   }
 }
@@ -502,7 +506,12 @@ function startFallbackHub(): void {
   tabPort.onMessage((msg) => {
     if (msg.type === "ready") {
       sendHello();
-      if (activeConsumerTaskId) sendFocus(activeConsumerTaskId);
+      if (activeConsumerTaskId) {
+        startTaskFeedConsumer(activeConsumerTaskId, {
+          needTailLoad: false,
+          forceRestart: true,
+        });
+      }
       return;
     }
     handleHubMessage(msg);
@@ -564,7 +573,12 @@ function startSharedWorkerOrFallback(): void {
         },
       };
       sendHello();
-      if (activeConsumerTaskId) sendFocus(activeConsumerTaskId);
+      if (activeConsumerTaskId) {
+        startTaskFeedConsumer(activeConsumerTaskId, {
+          needTailLoad: false,
+          forceRestart: true,
+        });
+      }
       return;
     }
     handleHubMessage(msg);
@@ -597,7 +611,11 @@ export function connect(): void {
   usingFallback = false;
   hubConnected = false;
   hubClientId = null;
+  hubAuthGen = 0;
+  tabCapturedToken = null;
+  physicalConnectionGen += 1;
   initializedOnce = false;
+  navigationOwnerTaskId = null;
   ackedFocusTaskId = null;
   ackedFocusGen = 0;
 
@@ -605,7 +623,12 @@ export function connect(): void {
   if (!tokenSubInstalled) {
     tokenSubInstalled = true;
     onStoredTokenChange((nextToken) => {
-      sendToHub({ type: "auth_update", token: nextToken });
+      tabCapturedToken = nextToken;
+      sendToHub({
+        type: "auth_update",
+        token: nextToken,
+        expectedAuthGen: hubAuthGen,
+      });
     });
   }
   ensureLeaseRenewal();
@@ -731,20 +754,29 @@ async function resumeAndLoad(
     state.pendingNavigationTaskId = taskId;
   }
 
+  // Single owner: route focus at navigation intent BEFORE warm: true, load tail
+  // once (when non-incremental), install task metadata, then start the single
+  // SyncFeedConsumer for bounded snapshot+delta recovery.
+  navigationOwnerTaskId = taskId;
+  sendFocus(taskId);
   try {
-    const task = await api.getTask(taskId, { warm: true });
+    const [task] = await Promise.all([
+      api.getTask(taskId, { warm: true }),
+      incremental ? Promise.resolve(true) : loadHistory(taskId),
+    ]);
     if (!isCurrent()) return;
     installTaskFromDetail(task);
     drainNavigationEvents(taskId);
-    if (!incremental) {
-      await loadHistory(taskId);
-      if (!isCurrent()) return;
-    }
-    startTaskFeedConsumer(taskId, { needTailLoad: false });
+    navigationOwnerTaskId = null;
+    startTaskFeedConsumer(taskId, {
+      needTailLoad: false,
+      forceRestart: true,
+    });
     if (hubConnected) {
       await triggerCatchUp();
     }
   } catch {
+    if (navigationOwnerTaskId === taskId) navigationOwnerTaskId = null;
     if (!isCurrent()) return;
     await fallbackToNextTask(
       taskId,
@@ -768,7 +800,9 @@ function cleanup(): void {
   discardThinkingPreview();
   discardAssistantPreview();
   if (state.currentBashEl) {
-    finishBash(state.currentBashEl, null, "disconnected");
+    // Keep the rendered command block addressable across disconnect so
+    // bash_result on recovery fills canonical output & exit status.
+    state.currentBashEl.dataset.bashDisconnected = "1";
   }
   state.pendingToolCallIds.clear();
   state.pendingPermissionRequestIds.clear();
@@ -825,7 +859,9 @@ window.addEventListener("pageshow", (event: PageTransitionEvent) => {
   if (!event.persisted) return;
   sendHello();
   if (state.taskId) {
-    sendFocus(state.taskId);
-    void triggerCatchUp();
+    startTaskFeedConsumer(state.taskId, {
+      needTailLoad: false,
+      forceRestart: true,
+    });
   }
 });

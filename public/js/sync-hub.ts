@@ -22,6 +22,7 @@ export type TabToHubMessage =
       token: string | null;
       visible: boolean;
       taskId: string | null;
+      expectedAuthGen?: number;
     }
   | {
       type: "focus";
@@ -37,6 +38,7 @@ export type TabToHubMessage =
   | {
       type: "auth_update";
       token: string | null;
+      expectedAuthGen?: number;
     }
   | { type: "check_liveness" }
   | { type: "bye" };
@@ -62,7 +64,7 @@ export type HubToTabMessage =
   | { type: "feed_entry"; entry: TaskEventFeedEntry }
   | { type: "ephemeral"; event: Record<string, unknown> }
   | { type: "control"; event: Record<string, unknown> }
-  | { type: "auth_invalid"; authGen: number; sentToken: string | null }
+  | { type: "auth_invalid"; authGen: number }
   | { type: "auth_gen"; authGen: number };
 
 export interface SyncPort {
@@ -245,13 +247,32 @@ export class SyncHub {
     entry: PortState,
     msg: Extract<TabToHubMessage, { type: "hello" }>,
   ): void {
+    // Re-admit a previously detached port (e.g. after BFCache pagehide -> pageshow).
+    if (!this.ports.has(entry.port)) {
+      this.ports.set(entry.port, entry);
+      this.ensureLeaseSweep();
+    }
     this.cancelGraceTimer();
+
+    if (
+      msg.token !== this.token &&
+      msg.expectedAuthGen !== undefined &&
+      msg.expectedAuthGen > 0 &&
+      msg.expectedAuthGen < this.authGen
+    ) {
+      // Stale hello carrying an older credential: notify current authGen without rotating backward.
+      entry.authenticated = false;
+      entry.port.postMessage({ type: "auth_gen", authGen: this.authGen });
+      return;
+    }
+
     if (!this.hasTokenInitialized || msg.token !== this.token) {
       this.hasTokenInitialized = true;
-      this.rotateToken(msg.token);
+      this.rotateToken(msg.token, entry.port);
+    } else if (!this.authInvalid) {
+      entry.authenticated = true;
+      entry.authGen = this.authGen;
     }
-    entry.authenticated = !this.authInvalid;
-    entry.authGen = this.authGen;
     entry.taskId = msg.taskId;
     entry.visible = msg.visible;
     entry.leaseAt = msg.visible ? this.clock.now() : 0;
@@ -270,6 +291,42 @@ export class SyncHub {
       this.startSupervisor();
     }
     this.flushVisibilityIfChanged();
+  }
+
+  private handleAuthUpdate(
+    entry: PortState,
+    msg: Extract<TabToHubMessage, { type: "auth_update" }>,
+  ): void {
+    if (
+      msg.expectedAuthGen !== undefined &&
+      msg.expectedAuthGen < this.authGen
+    ) {
+      entry.authenticated = false;
+      entry.port.postMessage({ type: "auth_gen", authGen: this.authGen });
+      return;
+    }
+    if (!this.hasTokenInitialized || msg.token !== this.token) {
+      this.hasTokenInitialized = true;
+      this.rotateToken(msg.token, entry.port);
+      return;
+    }
+    if (!this.authInvalid) {
+      entry.authenticated = true;
+      entry.authGen = this.authGen;
+      if (this.sseConnected && this.clientId) {
+        entry.port.postMessage({
+          type: "connected",
+          clientId: this.clientId,
+          debugLevel: this.debugLevel,
+          pendingCount: this.pendingCount,
+          authGen: this.authGen,
+          reconnected: false,
+        });
+      } else {
+        this.startSupervisor();
+      }
+      this.flushVisibilityIfChanged();
+    }
   }
 
   private handlePortMessage(entry: PortState, msg: TabToHubMessage): void {
@@ -300,15 +357,7 @@ export class SyncHub {
         this.flushVisibilityIfChanged();
         return;
       case "auth_update":
-        if (!this.hasTokenInitialized || msg.token !== this.token) {
-          this.hasTokenInitialized = true;
-          this.rotateToken(msg.token);
-        }
-        entry.authenticated = !this.authInvalid;
-        entry.authGen = this.authGen;
-        if (entry.authenticated && !this.sseConnected) {
-          this.startSupervisor();
-        }
+        this.handleAuthUpdate(entry, msg);
         return;
       case "check_liveness":
         this.supervisor.checkLiveness();
@@ -330,15 +379,20 @@ export class SyncHub {
     }
   }
 
-  private rotateToken(nextToken: string | null): void {
+  private rotateToken(nextToken: string | null, initiatorPort: SyncPort): void {
     this.token = nextToken;
     this.authInvalid = false;
     this.authGen += 1;
     this.stopSupervisor();
     this.teardownEventSource();
     this.hasConnectedOnce = false;
+    // Invalidate admission for all other ports until they confirm the new authGen.
     for (const entry of this.ports.values()) {
-      entry.authGen = this.authGen;
+      const isInitiator = entry.port === initiatorPort;
+      entry.authenticated = isInitiator;
+      if (isInitiator) {
+        entry.authGen = this.authGen;
+      }
       entry.port.postMessage({ type: "auth_gen", authGen: this.authGen });
     }
     if (this.ports.size > 0) {
@@ -369,7 +423,7 @@ export class SyncHub {
       });
       if (!attempt.isCurrent() || authGen !== this.authGen) return;
       if (res.status === HTTP_STATUS.UNAUTHORIZED) {
-        this.handleTerminalUnauthorized(authGen, token);
+        this.handleTerminalUnauthorized(authGen);
         return;
       }
       if (!res.ok) {
@@ -500,7 +554,7 @@ export class SyncHub {
       typeof raw.type === "string" && TOPOLOGY_EVENT_TYPES.has(raw.type);
     if (taskId === null || isTopology) {
       this.broadcastAuthenticated({ type: "control", event: raw });
-      if (taskId === null) return;
+      return;
     }
     for (const p of this.ports.values()) {
       if (
@@ -513,23 +567,24 @@ export class SyncHub {
     }
   }
 
-  private handleTerminalUnauthorized(
-    authGen: number,
-    sentToken: string | null,
-  ): void {
+  private handleTerminalUnauthorized(authGen: number): void {
     if (authGen !== this.authGen) return;
     this.stopSupervisor();
     this.teardownEventSource();
     this.token = null;
     this.authInvalid = true;
+    const failedGen = this.authGen;
     this.authGen += 1;
+    // Notify ONLY currently admitted ports matching the failed authGen; never echo raw token.
     for (const entry of this.ports.values()) {
+      const wasAdmitted = entry.authenticated && entry.authGen === failedGen;
       entry.authenticated = false;
-      entry.port.postMessage({
-        type: "auth_invalid",
-        authGen: this.authGen,
-        sentToken,
-      });
+      if (wasAdmitted) {
+        entry.port.postMessage({
+          type: "auth_invalid",
+          authGen: failedGen,
+        });
+      }
     }
   }
 
@@ -601,7 +656,7 @@ export class SyncHub {
     )
       .then((res) => {
         if (res.status === HTTP_STATUS.UNAUTHORIZED) {
-          this.handleTerminalUnauthorized(authGen, token);
+          this.handleTerminalUnauthorized(authGen);
         }
       })
       .catch(() => {

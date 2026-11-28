@@ -1,7 +1,7 @@
 import { test, expect } from "playwright/test";
 import { gotoConnected, createNewTask, sendPrompt } from "./helpers.ts";
 
-test("two tabs share a single SharedWorker SSE connection under strict CSP", async ({
+test("two tabs share a single SharedWorker SSE connection with focus isolation and cross-tab topology under strict CSP", async ({
   context,
 }) => {
   const page1 = await context.newPage();
@@ -43,11 +43,34 @@ test("two tabs share a single SharedWorker SSE connection under strict CSP", asy
     ),
   ).toBe(0);
 
-  // Live updates work across the shared connection.
+  // Focus isolation + live delivery across shared connection:
+  // Tab 1 creates a separate task and sends a prompt; Tab 2 stays on its own task
+  // and must NOT receive Tab 1's transcript messages.
   await createNewTask(page1);
-  await sendPrompt(page1, "shared worker hello");
+  await sendPrompt(page1, "shared worker isolated hello");
   await expect(page1.locator(".msg.assistant").last()).toContainText(
-    "Echo: shared worker hello",
+    "Echo: shared worker isolated hello",
+  );
+  await expect(page2.locator("#messages")).not.toContainText(
+    "shared worker isolated hello",
+  );
+
+  // Cross-tab delivery on the same task: open Tab 1's task in Tab 2 and
+  // verify Tab 2 receives subsequent live turns from the shared worker.
+  const tab1Url = page1.url();
+  await page2.goto("about:blank");
+  await page2.goto(tab1Url);
+  await expect(page2.locator("#status")).toHaveAttribute(
+    "data-state",
+    "connected",
+    { timeout: 10_000 },
+  );
+  await expect(page2.locator(".msg.assistant").last()).toContainText(
+    "Echo: shared worker isolated hello",
+  );
+  await sendPrompt(page1, "shared worker cross-tab turn");
+  await expect(page2.locator(".msg.assistant").last()).toContainText(
+    "Echo: shared worker cross-tab turn",
   );
 
   await page1.close();

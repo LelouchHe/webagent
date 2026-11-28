@@ -473,18 +473,26 @@ describe("contract-08 browser sync mechanisms", () => {
       );
       assert.deepEqual(visPosts.at(-1)?.taskIds, ["task-A", "task-B"]);
 
-      // Topology broadcast reaches Tab A even when event is for task-C.
+      // Topology broadcast reaches Tab A ONCE via control (never duplicated to ephemeral on focused tab).
       activeEs!.onmessage?.({
         data: JSON.stringify({
           type: "task_title_updated",
-          taskId: "task-C",
+          taskId: "task-A",
           title: "New",
         }),
       } as MessageEvent);
-      assert.ok(
-        msgsA.some(
+      assert.equal(
+        msgsA.filter(
           (m) => m.type === "control" && m.event.type === "task_title_updated",
-        ),
+        ).length,
+        1,
+      );
+      assert.equal(
+        msgsA.filter(
+          (m) =>
+            m.type === "ephemeral" && m.event.type === "task_title_updated",
+        ).length,
+        0,
       );
 
       // Last tab bye immediately posts { taskIds: [] } and waits 5s grace before closing SSE.
@@ -492,8 +500,265 @@ describe("contract-08 browser sync mechanisms", () => {
       tabB.tabPort.postMessage({ type: "bye" });
       assert.deepEqual(visPosts.at(-1)?.taskIds, []);
       assert.equal(closedCount, 0, "SSE stays open during 5s grace");
+
+      // F4: BFCache pageshow re-admits a previously detached port on hello and delivers future frames + visibility.
+      tabA.tabPort.postMessage({
+        type: "hello",
+        token: "t1",
+        visible: true,
+        taskId: "task-A",
+      });
+      assert.deepEqual(visPosts.at(-1)?.taskIds, ["task-A"]);
+      const feedBefore = msgsA.filter((m) => m.type === "feed_entry").length;
+      activeEs!.onmessage?.({
+        data: JSON.stringify({
+          feed: "task-A",
+          pos: 1,
+          prev: 0,
+          data: {
+            id: 1,
+            task_id: "task-A",
+            seq: 1,
+            type: "user_message",
+            data: '{"text":"after bfcache"}',
+            from_ref: "user",
+            created_at: new Date().toISOString(),
+          },
+        }),
+      } as MessageEvent);
+      assert.equal(
+        msgsA.filter((m) => m.type === "feed_entry").length,
+        feedBefore + 1,
+      );
+
+      // Detach again and verify 5s grace closes SSE.
+      tabA.tabPort.postMessage({ type: "bye" });
+      assert.equal(closedCount, 0);
       advance(5_000);
       assert.equal(closedCount, 1, "SSE closes after 5s grace");
+    });
+
+    it("invalidates stale ports on credential rotation, fences delayed auth_update, and never echoes raw token on 401 (F5)", async () => {
+      let ticketStatus = 200;
+      const seenAuthHeaders: string[] = [];
+      let activeEs: { onmessage: ((e: MessageEvent) => void) | null } | null =
+        null;
+
+      class FakeES {
+        onmessage: ((e: MessageEvent) => void) | null = null;
+        onerror: (() => void) | null = null;
+        constructor() {
+          // eslint-disable-next-line @typescript-eslint/no-this-alias
+          activeEs = this;
+        }
+        addEventListener() {}
+        close() {}
+      }
+
+      const hub = new SyncHub({
+        EventSourceImpl: FakeES as unknown as typeof EventSource,
+        fetchImpl: (async (url: string, init?: RequestInit) => {
+          const headers = (init?.headers ?? {}) as Record<string, string>;
+          if (url === "/api/v1/sse-ticket") {
+            seenAuthHeaders.push(headers.Authorization || "");
+            return {
+              ok: ticketStatus === 200,
+              status: ticketStatus,
+              json: async () =>
+                ticketStatus === 200
+                  ? { ticket: "tk" }
+                  : { error: "Unauthorized" },
+            } as Response;
+          }
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ ok: true }),
+          } as Response;
+        }) as typeof fetch,
+      });
+
+      const tabOld = createDirectPortPair();
+      const tabNew = createDirectPortPair();
+      const tabUnadmitted = createDirectPortPair();
+      const msgsOld: HubToTabMessage[] = [];
+      const msgsNew: HubToTabMessage[] = [];
+      const msgsUnadmitted: HubToTabMessage[] = [];
+      tabOld.tabPort.onMessage((m) => msgsOld.push(m));
+      tabNew.tabPort.onMessage((m) => msgsNew.push(m));
+      tabUnadmitted.tabPort.onMessage((m) => msgsUnadmitted.push(m));
+
+      // Attach ready-only unadmitted port.
+      hub.attach(tabUnadmitted.hubPort);
+
+      // Tab Old logs in with tok-1.
+      hub.attach(tabOld.hubPort);
+      tabOld.tabPort.postMessage({
+        type: "hello",
+        token: "tok-1",
+        visible: true,
+        taskId: "t1",
+        expectedAuthGen: 0,
+      });
+      await new Promise((r) => setTimeout(r, 0));
+      activeEs!.onmessage?.({
+        data: JSON.stringify({
+          type: "connected",
+          clientId: "c1",
+          pendingCount: 0,
+        }),
+      } as MessageEvent);
+
+      // Tab New rotates to tok-2 -> Tab Old MUST lose admission until it confirms authGen=2.
+      hub.attach(tabNew.hubPort);
+      tabNew.tabPort.postMessage({
+        type: "hello",
+        token: "tok-2",
+        visible: true,
+        taskId: "t1",
+        expectedAuthGen: 1,
+      });
+      await new Promise((r) => setTimeout(r, 0));
+      activeEs!.onmessage?.({
+        data: JSON.stringify({
+          type: "connected",
+          clientId: "c2",
+          pendingCount: 0,
+        }),
+      } as MessageEvent);
+      activeEs!.onmessage?.({
+        data: JSON.stringify({
+          type: "inbox_count_changed",
+          pendingCount: 9,
+        }),
+      } as MessageEvent);
+      assert.equal(
+        msgsOld.some(
+          (m) => m.type === "control" && m.event.type === "inbox_count_changed",
+        ),
+        false,
+        "unconfirmed old port must not receive new-token stream",
+      );
+      assert.equal(
+        msgsNew.some(
+          (m) => m.type === "control" && m.event.type === "inbox_count_changed",
+        ),
+        true,
+      );
+
+      // Delayed stale auth_update from Tab Old with expectedAuthGen=1 must NOT rotate hub backward.
+      const beforeHeaders = seenAuthHeaders.length;
+      tabOld.tabPort.postMessage({
+        type: "auth_update",
+        token: "tok-1",
+        expectedAuthGen: 1,
+      });
+      await new Promise((r) => setTimeout(r, 0));
+      assert.equal(seenAuthHeaders.length, beforeHeaders);
+
+      // 401 on tok-3: notifies ONLY admitted tabNew (not unadmitted/old ports) and NEVER echoes raw token.
+      ticketStatus = 401;
+      tabNew.tabPort.postMessage({
+        type: "auth_update",
+        token: "tok-3",
+        expectedAuthGen: 2,
+      });
+      await new Promise((r) => setTimeout(r, 0));
+      const invNew = msgsNew.find((m) => m.type === "auth_invalid");
+      assert.ok(invNew, "admitted port receives auth_invalid");
+      assert.equal(
+        JSON.stringify(invNew).includes("tok-3"),
+        false,
+        "auth_invalid must never echo raw token",
+      );
+      assert.equal(
+        msgsUnadmitted.some((m) => m.type === "auth_invalid"),
+        false,
+        "unadmitted ready-only port must not receive auth_invalid",
+      );
+      assert.equal(
+        msgsOld.some((m) => m.type === "auth_invalid"),
+        false,
+        "stale unconfirmed port must not receive auth_invalid for newer gen",
+      );
+    });
+  });
+
+  describe("per-task SSE edge and empty 201/200 body classification (F11, F12)", () => {
+    it("omits duplicate bash_result on per-task SSE clients while keeping it on global feed", () => {
+      const sse = new SseManager(60_000);
+      const globalFrames: string[] = [];
+      const perTaskFrames: string[] = [];
+      sse.add({
+        id: "g1",
+        res: {
+          writableEnded: false,
+          write: (s: string) => {
+            globalFrames.push(s);
+            return true;
+          },
+          on: () => {},
+        } as any,
+      });
+      sse.add({
+        id: "t1-client",
+        taskId: "t1",
+        res: {
+          writableEnded: false,
+          write: (s: string) => {
+            perTaskFrames.push(s);
+            return true;
+          },
+          on: () => {},
+        } as any,
+      });
+      sse.broadcastFeedEntry({
+        feed: "t1",
+        pos: 5,
+        prev: 4,
+        data: {
+          id: 5,
+          task_id: "t1",
+          seq: 5,
+          type: "bash_result",
+          data: JSON.stringify({ output: "ok", code: 0, signal: null }),
+          from_ref: "system",
+          created_at: new Date().toISOString(),
+        },
+      });
+      assert.equal(globalFrames.length, 1);
+      assert.equal(perTaskFrames.length, 0);
+    });
+
+    it("treats empty 201/200 JSON responses as unknown while allowing 204", async () => {
+      const { sendApiRaw } = await import("../public/js/api-transport.ts");
+      const origFetch = globalThis.fetch;
+      try {
+        globalThis.fetch = (async () => ({
+          ok: true,
+          status: 201,
+          text: async () => "",
+        })) as unknown as typeof fetch;
+        const empty201 = await sendApiRaw("/api/v1/tasks", {
+          method: "POST",
+          body: {},
+          opId: null,
+        });
+        assert.equal(empty201.kind, "unknown");
+
+        globalThis.fetch = (async () => ({
+          ok: true,
+          status: 204,
+          text: async () => "",
+        })) as unknown as typeof fetch;
+        const ok204 = await sendApiRaw("/api/v1/tasks/t1", {
+          method: "DELETE",
+          opId: null,
+        });
+        assert.equal(ok204.kind, "success");
+      } finally {
+        globalThis.fetch = origFetch;
+      }
     });
   });
 });

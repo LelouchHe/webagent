@@ -32,6 +32,8 @@ class SpyPushService extends PushService {
   }
 }
 
+let nextVisRev = 0;
+
 function send(
   port: number,
   method: string,
@@ -40,16 +42,20 @@ function send(
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const data = body === undefined ? "" : JSON.stringify(body);
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      "content-length": Buffer.byteLength(data).toString(),
+    };
+    if (path.endsWith("/visibility")) {
+      headers["x-visibility-rev"] = String(++nextVisRev);
+    }
     const r = http.request(
       {
         hostname: "127.0.0.1",
         port,
         path,
         method,
-        headers: {
-          "content-type": "application/json",
-          "content-length": Buffer.byteLength(data).toString(),
-        },
+        headers,
       },
       (res) => {
         let d = "";

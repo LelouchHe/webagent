@@ -28,8 +28,16 @@ export interface SyncFeedPort<TData = unknown, TEphemeral = unknown> {
   ): SyncFeedCatchUpPlan | void | Promise<SyncFeedCatchUpPlan | void>;
 }
 
+export interface SyncFeedReadOptions {
+  upTo?: number;
+}
+
 export interface SyncFeedTransport<TData = unknown, TEphemeral = unknown> {
-  read(after: number, signal: AbortSignal): Promise<SyncFeedEntry<TData>[]>;
+  read(
+    after: number,
+    signal: AbortSignal,
+    opts?: SyncFeedReadOptions,
+  ): Promise<SyncFeedEntry<TData>[]>;
   watch(input: {
     after: number;
     signal: AbortSignal;
@@ -226,8 +234,13 @@ export class SyncFeedConsumer<TData = unknown, TEphemeral = unknown> {
     if (!attempt.isCurrent()) return;
 
     const targetPos = plan?.targetPos;
+    const readOpts = targetPos !== undefined ? { upTo: targetPos } : undefined;
     while (targetPos === undefined || applied < targetPos) {
-      const entries = await this.transport.read(applied, attempt.signal);
+      const entries = await this.transport.read(
+        applied,
+        attempt.signal,
+        readOpts,
+      );
       if (!attempt.isCurrent()) return;
       if (entries.length === 0) {
         if (targetPos !== undefined && applied < targetPos) {

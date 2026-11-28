@@ -3740,24 +3740,19 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
             return;
           }
 
-          let rev: number | undefined;
           const revHeader = req.headers["x-visibility-rev"];
-          if (revHeader !== undefined) {
-            const rawRev = Array.isArray(revHeader) ? revHeader[0] : revHeader;
-            const parsedRev = Number(rawRev);
-            if (
-              typeof rawRev !== "string" ||
-              !/^\d+$/.test(rawRev.trim()) ||
-              !Number.isSafeInteger(parsedRev) ||
-              parsedRev < 1
-            ) {
-              json(res, HTTP_STATUS.BAD_REQUEST, {
-                error: "Invalid X-Visibility-Rev header",
-              });
-              return;
-            }
-            rev = parsedRev;
+          const rawRev = Array.isArray(revHeader) ? revHeader[0] : revHeader;
+          const parsedRev =
+            typeof rawRev === "string" && /^\d+$/.test(rawRev.trim())
+              ? Number(rawRev)
+              : NaN;
+          if (!Number.isSafeInteger(parsedRev) || parsedRev < 1) {
+            json(res, HTTP_STATUS.BAD_REQUEST, {
+              error: "Missing or invalid X-Visibility-Rev header",
+            });
+            return;
           }
+          const rev = parsedRev;
 
           let body: Record<string, unknown>;
           try {

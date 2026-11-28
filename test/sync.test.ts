@@ -899,6 +899,68 @@ describe("shared/sync", () => {
     assert.equal(terminalErrors[0].status, 404);
     consumer.stop();
   });
+
+  it("SyncFeedConsumer passes upTo only on bounded catchUp and leaves subsequent live gap reads uncapped (F1)", async () => {
+    let applied = 0;
+    const readCalls: Array<{ after: number; upTo?: number }> = [];
+    const appliedPositions: number[] = [];
+    let watch:
+      Parameters<SyncFeedTransport<string, string>["watch"]>[0] | undefined;
+
+    const consumer = new SyncFeedConsumer<string, string>({
+      liveness: "external",
+      catchUpOnConnect: true,
+      retryDelay: () => 50,
+      port: {
+        applied: () => applied,
+        apply: (entry) => {
+          applied = entry.pos;
+          appliedPositions.push(entry.pos);
+          return true;
+        },
+        beforeCatchUp: async () => ({ targetPos: 2 }),
+      },
+      transport: {
+        read: async (after, _signal, opts) => {
+          readCalls.push({ after, upTo: opts?.upTo });
+          if (after === 0) {
+            return [
+              { pos: 1, prev: 0, data: "one" },
+              { pos: 2, prev: 1, data: "two" },
+            ];
+          }
+          if (after === 2) {
+            // If a stale upTo=2 were passed, this would return [] and break!
+            if (opts?.upTo !== undefined && opts.upTo <= 2) return [];
+            return [{ pos: 3, prev: 2, data: "three" }];
+          }
+          return [];
+        },
+        watch: async (input) => {
+          watch = input;
+          input.connected();
+          await new Promise<void>((_r, reject) => {
+            input.signal.addEventListener("abort", () => {
+              reject(new Error("aborted"));
+            });
+          });
+        },
+      },
+    });
+
+    consumer.start();
+    await waitUntil(() => applied === 2 && watch !== undefined);
+    assert.deepEqual(readCalls, [{ after: 0, upTo: 2 }]);
+
+    // Drop live row 3 and deliver row 4 (prev: 3 !== applied: 2) -> uncapped gap read repairs 3 and applies 4.
+    await watch!.entry({ pos: 4, prev: 3, data: "four" });
+    assert.deepEqual(readCalls, [
+      { after: 0, upTo: 2 },
+      { after: 2, upTo: undefined },
+    ]);
+    assert.deepEqual(appliedPositions, [1, 2, 3, 4]);
+    consumer.stop();
+  });
 });
 
 async function watchEntry<T>(

@@ -62,6 +62,53 @@ interface BrowserSyncRequest {
   body?: string;
   credentials?: RequestCredentials;
   pinnedToken: string | null;
+  expectEmpty?: boolean;
+}
+
+async function readResponseBody(
+  res: Response,
+  status: number,
+  allowsEmpty: boolean,
+): Promise<{ status: number; body: unknown; bodyMalformed?: boolean }> {
+  const isSuccessClass = Math.floor(status / 100) === 2;
+  const emptyResult = () => ({
+    status,
+    body: undefined,
+    ...(isSuccessClass && !allowsEmpty ? { bodyMalformed: true } : {}),
+  });
+
+  if (typeof res.text === "function") {
+    let text: string;
+    try {
+      text = await res.text();
+    } catch {
+      return { status, body: null, bodyMalformed: true };
+    }
+    if (typeof text !== "string" || !text.trim()) {
+      if (typeof res.json === "function") {
+        try {
+          const parsed = (await res.json()) as unknown;
+          if (parsed !== undefined) return { status, body: parsed };
+        } catch {
+          // fall through to empty handling
+        }
+      }
+      return emptyResult();
+    }
+    try {
+      return { status, body: JSON.parse(text) as unknown };
+    } catch {
+      return { status, body: text, bodyMalformed: true };
+    }
+  }
+  if (typeof res.json === "function") {
+    try {
+      return { status, body: (await res.json()) as unknown };
+    } catch {
+      return { status, body: null, bodyMalformed: true };
+    }
+  }
+  return emptyResult();
 }
 
 const browserTransport: SyncRequestTransport<BrowserSyncRequest, unknown> = {
@@ -83,37 +130,9 @@ const browserTransport: SyncRequestTransport<BrowserSyncRequest, unknown> = {
         : res.ok
           ? HTTP_STATUS.OK
           : HTTP_STATUS.INTERNAL_SERVER_ERROR;
-    if (typeof res.text === "function") {
-      let text: string;
-      try {
-        text = await res.text();
-      } catch {
-        return { status, body: null, bodyMalformed: true };
-      }
-      if (typeof text !== "string" || !text.trim()) {
-        if (typeof res.json === "function") {
-          try {
-            return { status, body: (await res.json()) as unknown };
-          } catch {
-            return { status, body: undefined };
-          }
-        }
-        return { status, body: undefined };
-      }
-      try {
-        return { status, body: JSON.parse(text) as unknown };
-      } catch {
-        return { status, body: text, bodyMalformed: true };
-      }
-    }
-    if (typeof res.json === "function") {
-      try {
-        return { status, body: (await res.json()) as unknown };
-      } catch {
-        return { status, body: null, bodyMalformed: true };
-      }
-    }
-    return { status, body: undefined };
+    const allowsEmpty =
+      status === HTTP_STATUS.NO_CONTENT || req.expectEmpty === true;
+    return readResponseBody(res, status, allowsEmpty);
   },
 };
 
@@ -167,6 +186,7 @@ export interface SyncApiCallOptions {
   backoffMs?: SyncRequestBackoff;
   signal?: AbortSignal;
   credentials?: RequestCredentials;
+  expectEmpty?: boolean;
 }
 
 export async function sendApiRaw(
@@ -192,6 +212,7 @@ export async function sendApiRaw(
       body: serializedBody,
       credentials: opts.credentials,
       pinnedToken: getStoredToken(),
+      expectEmpty: opts.expectEmpty,
     },
     timeoutMs: opts.timeoutMs ?? SYNC_REQUEST_DEFAULTS.read.timeoutMs,
     retries: opts.retries ?? 0,
