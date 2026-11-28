@@ -1,7 +1,4 @@
-import type {
-  RemoteTaskDeleteAttempt,
-  RemoteTaskDeleter,
-} from "./api/tasks.ts";
+import type { RemoteTaskDeleteAttempt, RemoteTaskDeleter } from "./host/api.ts";
 import type { Store } from "./store.ts";
 
 export type { RemoteTaskDeleteAttempt, RemoteTaskDeleter };

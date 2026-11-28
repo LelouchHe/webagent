@@ -105,16 +105,6 @@ export interface TaskSendResult {
   sourceLabel: string;
 }
 
-export interface TaskReport {
-  sourceTaskId: string;
-  targetTaskId: string;
-  targetIsLocal: boolean;
-  status: Exclude<TaskUpdateStatus, "waiting">;
-  body: string;
-  sourceLabel: string;
-  targetLabel: string;
-}
-
 export type TaskCancelCommand =
   | {
       kind: "user";
@@ -142,18 +132,6 @@ export type TaskCancelCommand =
 export type TaskRemoteCancelErrorDetail =
   | { kind: "rejected"; status: number; reason: string }
   | { kind: "unknown"; reason: string };
-
-export type RemoteTaskDeleteAttempt =
-  | { kind: "deleted" }
-  | { kind: "skipped" }
-  | { kind: "rejected"; status: number; reason: string }
-  | { kind: "unknown"; reason: string };
-
-export type RemoteTaskDeleter = (
-  host: string,
-  taskId: string,
-  beforeSend?: () => boolean | void,
-) => Promise<RemoteTaskDeleteAttempt>;
 
 export class TaskRemoteCancelError extends Error {
   readonly host: string;
@@ -260,7 +238,6 @@ export class TaskCreateConfigError extends CreateError {
 }
 
 export interface TaskCreateResult {
-  replayed?: true;
   task: {
     id: string;
     title: string | null;
@@ -278,36 +255,6 @@ export interface TaskCreateResult {
     configOptions: ConfigOption[];
     agentCommands: AgentCommandSnapshot;
   };
-}
-
-export interface RemoteTaskCreateInput {
-  opId: string | null;
-  agentId: string;
-  parentId: string;
-  title?: string;
-  cwd?: string;
-  source: string;
-}
-
-export interface TaskCreateTarget {
-  agentId?: string;
-  host?: string;
-}
-
-export interface TaskCreateHostCommand {
-  caller: TaskCreateCaller;
-  input: TaskCreateInput;
-  target: TaskCreateTarget;
-  parentId?: string;
-  assertRemoteCaller: () => void;
-}
-
-export interface TaskCreateHost {
-  create(command: TaskCreateHostCommand): Promise<TaskCreateResult>;
-}
-
-export interface RemoteTaskCreateTransport {
-  create(host: string, input: RemoteTaskCreateInput): Promise<TaskCreateResult>;
 }
 
 export class TaskHostNotConfiguredError extends CreateError {
@@ -480,12 +427,10 @@ export interface TaskOps {
     principal: TaskCaller,
     targetTaskId: string,
     body: string,
-    record?: (result: TaskSendResult) => void,
   ): Promise<TaskSendResult>;
   update(
     principal: TaskCaller,
     status: TaskUpdateStatus,
     body: string,
-    recordReport?: (report: TaskReport) => void,
   ): Promise<{ note?: string }>;
 }

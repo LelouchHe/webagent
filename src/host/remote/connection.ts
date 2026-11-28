@@ -13,11 +13,10 @@ import type { HostConfig } from "../../config.ts";
 import { errorMessage } from "../../types.ts";
 import { resolveHostToken, TokenCommandError } from "./credentials.ts";
 import type { HostUnreachableReason } from "./state.ts";
+import type { RemoteTaskCreateInput, RemoteTaskDeleteAttempt } from "../api.ts";
 import {
   cancelHttpStatus,
   TaskRemoteCancelError,
-  type RemoteTaskCreateInput,
-  type RemoteTaskDeleteAttempt,
   type TaskCancelOutcome,
   type TaskReadInput,
   type TaskReadResult,

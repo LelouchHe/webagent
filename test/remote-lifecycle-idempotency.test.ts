@@ -9,10 +9,8 @@ import { TaskRemoteCancelError } from "../src/api/tasks.ts";
 import { AgentRegistry } from "../src/agent-registry.ts";
 import { AuthStore } from "../src/auth-store.ts";
 import { ExecutionAuthority } from "../src/execution-authority.ts";
-import { createLocalTaskOps } from "../src/host/local/adapter.ts";
 import { HostConnection } from "../src/host/remote/connection.ts";
 import { HostRegistry } from "../src/host/remote/registry.ts";
-import { createRoutedTaskOps } from "../src/host/tasks.ts";
 import { createRequestHandler } from "../src/http/routes.ts";
 import { CapabilityStore } from "../src/mcp/capability.ts";
 import { createMcpSessionCapabilities } from "../src/mcp/server.ts";
@@ -22,7 +20,7 @@ import { Store } from "../src/store.ts";
 import { TaskRemoteDeleteError } from "../src/task-delete.ts";
 import { TaskManager } from "../src/task-manager.ts";
 import { TaskStateManager } from "../src/task-state.ts";
-import { mockBridgeStubs } from "./fixtures.ts";
+import { createLocalTaskOps, mockBridgeStubs } from "./fixtures.ts";
 
 interface HostNode {
   dir: string;
@@ -228,19 +226,11 @@ describe("Remote lifecycle idempotency: HostConnection single-hop retries, befor
     hub.tasks.setRemoteTaskDeleter((host, taskId, beforeSend) =>
       hubRegistry.deleteRemote(host, taskId, beforeSend),
     );
-    const hubLocalOps = createLocalTaskOps({
+    const hubTaskOps = createLocalTaskOps({
       store: hub.store,
       tasks: hub.tasks,
+      remote: hubRegistry,
     });
-    const hubTaskOps = {
-      ...hubLocalOps,
-      ...createRoutedTaskOps({
-        local: hubLocalOps,
-        remote: hubRegistry,
-        store: hub.store,
-        tasks: hub.tasks,
-      }),
-    };
     const hubHttp = await startHttp(
       createRequestHandler({
         attachmentSecret: Buffer.alloc(32, 7),
@@ -399,19 +389,11 @@ describe("Remote lifecycle idempotency: HostConnection single-hop retries, befor
           })),
       },
     );
-    const cancelLocalOps = createLocalTaskOps({
+    const cancelHubOps = createLocalTaskOps({
       store: cancelHub.store,
       tasks: cancelHub.tasks,
+      remote: cancelHubRegistry,
     });
-    const cancelHubOps = {
-      ...cancelLocalOps,
-      ...createRoutedTaskOps({
-        local: cancelLocalOps,
-        remote: cancelHubRegistry,
-        store: cancelHub.store,
-        tasks: cancelHub.tasks,
-      }),
-    };
     await assert.rejects(
       () =>
         cancelHubOps.cancel({

@@ -7,6 +7,13 @@
 
 import type { EventHandlerConfig } from "../src/event-handler.ts";
 import type { AgentBridge } from "../src/bridge.ts";
+import type { Store } from "../src/store.ts";
+import type { TaskManager } from "../src/task-manager.ts";
+import type { TaskOps } from "../src/api/tasks.ts";
+import type { AgentEvent } from "../src/types.ts";
+import { createLocalTaskHost } from "../src/host/local/adapter.ts";
+import { createTaskHost, type RoutedRemoteHost } from "../src/host/tasks.ts";
+import { createTaskOpsCore } from "../src/task-ops.ts";
 
 export function makeEventHandlerConfig(
   overrides: Partial<EventHandlerConfig> = {},
@@ -85,4 +92,33 @@ export function mockBridgeStubs(): MockBridge {
     denyPermission: async () => {},
     restart: async () => {},
   };
+}
+
+/**
+ * Assemble the production Core `TaskOps` over `createTaskHost` +
+ * `createLocalTaskHost` (with optional `remote` router) for tests.
+ */
+export function createLocalTaskOps(deps: {
+  store: Store;
+  tasks: TaskManager;
+  cancelTimeoutMs?: number;
+  remote?: RoutedRemoteHost;
+  broadcastConfigUpdate?: (
+    event: Extract<AgentEvent, { type: "config_option_update" }>,
+  ) => void;
+}): TaskOps {
+  return createTaskOpsCore({
+    host: createTaskHost({
+      local: createLocalTaskHost({
+        store: deps.store,
+        tasks: deps.tasks,
+        cancelTimeoutMs: deps.cancelTimeoutMs,
+      }),
+      remote: deps.remote,
+      store: deps.store,
+    }),
+    store: deps.store,
+    tasks: deps.tasks,
+    broadcastConfigUpdate: deps.broadcastConfigUpdate,
+  });
 }

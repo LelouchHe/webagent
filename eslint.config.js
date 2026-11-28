@@ -274,9 +274,9 @@ export default tseslint.config(
           patterns: [
             noEntrypointDependency,
             {
-              group: ["**/host/**"],
+              group: ["**/host/**", "!**/host/api.ts"],
               message:
-                "Core code must use the neutral Host port from api/**, not concrete Host implementations.",
+                "Core code may import only the neutral Host port from host/api.ts, not concrete Host implementations.",
             },
           ],
         },

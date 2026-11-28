@@ -9,7 +9,7 @@ import type { TaskManager } from "../src/task-manager.ts";
 import { createTaskManager } from "../src/task-manager.ts";
 import { SseManager } from "../src/sse-manager.ts";
 import { createRequestHandler } from "../src/http/routes.ts";
-import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import { createLocalTaskOps } from "./fixtures.ts";
 import type { ConfigOption } from "../src/types.ts";
 import type { AgentBridge } from "../src/bridge.ts";
 function makeRequest(

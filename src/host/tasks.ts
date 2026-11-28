@@ -1,55 +1,47 @@
-import { randomUUID } from "node:crypto";
-import { formatTaskReport } from "../task-report.ts";
-import { recordTaskCancelEvent } from "../task-cancel-record.ts";
 import type {
   RemoteTaskCreateTransport,
-  TaskCaller,
-  TaskCancelCommand,
-  TaskCreateHost,
+  TaskCancelHostCommand,
+  TaskCancelHostOutcome,
   TaskCreateHostCommand,
-  TaskCreateResult,
-  TaskSendResult,
-  TaskOps,
-  TaskListItem,
-} from "../api/tasks.ts";
+  TaskCreateHostOutcome,
+  TaskHost,
+} from "./api.ts";
+import type { TaskListItem } from "../api/tasks.ts";
 import {
-  MAX_HOST_CANCEL_SOURCE_LABEL_LENGTH,
   TaskCreateInputError,
+  TaskHostNotConfiguredError,
   TaskRemoteCreateConfigError,
 } from "../api/tasks.ts";
 import type { Store } from "../store.ts";
-import { TaskNotFoundError, type TaskManager } from "../task-manager.ts";
-import { assertTaskCaller } from "./local/adapter.ts";
-import type { RemoteTaskTarget } from "./remote/registry.ts";
+import { TaskNotFoundError } from "../task-manager.ts";
+import type { LocalTaskHost } from "./local/adapter.ts";
+import type { HostRegistry, RemoteTaskTarget } from "./remote/registry.ts";
 
-interface RoutedRemoteHost {
-  hasConnections(): boolean;
-  listRemoteChildren(taskId: string): Promise<TaskListItem[]>;
-  resolveRemoteChild: HostRouter["resolveRemoteChild"];
-  resolveRemoteChildByTaskId: HostRouter["resolveRemoteChildByTaskId"];
-  cancelRemote: HostRouter["cancelRemote"];
-  queryRemote: HostRouter["queryRemote"];
-  readRemote: HostRouter["readRemote"];
+export interface RoutedRemoteHost {
+  create?: RemoteTaskCreateTransport["create"];
+  hasConnections?: () => boolean;
+  listRemoteChildren?: (taskId: string) => Promise<TaskListItem[]>;
+  resolveRemoteChild?: HostRegistry["resolveRemoteChild"];
+  resolveRemoteChildByTaskId?: HostRegistry["resolveRemoteChildByTaskId"];
+  cancelRemote?: HostRegistry["cancelRemote"];
+  queryRemote?: HostRegistry["queryRemote"];
+  readRemote?: HostRegistry["readRemote"];
 }
-
-type HostRouter = import("./remote/registry.ts").HostRegistry;
 
 export type CancelRoute =
   | { kind: "local" }
   | { kind: "remote"; target: RemoteTaskTarget }
   | { kind: "not_found"; taskId: string };
 
-function truncateUtf16(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value;
-  const cut = value.slice(0, maxLength);
-  const last = cut.charCodeAt(cut.length - 1);
-  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
-}
+export type CancelRouteCommand =
+  | { kind: "host"; taskId: string }
+  | { kind: "user"; taskId: string }
+  | { kind: "agent"; sourceTaskId: string; targetTaskId: string };
 
 export function resolveCancelTarget(
-  command: TaskCancelCommand,
+  command: CancelRouteCommand,
   store: Pick<Store, "getTask">,
-  remote: Pick<
+  remote?: Pick<
     RoutedRemoteHost,
     "hasConnections" | "resolveRemoteChild" | "resolveRemoteChildByTaskId"
   >,
@@ -58,9 +50,9 @@ export function resolveCancelTarget(
     return { kind: "local" };
   }
   if (command.kind === "user") {
-    if (!remote.hasConnections()) return { kind: "local" };
+    if (!remote?.hasConnections?.()) return { kind: "local" };
     if (store.getTask(command.taskId)) return { kind: "local" };
-    const target = remote.resolveRemoteChildByTaskId(
+    const target = remote.resolveRemoteChildByTaskId?.(
       command.taskId,
       (localParentId) => store.getTask(localParentId) !== undefined,
     );
@@ -68,24 +60,68 @@ export function resolveCancelTarget(
       ? { kind: "remote", target }
       : { kind: "not_found", taskId: command.taskId };
   }
-  const target = remote.resolveRemoteChild(
-    command.principal.taskId,
+  const target = remote?.resolveRemoteChild?.(
+    command.sourceTaskId,
     command.targetTaskId,
   );
   return target ? { kind: "remote", target } : { kind: "local" };
 }
 
 export function createTaskHost(deps: {
-  local: TaskOps;
-  remote: RemoteTaskCreateTransport;
-}): TaskCreateHost {
+  local: LocalTaskHost;
+  remote?: RoutedRemoteHost;
+  store: Store;
+}): TaskHost {
+  const { local, remote, store } = deps;
+
   return {
-    async create(command: TaskCreateHostCommand): Promise<TaskCreateResult> {
+    async list(principal) {
+      const [localItems, remoteItems] = await Promise.all([
+        local.list(principal),
+        remote?.listRemoteChildren?.(principal.taskId) ?? Promise.resolve([]),
+      ]);
+      return [...localItems, ...remoteItems];
+    },
+
+    async query(principal, input) {
+      const target = remote?.resolveRemoteChild?.(
+        principal.taskId,
+        input.taskId ?? principal.taskId,
+      );
+      if (target && remote?.queryRemote) {
+        return remote.queryRemote(target, input);
+      }
+      return local.query(principal, input);
+    },
+
+    async read(principal, input) {
+      const target = remote?.resolveRemoteChild?.(
+        principal.taskId,
+        input.taskId ?? principal.taskId,
+      );
+      if (target && remote?.readRemote) {
+        return remote.readRemote(target, input);
+      }
+      return local.read(principal, input);
+    },
+
+    async create(
+      command: TaskCreateHostCommand,
+    ): Promise<TaskCreateHostOutcome> {
       if (command.target.host === undefined) {
-        return deps.local.create(command.caller, {
-          ...command.input,
-          agentId: command.target.agentId,
-        });
+        const localOutcome = await local.create(
+          command.caller,
+          {
+            ...command.input,
+            agentId: command.target.agentId,
+          },
+          command.assertCaller,
+        );
+        return {
+          kind: "local",
+          replayed: localOutcome.replayed,
+          result: localOutcome.result,
+        };
       }
       if (command.input.model) throw new TaskRemoteCreateConfigError("model");
       if (command.input.thinking) {
@@ -93,14 +129,18 @@ export function createTaskHost(deps: {
       }
       const host = command.target.host;
       const agentId = command.target.agentId;
-      if (agentId === undefined)
+      if (agentId === undefined) {
         throw new TaskCreateInputError(
           "agent_required",
           "A remote target requires an explicit agent",
         );
+      }
       if (!command.parentId) throw new Error("parent_not_found");
       command.assertRemoteCaller();
-      const remote = await deps.remote.create(host, {
+      if (!remote?.create) {
+        throw new TaskHostNotConfiguredError(host);
+      }
+      const result = await remote.create(host, {
         opId: command.input.opId,
         agentId,
         parentId: command.parentId,
@@ -112,48 +152,43 @@ export function createTaskHost(deps: {
           command.input.source ??
           (command.caller.kind === "agent" ? "agent" : "auto"),
       });
-      return remote;
+      return {
+        kind: "remote",
+        host,
+        result,
+      };
     },
-  };
-}
 
-export function createRoutedTaskOps(deps: {
-  local: TaskOps;
-  remote: RoutedRemoteHost;
-  store: Store;
-  tasks: TaskManager;
-}): Pick<TaskOps, "list" | "query" | "read" | "send" | "update" | "cancel"> {
-  const { local, remote, store, tasks } = deps;
-  const authorize = (principal: TaskCaller) => {
-    assertTaskCaller(tasks, principal);
-  };
-  return {
-    async cancel(command) {
-      if (command.kind === "host") return local.cancel(command);
-      if (command.kind === "agent") authorize(command.principal);
+    async cancel(
+      command: TaskCancelHostCommand,
+    ): Promise<TaskCancelHostOutcome> {
+      if (command.kind === "host") {
+        const status = await local.cancel(command.taskId);
+        return { kind: "local", taskId: command.taskId, status };
+      }
       const route = resolveCancelTarget(command, store, remote);
       if (route.kind === "not_found") {
         throw new TaskNotFoundError(route.taskId);
       }
       if (route.kind === "local") {
-        return local.cancel(command);
+        if (command.kind === "agent") {
+          command.prepareLocal();
+          const status = await local.cancel(command.targetTaskId);
+          return { kind: "local", taskId: command.targetTaskId, status };
+        }
+        const status = await local.cancel(command.taskId);
+        return { kind: "local", taskId: command.taskId, status };
+      }
+      if (!remote?.cancelRemote) {
+        throw new TaskHostNotConfiguredError(route.target.host);
       }
       if (command.kind === "user") {
         const status = await remote.cancelRemote(route.target, {
           kind: "user",
         });
-        return { accepted: true, taskId: route.target.taskId, status };
+        return { kind: "remote", taskId: route.target.taskId, status };
       }
-      const sourceTaskId = command.principal.taskId;
-      const sourceTask = store.getTask(sourceTaskId);
-      if (!sourceTask) throw new Error("execution_replaced");
-      const trimmedTitle = sourceTask.title?.trim();
-      const sourceLabel = truncateUtf16(
-        trimmedTitle && trimmedTitle.length > 0
-          ? trimmedTitle
-          : sourceTaskId.slice(0, 8),
-        MAX_HOST_CANCEL_SOURCE_LABEL_LENGTH,
-      );
+      const { sourceLabel } = command.prepareRemote();
       const status = await remote.cancelRemote(
         route.target,
         {
@@ -161,62 +196,17 @@ export function createRoutedTaskOps(deps: {
           reason: command.reason,
           sourceLabel,
         },
-        () => {
-          authorize(command.principal);
-        },
+        command.beforeSend,
       );
-      authorize(command.principal);
-      const targetLabel =
-        store.getRemoteChildTitle(sourceTaskId, route.target.taskId) ??
-        route.target.taskId.slice(0, 8);
-      recordTaskCancelEvent({
-        store,
-        role: "source",
-        sourceTaskId,
-        sourceLabel,
-        targetTaskId: route.target.taskId,
-        targetLabel,
-        reason: command.reason,
-        status,
-      });
-      return { accepted: true, taskId: route.target.taskId, status };
+      return { kind: "remote", taskId: route.target.taskId, status };
     },
-    async list(principal) {
-      authorize(principal);
-      const order = { self: 0, parent: 1, child: 2 } as const;
-      const [localItems, remoteItems] = await Promise.all([
-        local.list(principal),
-        remote.listRemoteChildren(principal.taskId),
-      ]);
-      return [...localItems, ...remoteItems].sort(
-        (left, right) =>
-          order[left.relation] - order[right.relation] ||
-          left.id.localeCompare(right.id),
-      );
-    },
-    async query(principal, input) {
-      authorize(principal);
-      const target = remote.resolveRemoteChild(
+
+    async send(command) {
+      const { principal, targetTaskId, body, recordLocalSend } = command;
+      const target = remote?.resolveRemoteChild?.(
         principal.taskId,
-        input.taskId ?? principal.taskId,
+        targetTaskId,
       );
-      return target
-        ? remote.queryRemote(target, input)
-        : local.query(principal, input);
-    },
-    async read(principal, input) {
-      authorize(principal);
-      const target = remote.resolveRemoteChild(
-        principal.taskId,
-        input.taskId ?? principal.taskId,
-      );
-      return target
-        ? remote.readRemote(target, input)
-        : local.read(principal, input);
-    },
-    async send(principal, targetTaskId, body) {
-      authorize(principal);
-      const target = remote.resolveRemoteChild(principal.taskId, targetTaskId);
       const externalParent = target
         ? undefined
         : store.getExternalParentLink(principal.taskId);
@@ -257,78 +247,42 @@ export function createRoutedTaskOps(deps: {
           body,
         });
         return {
-          messageId: row.entry_id,
-          deliveryId: row.delivery_id ?? undefined,
-          targetTaskId: remoteLink.targetTaskId,
-          targetLabel: remoteLink.targetLabel,
-          sourceLabel,
+          kind: "remote",
+          result: {
+            messageId: row.entry_id,
+            deliveryId: row.delivery_id ?? undefined,
+            targetTaskId: remoteLink.targetTaskId,
+            targetLabel: remoteLink.targetLabel,
+            sourceLabel,
+          },
         };
       }
-      const record = (performed: TaskSendResult) => {
-        authorize(principal);
-        store.recordCallerSend({
-          id: performed.messageId,
-          sourceTaskId: principal.taskId,
-          directTargetTaskId: performed.targetTaskId,
-          sourceLabel: performed.sourceLabel,
-          targetLabel: performed.targetLabel,
-          body,
-          deliveryId: performed.deliveryId,
-        });
-      };
-      const performed = await local.send(principal, targetTaskId, body, record);
-      void tasks.drainCollaborationDeliveries(performed.targetTaskId);
-      return performed;
+      const result = await local.send(
+        principal,
+        targetTaskId,
+        body,
+        recordLocalSend,
+      );
+      return { kind: "local", result };
     },
-    async update(principal, status, body) {
-      let afterCommit: (() => void) | undefined;
-      const result = await local.update(principal, status, body, (report) => {
-        authorize(principal);
-        const text = formatTaskReport(status, body);
-        if (!report.targetIsLocal) {
-          const link = store.getExternalParentLink(report.sourceTaskId);
-          if (link?.remote_task_id !== report.targetTaskId) {
-            throw new Error("external_parent_link_missing");
-          }
-          store.enqueueLinkReport({
-            remoteRole: "parent",
-            remoteHost: link.remote_host,
-            sourceTaskId: report.sourceTaskId,
-            targetTaskId: report.targetTaskId,
-            sourceLabel: report.sourceLabel,
-            body: text,
-          });
-          return;
+
+    deliverReport(report) {
+      if (!report.targetIsLocal) {
+        const link = store.getExternalParentLink(report.sourceTaskId);
+        if (link?.remote_task_id !== report.targetTaskId) {
+          throw new Error("external_parent_link_missing");
         }
-        const messageId = randomUUID();
-        const deliveryId = randomUUID();
-        if (
-          !store.enqueueReportDelivery({
-            id: messageId,
-            deliveryId,
-            idempotencyKey: `${messageId}:${report.targetTaskId}`,
-            sourceTaskId: report.sourceTaskId,
-            targetTaskId: report.targetTaskId,
-            body: text,
-          })
-        ) {
-          return;
-        }
-        store.recordCallerSend({
-          id: messageId,
+        store.enqueueLinkReport({
+          remoteRole: "parent",
+          remoteHost: link.remote_host,
           sourceTaskId: report.sourceTaskId,
-          directTargetTaskId: report.targetTaskId,
+          targetTaskId: report.targetTaskId,
           sourceLabel: report.sourceLabel,
-          targetLabel: report.targetLabel,
-          body: text,
-          deliveryId,
+          body: report.body,
         });
-        afterCommit = () => {
-          void tasks.drainCollaborationDeliveries(report.targetTaskId);
-        };
-      });
-      afterCommit?.();
-      return result;
+        return {};
+      }
+      return local.deliverReport(report);
     },
   };
 }

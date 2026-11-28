@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { setupDOM, teardownDOM, resetState } from "./frontend-setup.ts";
 import { Store } from "../src/store.ts";
 import { createTaskManager } from "../src/task-manager.ts";
-import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import { createLocalTaskOps } from "./fixtures.ts";
 import type { AgentEvent, StoredEvent } from "../src/types.ts";
 
 /* eslint-disable @typescript-eslint/no-unsafe-function-type -- Promise resolver pattern uses generic Function type */

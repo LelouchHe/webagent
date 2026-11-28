@@ -12,7 +12,7 @@ import {
   createMcpSessionCapabilities,
 } from "../src/mcp/server.ts";
 import type { TaskCaller, TaskOps } from "../src/api/tasks.ts";
-import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import { createLocalTaskOps } from "./fixtures.ts";
 import { TaskManager, type DeliveryBridge } from "../src/task-manager.ts";
 import { TaskStateManager } from "../src/task-state.ts";
 import { StaticAgentEnvironment } from "../src/agent-registry.ts";

@@ -13,7 +13,7 @@ import {
   createMcpEndpoint,
   createMcpSessionCapabilities,
 } from "../src/mcp/server.ts";
-import { createLocalTaskOps } from "../src/host/local/adapter.ts";
+import { createLocalTaskOps } from "./fixtures.ts";
 import type { TaskOps } from "../src/api/tasks.ts";
 import { ExecutionAuthority } from "../src/execution-authority.ts";
 import { Store } from "../src/store.ts";
