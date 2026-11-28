@@ -3,9 +3,10 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
   isTaskCreateError,
-  type TaskCaller,
+  type AgentCaller,
   type TaskOps,
 } from "../api/tasks.ts";
+import { toTaskQueryWire, toTaskReadWire } from "../task-history.ts";
 import {
   buildTaskCreateDescription,
   buildTaskCreateHostDescription,
@@ -52,10 +53,19 @@ export interface McpToolRegistrationOptions {
   configuredHostIds?: readonly string[];
 }
 
+/**
+ * MCP-scoped request principal: pairs the immutable Core `AgentCaller` with
+ * the MCP-only `initializing` handshake window flag.
+ */
+export interface McpToolPrincipal {
+  readonly caller: AgentCaller;
+  readonly initializing: boolean;
+}
+
 /** Register the Agent-facing Task control-plane tools. */
 export function registerMcpTools(
   server: McpServer,
-  principal: TaskCaller,
+  principal: McpToolPrincipal,
   host?: TaskOps,
   options: McpToolRegistrationOptions = {},
 ): void {
@@ -85,7 +95,7 @@ export function registerMcpTools(
     },
     async () => {
       guard();
-      return jsonContent({ tasks: await host!.list(principal) });
+      return jsonContent({ tasks: await host!.list(principal.caller) });
     },
   );
 
@@ -138,11 +148,13 @@ export function registerMcpTools(
     async ({ task_id, text, range }) => {
       guard();
       return jsonContent(
-        await host!.query(principal, {
-          taskId: task_id ?? undefined,
-          text: text ?? undefined,
-          range: range ?? undefined,
-        }),
+        toTaskQueryWire(
+          await host!.query(principal.caller, {
+            taskId: task_id ?? undefined,
+            text: text ?? undefined,
+            range: range ?? undefined,
+          }),
+        ),
       );
     },
   );
@@ -169,7 +181,12 @@ export function registerMcpTools(
     async ({ task_id, seqs }) => {
       guard();
       return jsonContent(
-        await host!.read(principal, { taskId: task_id ?? undefined, seqs }),
+        toTaskReadWire(
+          await host!.read(principal.caller, {
+            taskId: task_id ?? undefined,
+            seqs,
+          }),
+        ),
       );
     },
   );
@@ -248,21 +265,18 @@ export function registerMcpTools(
       try {
         return jsonContent({
           taskId: (
-            await host!.create(
-              { kind: "agent", principal },
-              {
-                title,
-                cwd: cwd ?? undefined,
-                agentId: agent ?? undefined,
-                ...(remoteHost == null ? {} : { host: remoteHost as string }),
-                model: model ?? undefined,
-                thinking: thinking ?? undefined,
-                parentId: principal.taskId,
-                inheritFromTaskId: principal.taskId,
-                source: "agent",
-                opId: randomUUID(),
-              },
-            )
+            await host!.create(principal.caller, {
+              title,
+              cwd: cwd ?? undefined,
+              agentId: agent ?? undefined,
+              ...(remoteHost == null ? {} : { host: remoteHost as string }),
+              model: model ?? undefined,
+              thinking: thinking ?? undefined,
+              parentId: principal.caller.taskId,
+              inheritFromTaskId: principal.caller.taskId,
+              source: "agent",
+              opId: randomUUID(),
+            })
           ).task.id,
         });
       } catch (error) {
@@ -338,7 +352,7 @@ export function registerMcpTools(
       return jsonContent(
         await host!.cancel({
           kind: "agent",
-          principal,
+          principal: principal.caller,
           targetTaskId: target,
           reason,
         }),
@@ -361,7 +375,7 @@ export function registerMcpTools(
     },
     async ({ target, body }) => {
       guard();
-      await host!.send(principal, target, body);
+      await host!.send(principal.caller, target, body);
       return accepted();
     },
   );
@@ -387,7 +401,7 @@ export function registerMcpTools(
     },
     async ({ status, body }) => {
       guard();
-      const { note } = await host!.update(principal, status, body);
+      const { note } = await host!.update(principal.caller, status, body);
       return jsonContent({ accepted: true, ...(note ? { note } : {}) });
     },
   );

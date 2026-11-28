@@ -284,12 +284,9 @@ describe("S3 collaboration write routes", () => {
     await host.create(
       {
         kind: "agent",
-        principal: {
-          taskId: "parent",
-          agentId: "test-agent",
-          generation: parentLease.generation,
-          initializing: false,
-        },
+        taskId: "parent",
+        agentId: "test-agent",
+        generation: parentLease.generation,
       },
       {
         title: "agent-child",

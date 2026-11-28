@@ -236,14 +236,14 @@ describe("createMcpEndpoint", () => {
     query: async (_principal: { taskId: string }, input: unknown) => {
       calls.push({ kind: "query", input });
       return {
-        task_id: "web-1",
-        max_seq: 0,
+        taskId: "web-1",
+        maxSeq: 0,
         rows: [],
       };
     },
     read: async (_principal: { taskId: string }, input: unknown) => {
       calls.push({ kind: "read", input });
-      return { task_id: "web-1", rows: [] };
+      return { taskId: "web-1", rows: [] };
     },
     cancel: async (...args: unknown[]) => {
       calls.push({ kind: "cancel", args });
@@ -721,10 +721,10 @@ describe("createMcpEndpoint", () => {
       if (kind === "create") {
         const caller = args[0] as {
           kind: string;
-          principal: { taskId: string };
+          taskId: string;
         };
         assert.equal(caller.kind, "agent");
-        assert.equal(caller.principal.taskId, "web-1");
+        assert.equal(caller.taskId, "web-1");
         const input = args[1] as { opId?: unknown };
         assert.equal(typeof input.opId, "string");
         delete input.opId;

@@ -121,7 +121,7 @@ describe("tool content shape coverage", () => {
         assert.notEqual(row.field, "status");
         assert.notEqual(row.text, "completed");
       } else {
-        assert.equal(row.content_shape, "unknown");
+        assert.equal(row.contentShape, "unknown");
         assert.equal(row.field, undefined);
         assert.equal(row.text, undefined);
       }
@@ -172,7 +172,7 @@ describe("tool content shape coverage", () => {
     });
     assert.equal(row.text, "visible");
     assert.equal(row.field, "content[]");
-    assert.equal(row.content_shape, "unknown");
+    assert.equal(row.contentShape, "unknown");
   });
 
   it("keeps the diff anchor when a sibling item is unrecognized", () => {
@@ -190,7 +190,7 @@ describe("tool content shape coverage", () => {
     });
     assert.equal(row.field, "content[0].path");
     assert.equal(row.text, "src/a.ts");
-    assert.equal(row.content_shape, "unknown");
+    assert.equal(row.contentShape, "unknown");
   });
 
   it("treats a bare text block as unknown, not as text", () => {
@@ -207,7 +207,7 @@ describe("tool content shape coverage", () => {
         content: [{ type: "text", text: "legacy output" }],
       }),
     });
-    assert.equal(row.content_shape, "unknown");
+    assert.equal(row.contentShape, "unknown");
     assert.equal(row.text, undefined);
     assert.equal(row.field, undefined);
     assert.equal(
@@ -269,7 +269,7 @@ describe("tool content shape coverage", () => {
       }),
     });
     assert.equal(row.text, "done\n[image]");
-    assert.equal(row.content_shape, undefined);
+    assert.equal(row.contentShape, undefined);
 
     // An inline block is the one shape ingest exists to remove: the row is
     // marked unknown and its payload is neither rendered nor echoed.
@@ -282,7 +282,7 @@ describe("tool content shape coverage", () => {
         content: [inline],
       }),
     });
-    assert.equal(inlineRow.content_shape, "unknown");
+    assert.equal(inlineRow.contentShape, "unknown");
     assert.equal(inlineRow.text, undefined);
     assert.equal(inlineRow.field, undefined);
     assert.notEqual(inlineRow.text, "completed");
@@ -350,6 +350,6 @@ describe("tool content shape coverage", () => {
     });
     assert.equal(row.field, "status");
     assert.equal(row.text, "completed");
-    assert.equal(row.content_shape, undefined);
+    assert.equal(row.contentShape, undefined);
   });
 });

@@ -1,7 +1,7 @@
 import type {
-  TaskCaller,
+  AgentCaller,
+  Caller,
   TaskCancelOutcome,
-  TaskCreateCaller,
   TaskCreateInput,
   TaskCreateResult,
   TaskListItem,
@@ -43,7 +43,7 @@ export interface TaskCreateTarget {
 }
 
 export interface TaskCreateHostCommand {
-  caller: TaskCreateCaller;
+  caller: Caller;
   input: TaskCreateInput;
   target: TaskCreateTarget;
   parentId?: string;
@@ -89,7 +89,7 @@ export interface TaskCancelHostOutcome {
 }
 
 export interface TaskSendHostCommand {
-  principal: TaskCaller;
+  principal: AgentCaller;
   targetTaskId: string;
   body: string;
   /** Synchronous audit + authorization callback invoked inside local's transaction. */
@@ -122,9 +122,12 @@ export interface TaskReportDeliveryResult {
  * `src/host/` internally routes between `src/host/local/` and `src/host/remote/`.
  */
 export interface TaskHost {
-  list(principal: TaskCaller): Promise<TaskListItem[]>;
-  query(principal: TaskCaller, input: TaskQueryInput): Promise<TaskQueryResult>;
-  read(principal: TaskCaller, input: TaskReadInput): Promise<TaskReadResult>;
+  list(principal: AgentCaller): Promise<TaskListItem[]>;
+  query(
+    principal: AgentCaller,
+    input: TaskQueryInput,
+  ): Promise<TaskQueryResult>;
+  read(principal: AgentCaller, input: TaskReadInput): Promise<TaskReadResult>;
   create(command: TaskCreateHostCommand): Promise<TaskCreateHostOutcome>;
   cancel(command: TaskCancelHostCommand): Promise<TaskCancelHostOutcome>;
   send(command: TaskSendHostCommand): Promise<TaskSendHostOutcome>;

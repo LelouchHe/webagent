@@ -291,10 +291,10 @@ describe("Remote lifecycle idempotency: HostConnection single-hop retries, befor
     const mcpCancelRes = await hubTaskOps.cancel({
       kind: "agent",
       principal: {
+        kind: "agent",
         taskId: "p1",
         agentId: "mock",
         generation: lease.generation,
-        initializing: false,
       },
       targetTaskId: "r2",
       reason: "mcp cancel drop recovery",
@@ -399,10 +399,10 @@ describe("Remote lifecycle idempotency: HostConnection single-hop retries, befor
         cancelHubOps.cancel({
           kind: "agent",
           principal: {
+            kind: "agent",
             taskId: "p1",
             agentId: "mock",
             generation: leaseBeforeRotate.generation,
-            initializing: false,
           },
           targetTaskId: "r1",
           reason: "stop after rotation",

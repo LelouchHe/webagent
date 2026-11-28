@@ -3140,10 +3140,10 @@ describe("events", () => {
         await host.cancel({
           kind: "agent",
           principal: {
+            kind: "agent",
             taskId: source.id,
             agentId: "test-agent",
             generation: lease.generation,
-            initializing: false,
           },
           targetTaskId: child.id,
           reason: "no longer needed",

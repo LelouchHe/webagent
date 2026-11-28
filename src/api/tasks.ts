@@ -1,4 +1,3 @@
-import { HTTP_STATUS } from "../http-status.ts";
 import type { AgentCommandSnapshot, ConfigOption } from "../types.ts";
 import type {
   TaskUpdateStatus,
@@ -13,9 +12,9 @@ export interface TaskHistoryRow {
   bytes: number;
   group?: string;
   title?: string;
+  contentShape?: "unknown";
   field?: string;
   text?: string;
-  content_shape?: "unknown";
   unprojected?: true;
 }
 
@@ -60,8 +59,8 @@ export interface TaskQueryInput {
 }
 
 export interface TaskQueryResult {
-  task_id: string;
-  max_seq: number;
+  taskId: string;
+  maxSeq: number;
   rows: TaskHistoryRow[];
 }
 
@@ -79,17 +78,11 @@ export interface TaskReadRow {
 }
 
 export interface TaskReadResult {
-  task_id: string;
+  taskId: string;
   rows: TaskReadRow[];
 }
 
 export const MAX_HOST_CANCEL_SOURCE_LABEL_LENGTH = 256;
-
-export function cancelHttpStatus(status: TaskCancelOutcome["status"]): number {
-  return status === "cancelling" || status === "superseded"
-    ? HTTP_STATUS.ACCEPTED
-    : HTTP_STATUS.OK;
-}
 
 export interface TaskCancelOutcome {
   accepted: true;
@@ -112,7 +105,7 @@ export type TaskCancelCommand =
     }
   | {
       kind: "agent";
-      principal: TaskCaller;
+      principal: AgentCaller;
       targetTaskId: string;
       reason: string;
     }
@@ -168,10 +161,25 @@ export interface TaskCreateInput {
   workflowStatus?: TaskWorkflowStatus;
 }
 
-export type TaskCreateCaller =
-  | { kind: "user"; tokenName?: string }
-  | { kind: "agent"; principal: TaskCaller }
-  | { kind: "host"; name: string };
+export interface AgentCaller {
+  readonly kind: "agent";
+  readonly taskId: string;
+  readonly agentId: string;
+  readonly generation: number | null;
+}
+
+export interface UserCaller {
+  readonly kind: "user";
+  readonly tokenName?: string;
+}
+
+export interface HostCaller {
+  readonly kind: "host";
+  readonly name: string;
+}
+
+export type Caller = AgentCaller | UserCaller | HostCaller;
+export type TaskCreateCaller = Caller;
 
 abstract class CreateError extends Error {}
 
@@ -388,48 +396,26 @@ export function isTaskCreateError(error: unknown): error is TaskCreateError {
 }
 
 /**
- * The caller identity of one MCP request, captured once at the endpoint and
- * never mutated.
+ * Task operations supplied by Core behind HTTP and MCP entrypoints.
  *
- * `taskId` is the agent's own task, `agentId` the agent that capability was
- * minted for, and `generation` the execution generation the *token* was
- * promoted for. That generation is the authorization: a request that outlives
- * a rotation must not write even though its token authenticated, and an old
- * token must not inherit the task's newer generation. `initializing` marks the
- * pending window of a session creation, where only the protocol handshake is
- * allowed.
- */
-export interface TaskCaller {
-  readonly taskId: string;
-  readonly agentId: string;
-  readonly generation: number | null;
-  readonly initializing: boolean;
-}
-
-/**
- * Task operations supplied by the host behind task command entrypoints.
- *
- * Agent operations take the request's immutable caller principal; create also
- * accepts a user caller. Agent writes re-check that principal at their own
+ * Agent operations take the request's immutable `AgentCaller`; `create` accepts
+ * any `Caller`. Agent writes re-check that caller's generation at their own
  * submission boundary (immediately before the first side effect), so a
  * rotation that lands while a request is in flight cannot be written through.
  */
 export interface TaskOps {
-  list(principal: TaskCaller): Promise<TaskListItem[]>;
-  query(principal: TaskCaller, input: TaskQueryInput): Promise<TaskQueryResult>;
-  read(principal: TaskCaller, input: TaskReadInput): Promise<TaskReadResult>;
+  list(caller: AgentCaller): Promise<TaskListItem[]>;
+  query(caller: AgentCaller, input: TaskQueryInput): Promise<TaskQueryResult>;
+  read(caller: AgentCaller, input: TaskReadInput): Promise<TaskReadResult>;
   cancel(command: TaskCancelCommand): Promise<TaskCancelOutcome>;
-  create(
-    caller: TaskCreateCaller,
-    input: TaskCreateInput,
-  ): Promise<TaskCreateResult>;
+  create(caller: Caller, input: TaskCreateInput): Promise<TaskCreateResult>;
   send(
-    principal: TaskCaller,
+    caller: AgentCaller,
     targetTaskId: string,
     body: string,
   ): Promise<TaskSendResult>;
   update(
-    principal: TaskCaller,
+    caller: AgentCaller,
     status: TaskUpdateStatus,
     body: string,
   ): Promise<{ note?: string }>;

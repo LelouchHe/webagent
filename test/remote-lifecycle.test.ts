@@ -516,10 +516,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       const agentRes = await hubTaskOps.cancel({
         kind: "agent",
         principal: {
+          kind: "agent",
           taskId: "p1",
           agentId: "pi",
           generation: p1Lease.generation,
-          initializing: false,
         },
         targetTaskId: "r1",
         reason: "no longer needed",
@@ -545,10 +545,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
           hubTaskOps.cancel({
             kind: "agent",
             principal: {
+              kind: "agent",
               taskId: "p2",
               agentId: "pi",
               generation: p2Lease.generation,
-              initializing: false,
             },
             targetTaskId: "r1",
             reason: "not my child",
@@ -566,10 +566,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
           hubTaskOps.cancel({
             kind: "agent",
             principal: {
+              kind: "agent",
               taskId: "p1",
               agentId: "pi",
               generation: staleGen,
-              initializing: false,
             },
             targetTaskId: "r1",
             reason: "stale before",
@@ -589,10 +589,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
           hubTaskOps.cancel({
             kind: "agent",
             principal: {
+              kind: "agent",
               taskId: "p1",
               agentId: "pi",
               generation: freshLease.generation,
-              initializing: false,
             },
             targetTaskId: "r1",
             reason: "rotated mid-flight",
@@ -611,10 +611,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       const recovered = await hubTaskOps.cancel({
         kind: "agent",
         principal: {
+          kind: "agent",
           taskId: "p1",
           agentId: "pi",
           generation: activeLease.generation,
-          initializing: false,
         },
         targetTaskId: "r1",
         reason: "response dropped once",
@@ -635,10 +635,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
           hubTaskOps.cancel({
             kind: "agent",
             principal: {
+              kind: "agent",
               taskId: "p1",
               agentId: "pi",
               generation: activeLease.generation,
-              initializing: false,
             },
             targetTaskId: "r1",
             reason: "response dropped persistently",
@@ -730,10 +730,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       const pendingCancel = hubTaskOps.cancel({
         kind: "agent",
         principal: {
+          kind: "agent",
           taskId: "p1",
           agentId: "pi",
           generation: lease.generation,
-          initializing: false,
         },
         targetTaskId: "r1",
         reason: "rotated while resolving token",
@@ -841,10 +841,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       const ok = await hubTaskOps.cancel({
         kind: "agent",
         principal: {
+          kind: "agent",
           taskId: "p1",
           agentId: "pi",
           generation: lease.generation,
-          initializing: false,
         },
         targetTaskId: "r1",
         reason: "long title test",
@@ -861,10 +861,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       const okEmoji = await hubTaskOps.cancel({
         kind: "agent",
         principal: {
+          kind: "agent",
           taskId: "p1",
           agentId: "pi",
           generation: lease.generation,
-          initializing: false,
         },
         targetTaskId: "r1",
         reason: "surrogate pair boundary",
@@ -880,10 +880,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
       await hubTaskOps.cancel({
         kind: "agent",
         principal: {
+          kind: "agent",
           taskId: "p1",
           agentId: "pi",
           generation: lease.generation,
-          initializing: false,
         },
         targetTaskId: "r1",
         reason: "exact 256 surrogate pair",
@@ -904,10 +904,10 @@ describe("remote lifecycle: cancel resolver, auth, and routing", () => {
             hubTaskOps.cancel({
               kind: "agent",
               principal: {
+                kind: "agent",
                 taskId: "p1",
                 agentId: "pi",
                 generation: lease.generation,
-                initializing: false,
               },
               targetTaskId: "r1",
               reason: "mismatched status pair",

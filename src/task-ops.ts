@@ -1,8 +1,8 @@
 import type { Store } from "./store.ts";
 import type { TaskManager } from "./task-manager.ts";
 import type {
-  TaskCaller,
-  TaskCreateCaller,
+  AgentCaller,
+  Caller,
   TaskCreateInput,
   TaskCreateResult,
   TaskOps,
@@ -26,7 +26,7 @@ function truncateUtf16(value: string, maxLength: number): string {
   return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
 }
 
-function buildTarget(caller: TaskCreateCaller, input: TaskCreateInput) {
+function buildTarget(caller: Caller, input: TaskCreateInput) {
   if (input.agentId?.includes("@")) {
     throw new TaskCreateInputError(
       "invalid_agent",
@@ -63,7 +63,7 @@ export function createTaskOpsCore(deps: {
    * for, and every binding change bumps the task's generation, so a moved
    * binding is refused by `accepts`. Fail closed on missing or stale generation.
    */
-  function authorizeAgent(principal: TaskCaller): void {
+  function authorizeAgent(principal: AgentCaller): void {
     if (principal.generation === null) {
       throw new Error("execution_replaced");
     }
@@ -77,9 +77,9 @@ export function createTaskOpsCore(deps: {
     }
   }
 
-  function authorizeCreateCaller(caller: TaskCreateCaller): void {
+  function authorizeCreateCaller(caller: Caller): void {
     if (caller.kind !== "agent") return;
-    authorizeAgent(caller.principal);
+    authorizeAgent(caller);
   }
 
   function requireTask(taskId: string) {
@@ -112,7 +112,7 @@ export function createTaskOpsCore(deps: {
 
     // eslint-disable-next-line complexity -- one command authorizes, creates, links, and records one operation.
     async create(
-      caller: TaskCreateCaller,
+      caller: Caller,
       input: TaskCreateInput,
     ): Promise<TaskCreateResult> {
       if (
@@ -126,7 +126,7 @@ export function createTaskOpsCore(deps: {
       }
       const localParentId =
         caller.kind === "agent"
-          ? caller.principal.taskId
+          ? caller.taskId
           : caller.kind === "user"
             ? (input.parentId ?? store.rootTaskId)
             : input.parentId;
@@ -134,8 +134,8 @@ export function createTaskOpsCore(deps: {
         authorizeCreateCaller(caller);
         if (caller.kind === "agent") {
           if (
-            input.parentId !== caller.principal.taskId ||
-            input.inheritFromTaskId !== caller.principal.taskId
+            input.parentId !== caller.taskId ||
+            input.inheritFromTaskId !== caller.taskId
           ) {
             throw new Error("target_not_allowed");
           }

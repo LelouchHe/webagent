@@ -68,7 +68,7 @@ describe("tool-result images: a stored inline block", () => {
     const updateRow = stored.find((row) => row.type === "tool_call_update");
     assert.ok(updateRow);
     const projected = projectTaskHistoryRow(updateRow);
-    assert.equal(projected.content_shape, "unknown");
+    assert.equal(projected.contentShape, "unknown");
     assert.equal(projected.text, undefined);
     assert.equal(projected.field, undefined);
     assert.equal(JSON.stringify(projected).includes(PNG_BASE64), false);

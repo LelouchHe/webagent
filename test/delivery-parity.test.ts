@@ -484,10 +484,10 @@ describe("local vs linked delivery parity (Scenario 9)", () => {
     });
     const revOut = await ownerRouted.send(
       {
+        kind: "agent",
         taskId: "c-owner",
         agentId: "test-agent",
         generation: ownerTasks.authority.leaseFor("c-owner")!.generation,
-        initializing: false,
       },
       "p-hub",
       "reverse",
@@ -533,10 +533,10 @@ describe("local vs linked delivery parity (Scenario 9)", () => {
     });
     await localOps.send(
       {
+        kind: "agent",
         taskId: "c-local",
         agentId: "test-agent",
         generation: localTasks.authority.leaseFor("c-local")!.generation,
-        initializing: false,
       },
       "p-local",
       "hello parent",
@@ -552,10 +552,10 @@ describe("local vs linked delivery parity (Scenario 9)", () => {
     });
     const sent = await ownerRouted.send(
       {
+        kind: "agent",
         taskId: "c-owner",
         agentId: "test-agent",
         generation: ownerTasks.authority.leaseFor("c-owner")!.generation,
-        initializing: false,
       },
       "p-hub",
       "hello parent",

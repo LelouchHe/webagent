@@ -15,9 +15,9 @@ import { expandHomePath, abbreviateHomePath } from "../../home-path.ts";
 import { errorMessage } from "../../types.ts";
 import { isoFromMillis, isoFromMillisOrNull } from "../../shared/time.ts";
 import type {
-  TaskCaller,
+  AgentCaller,
+  Caller,
   TaskCancelOutcome,
-  TaskCreateCaller,
   TaskQueryInput,
   TaskQueryResult,
   TaskListItem,
@@ -45,17 +45,20 @@ import {
 } from "../../task-history.ts";
 
 export interface LocalTaskHost {
-  list(principal: TaskCaller): Promise<TaskListItem[]>;
-  query(principal: TaskCaller, input: TaskQueryInput): Promise<TaskQueryResult>;
-  read(principal: TaskCaller, input: TaskReadInput): Promise<TaskReadResult>;
+  list(principal: AgentCaller): Promise<TaskListItem[]>;
+  query(
+    principal: AgentCaller,
+    input: TaskQueryInput,
+  ): Promise<TaskQueryResult>;
+  read(principal: AgentCaller, input: TaskReadInput): Promise<TaskReadResult>;
   create(
-    caller: TaskCreateCaller,
+    caller: Caller,
     input: TaskCreateInput,
     assertCaller?: () => void,
   ): Promise<{ replayed: boolean; result: TaskCreateResult }>;
   cancel(taskId: string): Promise<TaskCancelOutcome["status"]>;
   send(
-    principal: TaskCaller,
+    principal: AgentCaller,
     targetTaskId: string,
     body: string,
     record: (performed: TaskSendResult) => void,
@@ -196,7 +199,7 @@ export function createLocalTaskHost(deps: {
 
     // eslint-disable-next-line complexity -- one command owns both caller-specific target resolution and shared create effects.
     async create(
-      caller: TaskCreateCaller,
+      caller: Caller,
       input: TaskCreateInput,
       assertCaller?: () => void,
     ): Promise<{ replayed: boolean; result: TaskCreateResult }> {
@@ -289,7 +292,7 @@ export function createLocalTaskHost(deps: {
           throw error;
         }
       }
-      const agentCaller = caller.kind === "agent" ? caller.principal : null;
+      const agentCaller = caller.kind === "agent" ? caller : null;
       const source =
         agentCaller?.taskId !== undefined
           ? requireTask(agentCaller.taskId)
@@ -307,7 +310,7 @@ export function createLocalTaskHost(deps: {
       }
       const localCallerScope =
         caller.kind === "agent"
-          ? `agent:${caller.principal.taskId}`
+          ? `agent:${caller.taskId}`
           : `token:${caller.tokenName ?? "anonymous"}`;
       const localDeterministicId =
         input.opId !== null

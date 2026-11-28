@@ -64,11 +64,11 @@ function registeredTools(
   const host = {
     list: async () => [],
     query: async () => ({
-      task_id: "current",
-      max_seq: 0,
+      taskId: "current",
+      maxSeq: 0,
       rows: [],
     }),
-    read: async () => ({ task_id: "current", rows: [] }),
+    read: async () => ({ taskId: "current", rows: [] }),
     cancel: async () => ({
       accepted: true as const,
       taskId: "child",
@@ -98,9 +98,12 @@ function registeredTools(
   registerMcpTools(
     server,
     {
-      taskId: "current",
-      agentId: "agent-a",
-      generation: 1,
+      caller: {
+        kind: "agent",
+        taskId: "current",
+        agentId: "agent-a",
+        generation: 1,
+      },
       initializing: false,
     },
     host,
