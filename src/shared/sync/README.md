@@ -27,12 +27,13 @@ The module only decides *when* to send, retry, read, or stop. What an entry
 means, how it is stored, and what counts as hand-off are the caller's: for
 links, `src/host/link-sync.ts` and the `Store` implement those ports.
 
-The main browser also uses the feed consumer in `public/js/sync-hub.ts`. A
-same-origin SharedWorker owns the single global SSE connection and fans feed
-frames out to tab ports; `SyncFeedConsumer` performs ordered REST catch-up,
-applies durable feed positions, and rejects stale overlap. The browser keeps
-ephemeral delivery separate from persisted feed rows and the server's
-outer-commit observer publishes only committed event batches.
+The main browser uses the feed consumer in `public/js/connection.ts`.
+`public/js/sync-hub.ts` owns the physical global SSE connection (through a
+same-origin SharedWorker, or an in-tab fallback) and fans feed frames to tab
+ports. The tab creates one `SyncFeedConsumer` for the active task, performs
+ordered REST catch-up, applies durable positions, and rejects stale overlap.
+The browser keeps ephemeral delivery separate from persisted feed rows and the
+server's outer-commit observer publishes only committed event batches.
 
 ## Request
 
@@ -40,6 +41,10 @@ outer-commit observer publishes only committed event batches.
 wait. The neutral result has three classes: success, explicit `4xx`, and
 unknown (transport failure, timeout, or server error). A caller that implements
 an operation-level durability contract owns how those classes affect the entry.
+`beforeSend(attempt)` is a synchronous fence: returning `false` skips attempt
+zero or stops a retry, while a later thrown fence error preserves the preceding
+unknown result. `backoffMs` is applied before retries only; attempt zero is
+always immediate.
 
 ## Feed consumer
 
@@ -55,12 +60,24 @@ receive entry:
 
 new watch generation:
   stale frames, reads, retries, and abort-delayed continuations are invalid
+
+bounded catch-up:
+  beforeCatchUp returns targetPos
+  read(after, { upTo: targetPos }) page by page
+  commit snapshot only after the chain reaches targetPos
 ```
 
 Every data frame and heartbeat calls `activity()` without re-running
 `connected()`. A protocol failure stops that feed's supervisor; a temporary
 failure and retry remain per link. The caller's persistence port is the only
 code allowed to advance `applied`.
+
+`ephemeral` frames use `applyEphemeral()` and never advance `applied`. With
+`catchUpOnConnect: true`, the consumer runs the bounded catch-up on each
+successful connection. Browser tabs use `liveness: "external"` because the
+SharedWorker/fallback hub owns transport liveness; the consumer still rejects
+frames and continuations from a stale generation but does not run its own
+stall/handshake timer.
 
 ## Outbox
 

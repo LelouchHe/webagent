@@ -886,7 +886,9 @@ task: …`, never a busy conflict. Destructive operations (`POST /clear`, delete
 Root exit) still answer `409` while the task is restoring, because they would
 replace the execution being loaded.
 
-Use `GET /events` for message history (rendering only) and `GET /snapshot` for runtime state (`busy`, `pendingPermissions`, `streaming`). The two are decoupled — `/events` never mutates runtime state in the frontend.
+Use `GET /events` for committed message history and `GET /snapshot` for the
+current runtime state (`busy`, pending permissions, streaming watermarks).
+The two are decoupled.
 
 **Response** `200`:
 
@@ -909,9 +911,34 @@ Use `GET /events` for message history (rendering only) and `GET /snapshot` for r
       "since": "2026-04-18T18:00:00.000Z",
       "promptId": "p1"
     },
-    "pendingPermissions": [],
-    "streaming": { "assistant": false, "thinking": false }
-  }
+    "pendingPermissions": []
+  },
+  "streaming": {
+    "epoch": "server-process-epoch",
+    "lastSegmentId": 7,
+    "thinking": {
+      "segmentId": 6,
+      "endOffset": 24,
+      "text": "current thought preview"
+    },
+    "assistant": {
+      "segmentId": 7,
+      "endOffset": 11,
+      "text": "current text"
+    }
+  },
+  "imageReferences": [
+    {
+      "sourceUri": "file:///private/tmp/tool-image.png",
+      "attachment": {
+        "kind": "image",
+        "attachmentId": "attachment-uuid",
+        "displayName": "tool-image.png",
+        "mimeType": "image/png",
+        "path": "/api/v1/tasks/abc-123/attachments/attachment-uuid.png?sig=...&exp=..."
+      }
+    }
+  ]
 }
 ```
 
@@ -923,7 +950,11 @@ Use `GET /events` for message history (rendering only) and `GET /snapshot` for r
   looking at a busy indicator with no visible cause. A restore is still a
   blocker for state-changing operations; that gate is internal and never
   surfaces as `busy`.
-- `runtime.pendingPermissions` / `runtime.streaming` — present in the schema; population via `state_patch` follows in subsequent milestones.
+- `streaming` — the top-level process-epoch watermark and optional active
+  thinking/assistant previews. `endOffset` is a UTF-16 offset. This is a pure
+  read and never flushes the buffers.
+- `imageReferences` — verified persisted `file://`-to-attachment bindings for
+  recovered Markdown images, with attachment paths freshly signed at egress.
 
 **Consistency rule**: If an incoming `state_patch.seq != lastSeq + 1`, the frontend reloads the snapshot and drops in-flight patches.
 
@@ -968,55 +999,57 @@ With `X-Client-Op-Id`, the HTTP `ops` adapter guarantees at-most-once execution 
 Retrieve events for a task (history). This is the primary history endpoint
 used during page load, and the read contract for external consumers: it never
 touches execution, so it works for archived, unbound, and never-materialized
-tasks alike. By default every scope gets **persisted rows only**: no
-thinking/assistant buffer is flushed, `seq` does not advance, and `streaming`
-is `false`. The browser explicitly requests `flush=1` where it consumes that
-streaming state.
+tasks alike. Every scope gets **persisted rows only**: no
+thinking/assistant buffer is flushed and `seq` does not advance.
 
 | Parameter  | In    | Type           | Description                                                                                                      |
 | ---------- | ----- | -------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `thinking` | query | `"0"` or `"1"` | Set to `"0"` to exclude thinking events                                                                          |
-| `after`    | query | number         | Return only events with `seq > after` (incremental sync)                                                         |
-| `limit`    | query | number         | Return at most N events (latest N, in ASC order). When omitted, returns all events (backward compat). Max 10000. |
+| `after`    | query | number         | Return events with `seq > after`; the browser's forward catch-up shape returns ascending feed entries. |
+| `upTo`     | query | number         | Upper bound for bounded forward catch-up. The response cannot advance beyond the snapshot position. |
+| `limit`    | query | number         | Return at most N entries. Max 10000. Forward catch-up is ascending; backward history uses `before`. |
 | `before`   | query | number         | Return only events with `seq < before` (cursor for pagination). Combine with `limit` to paginate backwards.      |
-| `flush`    | query | `"1"`          | Flush pending thinking/assistant buffers into stored events before reading. Omitted means no flush or seq advance. |
 
-**Response** `200`: Envelope containing events array and streaming status. When `limit` is provided, `total` and `hasMore` are included.
+**Response** `200`: an envelope of `FeedEntry<StoredEvent>` values.
 
 ```json
 {
   "events": [
     {
-      "id": 1,
-      "task_id": "abc-123",
-      "seq": 1,
-      "type": "user_message",
-      "data": "{\"text\":\"Hello\"}",
-      "created_at": "2025-01-15T10:31:00.000Z"
+      "feed": "abc-123",
+      "pos": 12,
+      "prev": 11,
+      "data": {
+        "id": 90,
+        "task_id": "abc-123",
+        "seq": 12,
+        "type": "user_message",
+        "data": "{\"text\":\"Hello\"}",
+        "from_ref": "user",
+        "created_at": "2025-01-15T10:31:00.000Z"
+      }
     }
   ],
-  "streaming": {
-    "thinking": false,
-    "assistant": false
-  },
+  "imageReferences": [],
   "total": 7157,
   "hasMore": true
 }
 ```
 
-| Field       | Present               | Description                                                    |
-| ----------- | --------------------- | -------------------------------------------------------------- |
-| `events`    | always                | Array of stored events, ordered by `seq` ASC                   |
-| `streaming` | always                | Whether a tail was flushed or the runtime is actively streaming |
-| `total`     | when `limit` provided | Total event count for the task (respects `thinking` filter) |
-| `hasMore`   | when `limit` provided | Whether there are older events before the returned page        |
+| Field | Present | Description |
+| --- | --- | --- |
+| `events` | always | Feed entries. `pos` is the task sequence and `prev` is `pos - 1`. |
+| `imageReferences` | backward/history reads only | Verified image-reference metadata; omitted from forward catch-up. |
+| `total` | limited backward read | Persisted event count for the task, respecting `thinking`. |
+| `hasMore` | limited backward read | Whether an older page exists. |
 
 **Pagination example:**
 
 ```
-GET /api/v1/tasks/:id/events?limit=200           → latest 200 events
+GET /api/v1/tasks/:id/events?limit=200           → latest 200 events for backward history
 GET /api/v1/tasks/:id/events?limit=200&before=50 → 200 events before seq 50
-GET /api/v1/tasks/:id/events?after=7000      → all events after seq 7000 (incremental sync, no limit)
+GET /api/v1/tasks/:id/events?after=7000&limit=200&upTo=7123
+                                                 → bounded forward catch-up through seq 7123
 ```
 
 **Collaboration delivery marks.** A stored `system_message` whose `data.kind`
@@ -1055,12 +1088,6 @@ row:
 A failed delivery carries `failureReason` instead of `deliveredAt`. The event is
 best effort; a reload reads the delivery row.
 
-
-The `streaming` flags indicate either that an explicit `flush=1` found an
-unflushed buffer or that the runtime is actively streaming. A `true` flag can
-therefore accompany no new event rows. If a tail was flushed, the frontend
-should keep the last element open for continued live streaming (to avoid
-duplicate thinking/assistant blocks on reconnect).
 
 > **Note:** The `data` field is a JSON string that must be parsed by the client. The shape of the parsed object depends on the `type`. See [SSE Event Reference](#sse-event-reference).
 
@@ -2192,29 +2219,35 @@ Associate an SSE client with a push subscription endpoint. Used for per-task vis
 
 #### `POST /api/beta/clients/:clientId/visibility`
 
-Report client visibility state (foreground/background) and which task the client is viewing. Used by the push notification service for **global, task-scoped** suppression — if any client is viewing task X, push for task X is suppressed on **all** endpoints across all devices. See [Visibility Sync & Push Suppression](architecture/client.md#visibility-sync--push-suppression) for the full architecture (60s TTL, named-event heartbeat, edge-triggered banner recall).
+Report the complete set of tasks visible to one client. This drives global,
+task-scoped push suppression. See [Visibility Sync & Push Suppression](architecture/client.md#visibility-sync--push-suppression).
+`X-Visibility-Rev` is required and must be a positive safe integer; stale or
+repeated revisions are ignored.
 
 **Request body:**
 
 ```json
-{ "visible": true, "taskId": "optional-task-id" }
+{ "taskIds": ["task-a", "task-b"] }
 ```
 
 | Field       | Type           | Required | Description                                                                                                                                 |
 | ----------- | -------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `visible`   | boolean        | yes      | Whether the client is in the foreground                                                                                                     |
-| `taskId` | string \| null | no       | Omitted = preserve prior value; explicit `null` = clear; string = replace. A visible client with no task set does not suppress any push. |
+| `taskIds` | string[] | yes | Complete replacement set; `[]` means no task is visible. |
 
 **Behavior:**
 
-- Every call stamps `visibleSince`; records older than 60s are ignored by the suppression check (self-heals ghost records).
-- Transitioning to visible+task=X (from invisible OR a different task) triggers `sendClose` for `sess-${X}-done` + pending-permission cleanup on other devices. Heartbeat refreshes of the same state do **not** re-fire sendClose.
+- Every accepted call replaces the set and stamps `visibleSince`; records older
+  than 60s are ignored by the suppression check.
+- Newly visible ids trigger completion-banner and pending-permission cleanup.
+  A stale revision or repeated set does not retrigger the edge.
 
-**Trust boundary:** accepts `clientId` known to either the SSE manager OR the `clientRegistry` (the registry survives SSE disconnect, so `pagehide` beacons still land after the stream closes).
+The SSE client must still be connected both before and after the body is read.
+A client that disconnects during the body read returns 404 and is not
+re-created.
 
 **Response** `200`: `{ "ok": true }`
 
-**Errors:** `404` (client not found)
+**Errors:** `400` (invalid revision or `taskIds`), `404` (client not connected)
 
 ---
 

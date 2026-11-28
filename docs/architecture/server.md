@@ -288,9 +288,9 @@ Behavior of an agent's execution:
 persists events to the Store, updates `TaskState`, and hands frames to the
 `SseManager`. `PushService` receives the notifiable events.
 
-- **SSE** — `SseManager.broadcast()` sends an event to every client that is not
-  delivered to every global client; there is no per-task SSE filter
-  application-wide state. A named heartbeat frame every 15 seconds keeps
+- **SSE** — `SseManager.broadcast()` sends an ephemeral event to every global
+  client; committed persisted rows use the outer-commit feed path, and there is
+  no per-task SSE filter. A named heartbeat frame every 15 seconds keeps
   proxies from closing idle streams and re-checks token revocation.
 - **Egress rewrites** — the internal lease stamp is dropped before an event
   leaves the server; attachment paths are relabeled and image URLs are signed at

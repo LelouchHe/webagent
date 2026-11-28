@@ -228,14 +228,17 @@ Promise.all([
 For **incremental reconnects** (same task, SSE dropped):
 
 ```
-api.getTask(taskId, { warm: true }) // warm read for config/title
-→ handleEvent({ type: 'task_created', ... })
-→ feed catch-up from the applied position
+api.getSnapshot(taskId, { warm: true }) // cold runtime read + explicit warm
+→ capture snapshot.task.lastEventSeq as bounded target
+→ paged read(after=applied, upTo=target)
+→ commit snapshot + release queued live frames
 ```
 
 `getSnapshot()` is cold by default. The snapshot reconciliation paths call it
 without `warm=1`, while navigation/detail call sites that need execution
-metadata request warm explicitly.
+metadata request warm explicitly. Same-task reconnect uses the warm snapshot
+and its event watermark as the catch-up fence, so live frames cannot advance
+the applied position beyond an inconsistent snapshot.
 
 ### Reconnection
 
@@ -244,13 +247,19 @@ When SSE disconnects:
 1. `cleanup()` — reset connection state, finalize streaming elements
 2. `setTimeout(connect, 3000)` — retry after 3 seconds
 3. On reconnect, `initTask()` detects the same task in the hash → **incremental** path
-4. Only fetches events after `state.lastEventSeq` — no full history reload
+4. Reads a snapshot watermark, then performs bounded forward pages through that
+   exact position before committing the snapshot — no full history reload
 
 ### Visibility Sync & Push Suppression
 
 Push notifications are filtered by a **global, task-scoped visibility rule**: if any client is actively viewing task X, push for task X is suppressed on **all** endpoints (e.g. laptop looking at A → phone also doesn't buzz for A). But task B completing in the background still pushes to all devices. Controlled by `push.global_visibility_suppression` (default `true`).
 
-**Server-side split (single-writer pattern):** `ClientRegistry` (`src/client-registry.ts`) is the sole writer for client identity + visibility state (one entry per `clientId` with `visible`, `active` task, `visibleSince` timestamp). `PushService` (`src/push-service.ts`) owns push endpoints (VAPID subscription, consecutive-failure counter) and delegates **all** visibility reads to the registry (`isTaskVisibleToAnyClient`, `hasVisibleClient`, `isEndpointVisible`). Splitting the writer prevents the two pieces of state from drifting; previously they were both updated from `PushService.updateClient` and a buggy code path could leave them inconsistent.
+**Server-side split (single-writer pattern):** `ClientRegistry`
+(`src/client-registry.ts`) is the sole writer for client identity and its
+declarative `visibleTaskIds` set plus `visibleSince` timestamp.
+`PushService` (`src/push-service.ts`) owns push endpoints and delegates all
+visibility reads to the registry (`isTaskVisibleToAnyClient`,
+`hasVisibleClient`, `isEndpointVisible`).
 
 Accurate visibility state is therefore critical — a stale "visible" record globally blackholes push. The fundamental limitation is that `visibilitychange` only tracks tab-switching, not actual user attention, and on iOS PWA the browser can silently kill the hidden-transition `fetch` mid-flight, leaving a permanent ghost record.
 
@@ -258,23 +267,27 @@ Accurate visibility state is therefore critical — a stale "visible" record glo
 
 | Layer                                 | Mechanism                                                                                                                                              | File                                              |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
-| 1. Hidden transition survives OS kill | `navigator.sendBeacon` first, `fetch({keepalive:true})` fallback, plus `pagehide` secondary listener                                                   | `connection.ts` → `postHiddenBeacon()`            |
-| 2. Server clock on every record       | Each `/visibility` update stamps `visibleSince`; readers ignore records older than **60s**                                                             | `client-registry.ts` → `isTaskVisibleToAnyClient` (called via `push-service.ts`) |
-| 3. Continuous refresh while SSE alive | SSE emits a **named** `event: heartbeat` every **15s** (not a comment — `EventSource` discards those); frontend listener POSTs `/visibility` each tick | `sse-manager.ts`, `connection.ts`                 |
+| 1. Hub-level latest state | `SyncHub` collects the visible task id from every authenticated live tab and full-replaces the set when it changes | `sync-hub.ts` |
+| 2. Revision fencing | Each POST carries a positive monotonic `X-Visibility-Rev`; stale/equal revisions are ignored | `client-registry.ts` → `setVisibility()` |
+| 3. Server TTL | Each accepted `/visibility` update stamps `visibleSince`; readers ignore records older than **60s** | `client-registry.ts` → `isTaskVisibleToAnyClient` |
 
 SSE liveness is the single authoritative "this client is reachable" signal: connection alive → heartbeat fires → TTL stays fresh; connection dies or process is suspended → heartbeats stop → record expires within 60s and push correctly re-enables globally.
 
 **Edge vs level semantics on `/visibility`:**
 
-- `ClientRegistry.setVisibility` returns `{ becameVisibleFor }`, non-null **only** on the edge (invisible OR different task → visible + task=X). PushService observes that signal (via the `/visibility` handler) to fire close-banner side effects.
-- `sendClose(sess-${sid}-done)` + permission cleanup fire **only** on that edge, not on every 15s heartbeat refresh — otherwise one focused client would hammer banner recall on every device every 15s
-- Body parsing distinguishes `taskId` omitted (preserve prior) from explicit `null` (clear) via `"taskId" in body` on raw JSON before Zod collapses both to `undefined`
+- `ClientRegistry.setVisibility` accepts only a newer revision and full-replaces
+  `visibleTaskIds`. It returns `newlyVisibleTaskIds`, not an in-flight boolean.
+- Completion and permission banner cleanup fires only for ids that became
+  visible; heartbeat refreshes of an unchanged set do not repeat it.
+- The hub posts `{ taskIds }`; each update also requires
+  `X-Visibility-Rev: <positive integer>`. An SSE client that disconnects during
+  body parsing returns 404 and is never recreated.
 
 **When the client reports:** each SSE client registers its push endpoint with
-`POST /api/beta/push/register-client` on connect, and reports
-`{ visible, taskId? }` to `POST /api/beta/clients/:clientId/visibility` on SSE
-connect, on `visibilitychange`, and on task switch (the `task_created`
-handler). A client with no current task suppresses nothing.
+`POST /api/beta/push/register-client` on connect. The hub reports
+`{ taskIds: [...] }` to `POST /api/beta/clients/:clientId/visibility`, with a
+monotonic `X-Visibility-Rev`, whenever the union of visible tab task ids
+changes. The empty set suppresses nothing.
 
 **Emergency rollback:** set `push.global_visibility_suppression = false` in the service config and reload — disables cross-device suppression without code change.
 
