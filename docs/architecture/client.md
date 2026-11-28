@@ -242,13 +242,13 @@ the applied position beyond an inconsistent snapshot.
 
 ### Reconnection
 
-When SSE disconnects:
-
-1. `cleanup()` — reset connection state, finalize streaming elements
-2. `setTimeout(connect, 3000)` — retry after 3 seconds
-3. On reconnect, `initTask()` detects the same task in the hash → **incremental** path
-4. Reads a snapshot watermark, then performs bounded forward pages through that
-   exact position before committing the snapshot — no full history reload
+When SSE disconnects, `SyncHub`'s stream supervisor closes the stale attempt and
+retries it under a fresh generation. The tab discards its active consumer and
+waits for both reconnection gates: the new hub `connected` frame and the
+`focus_ack` for the same focus generation. It then rebuilds the active task's
+consumer. `beforeCatchUp` takes a warm snapshot, reads forward pages bounded by
+that snapshot's `lastEventSeq`, and commits the snapshot only after reaching the
+watermark; stale frames and continuations from the old generation are ignored.
 
 ### Visibility Sync & Push Suppression
 
@@ -278,7 +278,8 @@ SSE liveness is the single authoritative "this client is reachable" signal: conn
 - `ClientRegistry.setVisibility` accepts only a newer revision and full-replaces
   `visibleTaskIds`. It returns `newlyVisibleTaskIds`, not an in-flight boolean.
 - Completion and permission banner cleanup fires only for ids that became
-  visible; heartbeat refreshes of an unchanged set do not repeat it.
+  visible. Heartbeat refreshes still POST the unchanged set to refresh TTL, but
+  do not repeat that edge while the prior visibility remains fresh.
 - The hub posts `{ taskIds }`; each update also requires
   `X-Visibility-Rev: <positive integer>`. An SSE client that disconnects during
   body parsing returns 404 and is never recreated.
@@ -694,11 +695,11 @@ Uses `res.text()` + `JSON.parse()` instead of `res.json()` to handle empty bodie
 | `cancelTask(taskId)`                          | POST   | `/api/v1/tasks/:id/cancel`                        |
 | `resolvePermission(taskId, requestId, optionId)` | POST   | `/api/v1/tasks/:id/permissions/:reqId`            |
 | `denyPermission(taskId, requestId)`              | POST   | `/api/v1/tasks/:id/permissions/:reqId`            |
-| `setConfig(taskId, configId, value)`             | PUT    | `/api/v1/tasks/:id/{model,mode,reasoning-effort}` |
+| `setConfig(taskId, configId, value)`             | PUT    | `/api/v1/tasks/:id/config/:configId` |
 | `setTitle(taskId, title)`                        | PUT    | `/api/v1/tasks/:id/title`                         |
 | `execBash(taskId, command)`                      | POST   | `/api/v1/tasks/:id/bash`                          |
 | `cancelBash(taskId)`                             | POST   | `/api/v1/tasks/:id/bash/cancel`                   |
-| `postVisibility(clientId, visible)`                 | POST   | `/api/beta/clients/:clientId/visibility`             |
+| `postVisibility(clientId, taskIds, rev)`            | POST   | `/api/beta/clients/:clientId/visibility`             |
 | `getStatus(taskId)`                              | GET    | `/api/v1/tasks/:id/status`                        |
 
 ---

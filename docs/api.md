@@ -918,12 +918,12 @@ The two are decoupled.
     "lastSegmentId": 7,
     "thinking": {
       "segmentId": 6,
-      "endOffset": 24,
+      "endOffset": 23,
       "text": "current thought preview"
     },
     "assistant": {
       "segmentId": 7,
-      "endOffset": 11,
+      "endOffset": 12,
       "text": "current text"
     }
   },
@@ -2239,7 +2239,9 @@ repeated revisions are ignored.
 - Every accepted call replaces the set and stamps `visibleSince`; records older
   than 60s are ignored by the suppression check.
 - Newly visible ids trigger completion-banner and pending-permission cleanup.
-  A stale revision or repeated set does not retrigger the edge.
+  A stale revision or repeated set does not retrigger the edge while the prior
+  visibility remains within the 60-second TTL. After that record expires, a
+  newer revision reporting the same set makes those ids newly visible again.
 
 The SSE client must still be connected both before and after the body is read.
 A client that disconnects during the body read returns 404 and is not

@@ -7,18 +7,10 @@
 // command-path `agent_key` (not a valid configured id) is the secondary signal
 // for a hand-edited mixed database. A valid-but-removed agent id is allowed.
 
-import { existsSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { pathToFileURL } from "node:url";
+import Database from "better-sqlite3";
 import { AGENT_ID_PATTERN } from "./config.ts";
-
-interface ReadableDatabase {
-  prepare(sql: string): {
-    get(...params: unknown[]): unknown;
-    all(...params: unknown[]): unknown[];
-  };
-}
 
 export interface LegacyDatabaseReport {
   taskCount: number;
@@ -175,7 +167,7 @@ const TIMESTAMP_COLUMNS: Readonly<Record<string, readonly string[]>> = {
   owner_prefs: ["updated_at"],
 };
 
-function tableExists(db: ReadableDatabase, table: string): boolean {
+function tableExists(db: Database.Database, table: string): boolean {
   return (
     db
       .prepare(
@@ -186,7 +178,7 @@ function tableExists(db: ReadableDatabase, table: string): boolean {
 }
 
 function tableColumns(
-  db: ReadableDatabase,
+  db: Database.Database,
   table: string,
 ): Map<
   string,
@@ -194,7 +186,7 @@ function tableColumns(
 > {
   return new Map(
     (
-      db.prepare(`PRAGMA table_info("${table}")`).all() as Array<{
+      db.pragma(`table_info("${table}")`) as Array<{
         type: string;
         notnull: number;
         dflt_value: unknown;
@@ -204,7 +196,7 @@ function tableColumns(
   );
 }
 
-function detectColumnIncompatibility(db: ReadableDatabase): string | null {
+function detectColumnIncompatibility(db: Database.Database): string | null {
   for (const [table, required] of Object.entries(REQUIRED_COLUMNS)) {
     if (!tableExists(db, table)) continue;
     const actual = tableColumns(db, table);
@@ -221,7 +213,7 @@ function detectColumnIncompatibility(db: ReadableDatabase): string | null {
   return null;
 }
 
-function detectTimestampIncompatibility(db: ReadableDatabase): string | null {
+function detectTimestampIncompatibility(db: Database.Database): string | null {
   for (const [table, columns] of Object.entries(TIMESTAMP_COLUMNS)) {
     if (!tableExists(db, table)) continue;
     const actual = tableColumns(db, table);
@@ -239,7 +231,7 @@ function detectTimestampIncompatibility(db: ReadableDatabase): string | null {
   return null;
 }
 
-function detectConstraintIncompatibility(db: ReadableDatabase): string | null {
+function detectConstraintIncompatibility(db: Database.Database): string | null {
   if (
     tableExists(db, "events") &&
     db
@@ -277,7 +269,7 @@ function detectConstraintIncompatibility(db: ReadableDatabase): string | null {
 
 /** Find any existing table/index shape that this version must not mutate. */
 export function detectSchemaIncompatibility(
-  db: ReadableDatabase,
+  db: Database.Database,
 ): string | null {
   if (tableExists(db, "sessions")) return "legacy sessions table";
   if (tableExists(db, "client_ops")) return "legacy client_ops table";
@@ -298,7 +290,7 @@ export function detectSchemaIncompatibility(
 }
 
 function hasNamedRoot(
-  db: ReadableDatabase,
+  db: Database.Database,
   tableSql: ReadonlyMap<string, string>,
 ): boolean {
   if (
@@ -318,7 +310,7 @@ function hasNamedRoot(
 }
 
 function detectPathLikeAgentKeys(
-  db: ReadableDatabase,
+  db: Database.Database,
   tableSql: ReadonlyMap<string, string>,
 ): string[] {
   if (
@@ -339,7 +331,7 @@ function detectPathLikeAgentKeys(
 }
 
 function hasOutdatedRemoteTasks(
-  db: ReadableDatabase,
+  db: Database.Database,
   tableSql: ReadonlyMap<string, string>,
 ): boolean {
   if (!tableSql.has("remote_tasks")) return false;
@@ -367,7 +359,7 @@ function hasOutdatedOutbox(tableSql: ReadonlyMap<string, string>): boolean {
 
 /** Inspect an already-open database. Returns null for a non-WebAgent DB. */
 export function detectLegacyDatabase(
-  db: ReadableDatabase,
+  db: Database.Database,
 ): LegacyDatabaseReport | null {
   const tableSql = new Map(
     (
@@ -414,17 +406,14 @@ export function detectLegacyDatabase(
   return report;
 }
 
-/** Read-only pre-open check; a refused start leaves the file byte-identical. */
+/**
+ * Read-only pre-open check. Database and WAL bytes are left unchanged; SQLite
+ * may create or refresh the temporary shared-memory index alongside a WAL.
+ */
 export function assertNotLegacyDatabase(dataDir: string): void {
   const dbPath = join(dataDir, "webagent.db");
   if (!existsSync(dbPath)) return;
-  const walPath = `${dbPath}-wal`;
-  const hasCommittedWal = existsSync(walPath) && statSync(walPath).size > 0;
-  const uri = pathToFileURL(dbPath).href;
-  const db = new DatabaseSync(
-    hasCommittedWal ? `${uri}?mode=ro` : `${uri}?mode=ro&immutable=1`,
-    { readOnly: true },
-  );
+  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
   try {
     const report = detectLegacyDatabase(db);
     if (report) throw new LegacyDatabaseError(report);

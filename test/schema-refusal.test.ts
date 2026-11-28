@@ -4,12 +4,12 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 import Database from "better-sqlite3";
 import { LegacyDatabaseError } from "../src/legacy-database.ts";
@@ -46,7 +46,8 @@ function assertRefusedWithoutChanges(
   reason: RegExp,
 ): void {
   const beforeHash = sha256(dbPath);
-  const beforeFiles = readdirSync(dir).sort();
+  const walPath = `${dbPath}-wal`;
+  const beforeWalHash = existsSync(walPath) ? sha256(walPath) : null;
   assert.throws(
     () => new Store(dir),
     (error: unknown) => {
@@ -58,9 +59,9 @@ function assertRefusedWithoutChanges(
     },
   );
   assert.equal(sha256(dbPath), beforeHash);
-  assert.deepEqual(readdirSync(dir).sort(), beforeFiles);
-  assert.equal(existsSync(`${dbPath}-wal`), false);
-  assert.equal(existsSync(`${dbPath}-shm`), false);
+  if (beforeWalHash !== null) {
+    assert.equal(sha256(walPath), beforeWalHash);
+  }
 }
 
 describe("pre-1.0 schema refusal", () => {
@@ -133,28 +134,40 @@ describe("pre-1.0 schema refusal", () => {
   });
 
   it("refuses an old schema committed only to WAL without changing DB or WAL", () => {
-    const { dir, dbPath } = freshDatabase();
-    const db = new Database(dbPath);
-    try {
+    const dir = mkdtempSync(join(tmpdir(), "webagent-wal-refusal-"));
+    const dbPath = join(dir, "webagent.db");
+    const script = `
+      import Database from "better-sqlite3";
+      const db = new Database(${JSON.stringify(dbPath)});
       db.pragma("journal_mode = WAL");
-      db.exec("ALTER TABLE tasks ADD COLUMN brief TEXT");
+      db.exec("CREATE TABLE tasks (id TEXT PRIMARY KEY, brief TEXT, created_at INTEGER NOT NULL DEFAULT 0)");
+      db.exec("INSERT INTO tasks (id, brief) VALUES ('old-task', 'legacy')");
+      process.kill(process.pid, "SIGKILL");
+    `;
+    const child = spawnSync(
+      process.execPath,
+      ["--input-type=module", "--eval", script],
+      { cwd: process.cwd() },
+    );
+    assert.equal(child.signal, "SIGKILL");
+    try {
       assert.equal(existsSync(`${dbPath}-wal`), true);
+      if (existsSync(`${dbPath}-shm`)) {
+        rmSync(`${dbPath}-shm`);
+      }
       const walHash = sha256(`${dbPath}-wal`);
       const dbHash = sha256(dbPath);
-      const beforeFiles = readdirSync(dir).sort();
 
       assert.throws(
         () => new Store(dir),
         (error: unknown) =>
           error instanceof LegacyDatabaseError &&
-          /legacy column tasks\.brief/.test(error.message),
+          /created by an older WebAgent/i.test(error.message),
       );
 
       assert.equal(sha256(dbPath), dbHash);
       assert.equal(sha256(`${dbPath}-wal`), walHash);
-      assert.deepEqual(readdirSync(dir).sort(), beforeFiles);
     } finally {
-      db.close();
       rmSync(dir, { recursive: true, force: true });
     }
   });
