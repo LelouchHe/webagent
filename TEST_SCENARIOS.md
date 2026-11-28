@@ -889,7 +889,7 @@ spot gaps, and decide what still needs to be added without reading every spec.
 - `test/schema-refusal.test.ts`
   - old timestamp column declarations and legacy defaults are refused
   - `idx_agent_sessions_task` and `tasks.brief` are refused
-  - refusal is read-only: the database hash and directory contents are unchanged
+  - refusal is read-only: `webagent.db` and any existing `webagent.db-wal` bytes are unchanged (SQLite may create/refresh a rebuildable `-shm` index for an uncheckpointed WAL)
 
 - `test/daemon.test.ts`
   - subcommand recognition

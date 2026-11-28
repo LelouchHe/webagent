@@ -243,12 +243,13 @@ the applied position beyond an inconsistent snapshot.
 ### Reconnection
 
 When SSE disconnects, `SyncHub`'s stream supervisor closes the stale attempt and
-retries it under a fresh generation. The tab discards its active consumer and
-waits for both reconnection gates: the new hub `connected` frame and the
-`focus_ack` for the same focus generation. It then rebuilds the active task's
-consumer. `beforeCatchUp` takes a warm snapshot, reads forward pages bounded by
-that snapshot's `lastEventSeq`, and commits the snapshot only after reaching the
-watermark; stale frames and continuations from the old generation are ignored.
+retries it under a fresh generation. The tab rebuilds the active task's
+consumer, while recovery itself stays gated until both reconnection gates clear:
+the new hub `connected` frame and the `focus_ack` for the same focus
+generation. Once both gates are open, `beforeCatchUp` takes a warm snapshot,
+reads forward pages bounded by that snapshot's `lastEventSeq`, and commits the
+snapshot only after reaching the watermark; stale frames and continuations from
+the old generation are ignored.
 
 ### Visibility Sync & Push Suppression
 

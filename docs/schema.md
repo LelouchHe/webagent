@@ -554,7 +554,10 @@ timestamp conversions, payload rewrites, or stored-model/cwd canonicalization
 passes.
 
 The single-Root data shape is a hard break. Startup refuses a pre-multi-agent
-database read-only, before any write: tasks without the Root that `workspace`
+database via a read-only preflight before any writable open (leaving
+`webagent.db` and any existing `webagent.db-wal` byte-identical; SQLite may
+create or refresh a rebuildable `-shm` index when reading an uncheckpointed
+WAL): tasks without the Root that `workspace`
 names (which includes a database whose Root still has the pre-UUID literal id
 `root`: Root identity became a per-database UUID as a declared breaking
 change, with no in-place rename), or
@@ -567,14 +570,16 @@ never edits an old database.
 The peer-link schema is also a hard break. `remote_tasks.remote_host` is required
 for both `parent` and `child` rows. The read-only preflight rejects the old
 nullable-parent CHECK even when the old database contains zero `remote_tasks`
-rows; it leaves the database bytes unchanged. Backup the data directory, remove
-the old database (or the whole data directory), and restart.
+rows, leaving `webagent.db` and `webagent.db-wal` byte-identical. Backup the
+data directory, remove the old database (or the whole data directory), and
+restart.
 
 The 5-category `outbox` CHECK relaxation (allowing `notice` with a null
 `delivery_id`) uses the same read-only preflight: a database whose `outbox`
-table still carries the 3-category CHECK is refused before any write, even when
-`outbox` is empty, leaving the file byte-identical. Migrate the database with
-an explicitly documented offline procedure or back up and reset.
+table still carries the 3-category CHECK is refused before any writable open,
+even when `outbox` is empty, leaving `webagent.db` and `webagent.db-wal`
+byte-identical. Migrate the database with an explicitly documented offline
+procedure or back up and reset.
 
 ---
 

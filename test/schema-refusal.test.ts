@@ -144,13 +144,13 @@ describe("pre-1.0 schema refusal", () => {
       db.exec("INSERT INTO tasks (id, brief) VALUES ('old-task', 'legacy')");
       process.kill(process.pid, "SIGKILL");
     `;
-    const child = spawnSync(
-      process.execPath,
-      ["--input-type=module", "--eval", script],
-      { cwd: process.cwd() },
-    );
-    assert.equal(child.signal, "SIGKILL");
     try {
+      const child = spawnSync(
+        process.execPath,
+        ["--input-type=module", "--eval", script],
+        { cwd: process.cwd() },
+      );
+      assert.equal(child.signal, "SIGKILL");
       assert.equal(existsSync(`${dbPath}-wal`), true);
       if (existsSync(`${dbPath}-shm`)) {
         rmSync(`${dbPath}-shm`);

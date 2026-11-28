@@ -489,8 +489,9 @@ export class Store {
 
   constructor(dataDir: string) {
     this.dataDir = dataDir;
-    // Refuse an old-format database read-only, before mkdir/SQLite open
-    // can write anything (including -wal/-shm side files).
+    // Refuse an old-format database via read-only preflight before any writable
+    // open (leaves webagent.db and any existing webagent.db-wal byte-identical;
+    // SQLite may create/refresh a rebuildable -shm index for an uncheckpointed WAL).
     assertNotLegacyDatabase(dataDir);
     mkdirSync(dataDir, { recursive: true });
     this.db = new Database(join(dataDir, "webagent.db"));
