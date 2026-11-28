@@ -551,4 +551,33 @@ describe("contract-08 browser DOM reconciliation (F6, F7, F9, F10)", () => {
     assert.equal(el.querySelector(".icon")?.textContent, completedIcon);
     assert.ok(el.querySelector("details.tc-raw-output"));
   });
+
+  it("dogfood: persisted bash_result settles a replayed .bash-block after reload when currentBashEl is null", () => {
+    // Simulate a page reload mid-bash: loadHistory replayed bash_command into
+    // DOM without populating state.currentBashEl.
+    const block = document.createElement("div");
+    block.className = "bash-block";
+    block.innerHTML =
+      '<div class="bash-cmd running">$ sleep 2 &amp;&amp; echo hi</div><pre class="bash-output"></pre>';
+    dom.messages.appendChild(block);
+    state.currentBashEl = null;
+
+    events.applyPersistedEvent({
+      feed: "t1",
+      pos: 2,
+      prev: 1,
+      data: {
+        id: 2,
+        task_id: "t1",
+        seq: 2,
+        type: "bash_result",
+        data: JSON.stringify({ output: "hi\n", code: 0, signal: null }),
+        from_ref: "system",
+        created_at: new Date().toISOString(),
+      },
+    });
+
+    assert.equal(block.querySelector(".bash-output")?.textContent, "hi\n");
+    assert.ok(!block.querySelector(".bash-cmd")?.classList.contains("running"));
+  });
 });

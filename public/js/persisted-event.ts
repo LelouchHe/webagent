@@ -372,17 +372,23 @@ function applyPersistedBashResult(data: Record<string, unknown>): void {
   const output = typeof data.output === "string" ? data.output : "";
   const code = typeof data.code === "number" ? data.code : null;
   const signal = typeof data.signal === "string" ? data.signal : null;
-  if (state.currentBashEl) {
-    const disconnected = state.currentBashEl.dataset.bashDisconnected === "1";
-    state.currentBashEl.removeAttribute("data-bash-disconnected");
-    const out = state.currentBashEl.querySelector(".bash-output");
+  const liveEl = state.currentBashEl;
+  const blocks = liveEl
+    ? null
+    : dom.messages.querySelectorAll<HTMLElement>(".bash-block");
+  const target =
+    liveEl ?? (blocks && blocks.length > 0 ? blocks[blocks.length - 1] : null);
+  if (target) {
+    const disconnected = !liveEl || target.dataset.bashDisconnected === "1";
+    target.removeAttribute("data-bash-disconnected");
+    const out = target.querySelector(".bash-output");
     if (out && (disconnected || !out.classList.contains("has-content"))) {
       if (output) {
         out.textContent = output;
         out.classList.add("has-content");
       }
     }
-    finishBash(state.currentBashEl, code, signal);
+    finishBash(target, code, signal);
   }
   if (state.busyKind !== "agent") setBusy(false);
 }
