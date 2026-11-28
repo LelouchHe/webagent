@@ -559,7 +559,22 @@ export interface PublicPendingPermission {
   requestId: string;
   toolName: string;
   title: string;
-  options: Array<{ optionId: string; label: string }>;
+  options: Array<{ optionId: string; label: string; kind?: string }>;
+}
+
+function projectPendingPermission(
+  p: PendingPermission,
+): PublicPendingPermission {
+  return {
+    requestId: p.requestId,
+    toolName: "",
+    title: p.title,
+    options: p.options.map((o) => ({
+      optionId: o.optionId,
+      label: o.label,
+      ...(o.kind ? { kind: o.kind } : {}),
+    })),
+  };
 }
 
 export interface TaskExecution {
@@ -4579,15 +4594,7 @@ export class TaskManager implements ObligationHost {
   getPendingPermissions(taskId?: string): PublicPendingPermission[] {
     const perms = [...this.pendingPermissions.values()];
     return (taskId ? perms.filter((p) => p.taskId === taskId) : perms).map(
-      (p) => ({
-        requestId: p.requestId,
-        toolName: "",
-        title: p.title,
-        options: p.options.map((option) => ({
-          optionId: option.optionId,
-          label: option.label,
-        })),
-      }),
+      projectPendingPermission,
     );
   }
 
@@ -4599,15 +4606,7 @@ export class TaskManager implements ObligationHost {
   syncPendingPermissions(taskId: string): void {
     const forTask = [...this.pendingPermissions.values()]
       .filter((p) => p.taskId === taskId)
-      .map((p) => ({
-        requestId: p.requestId,
-        toolName: "",
-        title: p.title,
-        options: p.options.map((o) => ({
-          optionId: o.optionId,
-          label: o.label,
-        })),
-      }));
+      .map(projectPendingPermission);
     this.state.patch(taskId, {
       runtime: { pendingPermissions: forTask },
     });

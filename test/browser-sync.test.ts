@@ -677,6 +677,10 @@ describe("contract-08 browser sync mechanisms", () => {
         msgsOld.some((m) => m.type === "disconnected"),
         "prior-generation port is disconnected on token rotation",
       );
+      assert.ok(
+        msgsNew.some((m) => m.type === "disconnected"),
+        "initiating port is ALSO disconnected on token rotation so its old consumer aborts",
+      );
       assert.equal(
         msgsUnadmitted.some((m) => m.type === "auth_invalid"),
         false,
@@ -686,6 +690,88 @@ describe("contract-08 browser sync mechanisms", () => {
         msgsOld.some((m) => m.type === "auth_invalid"),
         false,
         "stale unconfirmed port must not receive auth_invalid for newer gen",
+      );
+    });
+
+    it("keeps focus routing isolated from visibility updates during pending navigation (R3-3)", async () => {
+      let activeEs: {
+        onmessage?: ((ev: MessageEvent) => void) | null;
+        close: () => void;
+      } | null = null;
+      class FakeES {
+        onmessage: ((ev: MessageEvent) => void) | null = null;
+        onerror: (() => void) | null = null;
+        constructor() {
+          // eslint-disable-next-line @typescript-eslint/no-this-alias
+          activeEs = this;
+        }
+        addEventListener() {}
+        close() {}
+      }
+      const hub = new SyncHub({
+        EventSourceImpl: FakeES as unknown as typeof EventSource,
+        fetchImpl: (async (url: string) => {
+          if (url.includes("/sse-ticket")) {
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({ ticket: "tk" }),
+            } as Response;
+          }
+          return { ok: true, status: 204, json: async () => ({}) } as Response;
+        }) as typeof fetch,
+      });
+      const tab = createDirectPortPair();
+      const msgs: HubToTabMessage[] = [];
+      tab.tabPort.onMessage((m) => msgs.push(m));
+      hub.attach(tab.hubPort);
+      tab.tabPort.postMessage({
+        type: "hello",
+        token: "tok",
+        visible: true,
+        taskId: null,
+        admissionId: "adm-vis-1",
+      });
+      await new Promise((r) => setTimeout(r, 0));
+      activeEs!.onmessage?.({
+        data: JSON.stringify({
+          type: "connected",
+          clientId: "c-vis-1",
+          pendingCount: 0,
+        }),
+      } as MessageEvent);
+      // Tab announces navigation focus to task-nav while state.taskId is still null.
+      tab.tabPort.postMessage({
+        type: "focus",
+        taskId: "task-nav",
+        gen: 1,
+        visible: true,
+      });
+      // Visibility renewal sends taskId: null (pre-activation state.taskId) — must NOT overwrite focus routing.
+      tab.tabPort.postMessage({
+        type: "visibility",
+        visible: true,
+        taskId: null,
+      });
+      activeEs!.onmessage?.({
+        data: JSON.stringify({
+          type: "task_runtime_warmed",
+          taskId: "task-nav",
+          agentId: "a1",
+          configOptions: [
+            { id: "model", name: "Model", currentValue: "m1", options: [] },
+          ],
+          agentCommands: { epoch: "e1", revision: 1, commands: [] },
+        }),
+      } as MessageEvent);
+      assert.ok(
+        msgs.some(
+          (m) =>
+            m.type === "ephemeral" &&
+            m.event.type === "task_runtime_warmed" &&
+            m.event.taskId === "task-nav",
+        ),
+        "visibility update must not overwrite focus taskId routing",
       );
     });
   });

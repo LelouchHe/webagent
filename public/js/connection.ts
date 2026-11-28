@@ -84,6 +84,7 @@ let hubAuthGen = 0;
 const admissionTokens = new Map<string, string | null>();
 let physicalConnectionGen = 0;
 let disconnectedDuringPendingNav = false;
+let desiredRouteTaskId: string | null = null;
 let focusGen = 0;
 let ackedFocusTaskId: string | null = null;
 let ackedFocusGen = 0;
@@ -139,13 +140,14 @@ function sendHello(): void {
     type: "hello",
     token,
     visible: !document.hidden,
-    taskId: state.taskId,
+    taskId: desiredRouteTaskId ?? state.taskId,
     expectedAuthGen: hubAuthGen,
     admissionId,
   });
 }
 
 function sendFocus(taskId: string | null): number {
+  desiredRouteTaskId = taskId;
   focusGen += 1;
   ackedFocusTaskId = null;
   ackedFocusGen = 0;
@@ -159,9 +161,22 @@ function sendFocus(taskId: string | null): number {
   return focusGen;
 }
 
+function isDualGateReady(): boolean {
+  return (
+    hubConnected &&
+    hubClientId !== null &&
+    watchHooks !== null &&
+    activeConsumerTaskId !== null &&
+    ackedFocusTaskId === activeConsumerTaskId &&
+    ackedFocusGen === focusGen &&
+    watchDualGateFired
+  );
+}
+
 function maybeFireDualGate(): void {
   if (
     !hubConnected ||
+    hubClientId === null ||
     !watchHooks ||
     !activeConsumerTaskId ||
     ackedFocusTaskId !== activeConsumerTaskId ||
@@ -376,7 +391,7 @@ export function focusTask(
 }
 
 export function triggerCatchUp(): Promise<void> {
-  if (!activeConsumer) return Promise.resolve();
+  if (!activeConsumer || !isDualGateReady()) return Promise.resolve();
   return activeConsumer.catchUp();
 }
 
@@ -404,10 +419,19 @@ function handleHubConnected(
   msg: Extract<HubToTabMessage, { type: "connected" }>,
 ): void {
   const prevClientId = hubClientId;
+  const clientChanged = prevClientId !== null && msg.clientId !== prevClientId;
   hubConnected = true;
   hubClientId = msg.clientId;
   hubAuthGen = msg.authGen;
   state.clientId = msg.clientId;
+  if (clientChanged) {
+    // Each newly registered server clientId owns a fresh watch/recovery attempt.
+    physicalConnectionGen += 1;
+    watchDualGateFired = false;
+    activeConsumer?.stop();
+    activeConsumer = null;
+    watchHooks = null;
+  }
   applyConnectedLogLevel(msg.debugLevel);
   updateInboxCount(msg.pendingCount);
   if (msg.clientId !== prevClientId) {
@@ -436,7 +460,7 @@ function handleHubConnected(
   }
   const resumeTaskId = activeConsumerTaskId ?? state.taskId;
   if (resumeTaskId && state.taskId === resumeTaskId) {
-    if (!activeConsumer) {
+    if (!activeConsumer || clientChanged) {
       startTaskFeedConsumer(resumeTaskId, {
         needTailLoad: false,
         forceRestart: true,
@@ -466,14 +490,12 @@ function handleHubDisconnected(): void {
 function handleHubAuthInvalid(
   msg: Extract<HubToTabMessage, { type: "auth_invalid" }>,
 ): void {
-  if (msg.admissionId !== undefined) {
-    if (!admissionTokens.has(msg.admissionId)) return;
-    const admittedToken = admissionTokens.get(msg.admissionId) ?? null;
-    admissionTokens.delete(msg.admissionId);
-    handleUnauthorizedToken(admittedToken);
-  } else if (msg.authGen === hubAuthGen) {
-    handleUnauthorizedToken(getStoredToken());
+  if (msg.admissionId === undefined || !admissionTokens.has(msg.admissionId)) {
+    return;
   }
+  const admittedToken = admissionTokens.get(msg.admissionId) ?? null;
+  admissionTokens.delete(msg.admissionId);
+  handleUnauthorizedToken(admittedToken);
 }
 
 function handleHubAuthGen(authGen: number): void {
@@ -489,6 +511,22 @@ function handleHubAuthGen(authGen: number): void {
   });
 }
 
+function handleHubFocusAck(
+  msg: Extract<HubToTabMessage, { type: "focus_ack" }>,
+): void {
+  if (msg.gen !== focusGen) return;
+  ackedFocusTaskId = msg.taskId;
+  ackedFocusGen = msg.gen;
+  if (msg.sseConnected) {
+    hubConnected = true;
+    if (msg.clientId) {
+      hubClientId = msg.clientId;
+      state.clientId = msg.clientId;
+    }
+  }
+  maybeFireDualGate();
+}
+
 function handleHubMessage(msg: HubToTabMessage): void {
   switch (msg.type) {
     case "ready":
@@ -500,20 +538,16 @@ function handleHubMessage(msg: HubToTabMessage): void {
       handleHubDisconnected();
       return;
     case "focus_ack":
-      if (msg.gen !== focusGen) return;
-      ackedFocusTaskId = msg.taskId;
-      ackedFocusGen = msg.gen;
-      if (msg.sseConnected) {
-        hubConnected = true;
-        if (msg.clientId) {
-          hubClientId = msg.clientId;
-          state.clientId = msg.clientId;
-        }
-      }
-      maybeFireDualGate();
+      handleHubFocusAck(msg);
       return;
     case "feed_entry":
-      if (activeConsumerTaskId !== msg.entry.feed || !watchHooks) return;
+      if (
+        !isDualGateReady() ||
+        activeConsumerTaskId !== msg.entry.feed ||
+        !watchHooks
+      ) {
+        return;
+      }
       watchHooks.activity();
       void watchHooks.entry({
         pos: msg.entry.pos,
@@ -522,11 +556,11 @@ function handleHubMessage(msg: HubToTabMessage): void {
       });
       return;
     case "ephemeral":
-      if (msg.event.type === "task_runtime_warmed" && !watchHooks) {
+      if (msg.event.type === "task_runtime_warmed" && !isDualGateReady()) {
         handleEvent(msg.event as unknown as AgentEvent);
         return;
       }
-      if (!watchHooks) return;
+      if (!isDualGateReady() || !watchHooks) return;
       watchHooks.activity();
       void watchHooks.ephemeral?.(msg.event);
       return;
@@ -553,6 +587,8 @@ function startSharedWorkerOrFallback(): void {
           needTailLoad: false,
           forceRestart: true,
         });
+      } else if (desiredRouteTaskId !== null) {
+        sendFocus(desiredRouteTaskId);
       }
     },
     onMessage(msg) {
@@ -588,6 +624,8 @@ export function connect(): void {
   hubAuthGen = 0;
   admissionTokens.clear();
   physicalConnectionGen += 1;
+  disconnectedDuringPendingNav = false;
+  desiredRouteTaskId = null;
   initializedOnce = false;
   navigationOwnerTaskId = null;
   ackedFocusTaskId = null;

@@ -122,8 +122,25 @@ describe("contract-08 browser DOM reconciliation (F6, F7, F9, F10)", () => {
   it("F9: applies snapshot pendingPermissions and skips covered state_patch without extra snapshot GET", async () => {
     let snapshotCalls = 0;
     const origFetch = globalThis.fetch;
-    globalThis.fetch = (async (url: string) => {
+    const permissionPosts: Array<{
+      url: string;
+      body: Record<string, unknown>;
+    }> = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
       if (String(url).includes("/snapshot")) snapshotCalls += 1;
+      if (String(url).includes("/permissions/") && init?.method === "POST") {
+        permissionPosts.push({
+          url: String(url),
+          body: JSON.parse(
+            typeof init.body === "string" ? init.body : "{}",
+          ) as Record<string, unknown>,
+        });
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ ok: true }),
+        } as unknown as Response;
+      }
       return {
         ok: true,
         status: 200,
@@ -151,17 +168,34 @@ describe("contract-08 browser DOM reconciliation (F6, F7, F9, F10)", () => {
           createdAt: null,
           lastEventSeq: 0,
         },
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            type: "select",
+            currentValue: "m2",
+            options: [{ value: "m2", name: "Model 2" }],
+          },
+        ],
         runtime: {
           busy: null,
           pendingPermissions: [
             {
               requestId: "perm-snap-1",
               title: "Allow tool?",
-              options: [{ optionId: "allow_once", label: "Allow" }],
+              options: [
+                { optionId: "allow_once", label: "Allow", kind: "allow_once" },
+                { optionId: "reject_once", label: "Deny", kind: "reject_once" },
+              ],
             },
           ],
         },
       });
+      assert.equal(
+        state.configOptions.find((o) => o.id === "model")?.currentValue,
+        "m2",
+        "recovery snapshot delivers configOptions even if warm arrived before route",
+      );
       assert.ok(
         dom.messages.querySelector(
           '.permission[data-request-id="perm-snap-1"]',
@@ -179,11 +213,22 @@ describe("contract-08 browser DOM reconciliation (F6, F7, F9, F10)", () => {
       await new Promise((r) => setTimeout(r, 10));
       assert.equal(snapshotCalls, 0);
 
-      // R5: reconstructed permission card has labeled, clickable button from { optionId, label }.
+      // R5 + R3-4: reconstructed permission card has labeled buttons and clicking
+      // the deny button (kind: reject_once) sends denied: true.
       const permCard = dom.messages.querySelector(
         '.permission[data-request-id="perm-snap-1"]',
       );
-      assert.equal(permCard?.querySelector("button")?.textContent, "Allow");
+      const permButtons = Array.from(
+        permCard?.querySelectorAll("button") ?? [],
+      );
+      assert.deepEqual(
+        permButtons.map((b) => b.textContent),
+        ["Allow", "Deny"],
+      );
+      permButtons[1]?.click();
+      await new Promise((r) => setTimeout(r, 10));
+      assert.equal(permissionPosts.length, 1);
+      assert.equal(permissionPosts[0].body.denied, true);
 
       // R2 + R5: untrusted HTML in permission title stays literal text when settled across disconnect
       // even after state.pendingPermissionRequestIds was cleared!
@@ -252,6 +297,71 @@ describe("contract-08 browser DOM reconciliation (F6, F7, F9, F10)", () => {
     } finally {
       state.replayInProgress = false;
     }
+  });
+
+  it("R3-5: adopting optimistic user bubble moves it after an earlier persisted tail without preview DOM", () => {
+    const userEl = document.createElement("div");
+    userEl.className = "msg user";
+    userEl.dataset.optimisticOpId = "op-order-1";
+    userEl.textContent = "follow-up prompt";
+    dom.messages.appendChild(userEl);
+
+    // Persisted assistant tail (seq 1) arrives with NO preview DOM in the page.
+    events.applyPersistedEvent({
+      feed: "t1",
+      pos: 1,
+      prev: 0,
+      data: {
+        id: 1,
+        task_id: "t1",
+        seq: 1,
+        type: "assistant_message",
+        data: JSON.stringify({ text: "prior tail without preview" }),
+        from_ref: "agent",
+        created_at: new Date().toISOString(),
+      },
+    });
+    // Optimistic successor's echo (seq 2) adopts the user bubble.
+    events.applyPersistedEvent({
+      feed: "t1",
+      pos: 2,
+      prev: 1,
+      data: {
+        id: 2,
+        task_id: "t1",
+        seq: 2,
+        type: "user_message",
+        data: JSON.stringify({
+          text: "follow-up prompt",
+          clientOpId: "op-order-1",
+        }),
+        from_ref: "user",
+        created_at: new Date().toISOString(),
+      },
+    });
+
+    const msgs = Array.from(dom.messages.querySelectorAll(".msg"));
+    assert.equal(msgs.length, 2);
+    assert.ok(msgs[0].classList.contains("assistant"));
+    assert.ok(msgs[1].classList.contains("user"));
+    assert.equal(msgs[1].getAttribute("data-optimistic-op-id"), null);
+  });
+
+  it("R3-6: handleHubControlEvent delegates task_title_updated/task_deleted once without duplicate pre-observation", () => {
+    let forwarded = 0;
+    persisted.handleHubControlEvent(
+      { type: "task_title_updated", taskId: "t1", title: "Renamed" },
+      () => {
+        forwarded += 1;
+      },
+    );
+    persisted.handleHubControlEvent(
+      { type: "task_deleted", taskId: "t2" },
+      () => {
+        forwarded += 1;
+      },
+    );
+    assert.equal(forwarded, 2);
   });
 
   it("F10: does not advance state.lastEventSeq when JSON is malformed or sink throws", () => {

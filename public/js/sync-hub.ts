@@ -359,7 +359,6 @@ export class SyncHub {
       case "visibility":
         if (!entry.authenticated || entry.authGen !== this.authGen) return;
         entry.visible = msg.visible;
-        entry.taskId = msg.taskId;
         entry.leaseAt = msg.visible ? this.clock.now() : 0;
         this.flushVisibilityIfChanged();
         return;
@@ -394,8 +393,9 @@ export class SyncHub {
     this.stopSupervisor();
     this.teardownEventSource();
     this.hasConnectedOnce = false;
-    // Invalidate admission for all other ports and disconnect them from the old
-    // generation until they confirm the new authGen.
+    // Disconnect EVERY previously admitted port (including the initiator) so no
+    // consumer survives across a credential rotation. Non-initiators also lose
+    // admission until they confirm the new authGen.
     for (const entry of this.ports.values()) {
       const isInitiator = entry.port === initiatorPort;
       const wasAdmitted = entry.authenticated;
@@ -404,9 +404,9 @@ export class SyncHub {
         entry.authGen = this.authGen;
       } else {
         entry.admissionId = undefined;
-        if (wasAdmitted) {
-          entry.port.postMessage({ type: "disconnected", authGen: prevGen });
-        }
+      }
+      if (wasAdmitted) {
+        entry.port.postMessage({ type: "disconnected", authGen: prevGen });
       }
       entry.port.postMessage({ type: "auth_gen", authGen: this.authGen });
     }

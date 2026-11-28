@@ -1512,6 +1512,10 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
               },
               runtime: runtimeState.runtime,
               streaming: tasks.getStreamingSnapshot(taskId),
+              configOptions: tasks.applyStoredConfig(
+                tasks.configOptionsForTask(taskId),
+                task,
+              ),
               imageReferences: projectImageReferences(
                 store,
                 taskId,

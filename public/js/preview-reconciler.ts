@@ -3,6 +3,7 @@
 
 import type {
   AgentCommandSnapshot,
+  ConfigOption,
   ContextUsage,
   PlanEntry,
 } from "../../src/types.ts";
@@ -35,6 +36,7 @@ export interface TaskSnapshot {
     contextUsage?: ContextUsage | null;
   };
   streaming?: StreamingSnapshot;
+  configOptions?: ConfigOption[];
   imageReferences?: unknown;
   agentCommands?: AgentCommandSnapshot;
 }

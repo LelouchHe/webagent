@@ -783,11 +783,13 @@
                           "options": [
                             {
                               "optionId": "allow",
-                              "label": "Allow"
+                              "label": "Allow",
+                              "kind": "allow_once"
                             },
                             {
                               "optionId": "deny",
-                              "label": "Deny"
+                              "label": "Deny",
+                              "kind": "reject_once"
                             }
                           ]
                         }

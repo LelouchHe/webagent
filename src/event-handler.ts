@@ -416,9 +416,15 @@ function handlePermissionRequest(
     taskId: event.taskId,
     title: event.title,
     options: event.options.map(
-      (o: { optionId: string; label?: string; name?: string }) => ({
+      (o: {
+        optionId: string;
+        label?: string;
+        name?: string;
+        kind?: string;
+      }) => ({
         optionId: o.optionId,
         label: o.label ?? o.name ?? o.optionId,
+        ...(o.kind ? { kind: o.kind } : {}),
       }),
     ),
     ...(agentId && lease ? { execution: { agentId, lease } } : {}),

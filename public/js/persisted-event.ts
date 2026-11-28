@@ -24,15 +24,8 @@ import {
   loadTaskListFresh,
   noteTaskArchived,
   noteTaskUnarchived,
-  observeTaskCreated,
-  observeTaskDeleted,
 } from "./task-topology.ts";
-import {
-  noteTaskCreated,
-  noteTaskDeleted,
-  noteTaskTitleUpdated,
-  pruneCreatedTasksAbsentFrom,
-} from "./task-ref-marks.ts";
+import { pruneCreatedTasksAbsentFrom } from "./task-ref-marks.ts";
 import type * as api from "./api.ts";
 import type { AgentEvent } from "../../src/types.ts";
 
@@ -65,38 +58,6 @@ export function handleHubControlEvent(
 ): void {
   if (raw.type === "topology_feed_entry") {
     handleTopologyFeedEntry(raw);
-    return;
-  }
-  if (raw.type === "task_created" && typeof raw.taskId === "string") {
-    observeTaskCreated(
-      raw.taskId,
-      typeof raw.agentId === "string" ? raw.agentId : null,
-    );
-    noteTaskCreated(raw.taskId);
-    if (
-      state.awaitingNewTask ||
-      state.pendingNavigationTaskId === raw.taskId ||
-      state.taskId === raw.taskId
-    ) {
-      handleEvent(raw as unknown as AgentEvent);
-    }
-    return;
-  }
-  if (raw.type === "task_deleted" && typeof raw.taskId === "string") {
-    observeTaskDeleted(raw.taskId);
-    noteTaskDeleted(raw.taskId);
-    if (state.taskId === raw.taskId) {
-      handleEvent(raw as unknown as AgentEvent);
-    }
-    return;
-  }
-  if (raw.type === "task_title_updated" && typeof raw.taskId === "string") {
-    if (typeof raw.title === "string") {
-      noteTaskTitleUpdated(raw.taskId, raw.title);
-    }
-    if (state.taskId === raw.taskId) {
-      handleEvent(raw as unknown as AgentEvent);
-    }
     return;
   }
   handleEvent(raw as unknown as AgentEvent);
@@ -207,6 +168,7 @@ export function reconcileSnapshotPermissions(
               optionId: typeof o.optionId === "string" ? o.optionId : "",
               name: label,
               label,
+              ...(typeof o.kind === "string" ? { kind: o.kind } : {}),
             };
           })
         : [];
@@ -276,6 +238,9 @@ function claimOptimisticUserBubble(
     if (Array.isArray(attachments) && attachments.length > 0) {
       upgradeOptimisticAttachmentUrls(htmlEl, attachments);
     }
+    // Move adopted optimistic bubble to its durable insertion point so any
+    // earlier persisted tail rendered without preview DOM stays above it.
+    dom.messages.appendChild(htmlEl);
     claimed = true;
   }
   if (

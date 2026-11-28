@@ -197,7 +197,7 @@ export interface PendingPermission {
   requestId: string;
   taskId: string;
   title: string;
-  options: Array<{ optionId: string; label: string }>;
+  options: Array<{ optionId: string; label: string; kind?: string }>;
   execution?: PendingPermissionExecution;
 }
 

@@ -534,6 +534,9 @@ export function applySnapshot(snap: TaskSnapshot): void {
   applyAgentCommandSnapshot(
     snap.agentCommands ?? { epoch: "", revision: 0, commands: [] },
   );
+  if (snap.configOptions && snap.configOptions.length > 0) {
+    updateConfigOptions(snap.configOptions);
+  }
   // Bug A: populate display fallback from snapshot and repaint. Guarded
   // internally — no-op if configOptions is already non-empty.
   setFallbackFromSnapshot(snap);
