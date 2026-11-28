@@ -517,4 +517,38 @@ describe("contract-08 browser DOM reconciliation (F6, F7, F9, F10)", () => {
     }, /sink boom/);
     assert.equal(state.lastEventSeq, 0);
   });
+
+  it("dogfood: tool_call_raw_output preserves completed tool_call status icon and class", () => {
+    events.handleEvent({
+      type: "tool_call",
+      taskId: "t1",
+      id: "tc-raw-1",
+      title: "Run command",
+      kind: "execute",
+    });
+    events.handleEvent({
+      type: "tool_call_update",
+      taskId: "t1",
+      id: "tc-raw-1",
+      status: "completed",
+      content: [{ type: "content", content: { type: "text", text: "ok" } }],
+    });
+    const el = dom.messages.querySelector<HTMLElement>("#tc-tc-raw-1");
+    assert.ok(el);
+    const completedClass = el.className;
+    const completedIcon = el.querySelector(".icon")?.textContent;
+    assert.ok(completedIcon && completedIcon !== "…");
+    assert.ok(completedClass.includes("completed"));
+
+    events.handleEvent({
+      type: "tool_call_raw_output",
+      taskId: "t1",
+      id: "tc-raw-1",
+      rawOutput: { exitCode: 0 },
+    });
+
+    assert.equal(el.className, completedClass);
+    assert.equal(el.querySelector(".icon")?.textContent, completedIcon);
+    assert.ok(el.querySelector("details.tc-raw-output"));
+  });
 });
