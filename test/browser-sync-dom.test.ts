@@ -358,6 +358,80 @@ describe("contract-08 browser DOM reconciliation (F6, F7, F9, F10)", () => {
     );
   });
 
+  it("R4-1 (/new): resetTaskUI immediately publishes visibility(null) to clear push suppression before lease tick", async () => {
+    const { resetTaskUI } = await import("../public/js/state.ts");
+    const origSharedWorker = globalThis.SharedWorker;
+    const origEventSource = globalThis.EventSource;
+    const origFetch = globalThis.fetch;
+    const visPosts: string[][] = [];
+    let activeEs: {
+      onmessage?: ((ev: MessageEvent) => void) | null;
+      onerror?: (() => void) | null;
+      close: () => void;
+    } | null = null;
+    class FakeES {
+      onmessage: ((ev: MessageEvent) => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor() {
+        // eslint-disable-next-line @typescript-eslint/no-this-alias
+        activeEs = this;
+      }
+      addEventListener() {}
+      close() {}
+    }
+    try {
+      // Force DirectPort fallback so SyncHub runs in-process for deterministic assertions.
+      (globalThis as Record<string, unknown>).SharedWorker = undefined;
+      (globalThis as Record<string, unknown>).EventSource = FakeES;
+      globalThis.fetch = (async (url: string, init?: RequestInit) => {
+        if (String(url).includes("/sse-ticket")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ ticket: "tk" }),
+          } as Response;
+        }
+        if (String(url).includes("/visibility") && init?.method === "POST") {
+          const body = JSON.parse(
+            typeof init.body === "string" ? init.body : "{}",
+          ) as { taskIds?: string[] };
+          visPosts.push(body.taskIds ?? []);
+          return { ok: true, status: 204, json: async () => ({}) } as Response;
+        }
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ tasks: [], agents: [] }),
+          json: async () => ({ tasks: [], agents: [] }),
+        } as Response;
+      }) as typeof fetch;
+
+      const conn = await import("../public/js/connection.ts");
+      state.taskId = "t-active";
+      conn.connect();
+      await new Promise((r) => setTimeout(r, 10));
+      activeEs!.onmessage?.({
+        data: JSON.stringify({
+          type: "connected",
+          clientId: "c-reset-1",
+          pendingCount: 0,
+        }),
+      } as MessageEvent);
+      await new Promise((r) => setTimeout(r, 10));
+      assert.deepEqual(visPosts.at(-1), ["t-active"]);
+
+      // Leaving the view via /new (resetTaskUI while state.taskId is still set
+      // before caller clears it) must IMMEDIATELY post taskIds: [] without
+      // waiting for the 10s lease tick.
+      resetTaskUI();
+      assert.deepEqual(visPosts.at(-1), []);
+    } finally {
+      (globalThis as Record<string, unknown>).SharedWorker = origSharedWorker;
+      (globalThis as Record<string, unknown>).EventSource = origEventSource;
+      globalThis.fetch = origFetch;
+    }
+  });
+
   it("R4-2: cold tab holding a #hash ignores foreign raw task_created without rewriting hash", () => {
     state.taskId = null;
     state.awaitingNewTask = false;

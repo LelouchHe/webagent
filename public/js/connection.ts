@@ -9,6 +9,7 @@ import {
   getHashTaskId,
   requestBootstrapTask,
   resetTaskUI,
+  onTaskReset,
   setConnectionStatus,
   clearCancelTimer,
   applySnapshot,
@@ -146,11 +147,11 @@ function sendHello(): void {
   });
 }
 
-function sendVisibility(): void {
+function sendVisibility(taskId: string | null = state.taskId): void {
   sendToHub({
     type: "visibility",
     visible: !document.hidden,
-    taskId: state.taskId,
+    taskId,
   });
 }
 
@@ -405,6 +406,10 @@ export function triggerCatchUp(): Promise<void> {
 
 let navigationOwnerTaskId: string | null = null;
 
+onTaskReset(() => {
+  sendVisibility(null);
+});
+
 setTaskFocusNotifier((taskId) => {
   sendVisibility();
   // Synthetic task_created from installTaskFromDetail is owned by resumeAndLoad /
@@ -415,7 +420,6 @@ setTaskFocusNotifier((taskId) => {
 
 setRouteAnnouncer((taskId) => {
   stopTaskFeedConsumer();
-  sendVisibility();
   sendFocus(taskId);
 });
 
@@ -782,7 +786,6 @@ async function resumeAndLoad(
   // once (when non-incremental), install task metadata, then start the single
   // SyncFeedConsumer for bounded snapshot+delta recovery.
   navigationOwnerTaskId = taskId;
-  if (!incremental) sendVisibility();
   sendFocus(taskId);
   try {
     const [task] = await Promise.all([
