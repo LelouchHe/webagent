@@ -43,9 +43,23 @@ export class SseManager {
   private isTokenRevoked: ((tokenName: string) => boolean) | null = null;
   private attachmentSecret: Buffer | null = null;
   private getLabelMap: ((taskId: string) => LabelMap) | null = null;
+  private readonly stagedToolRawOutputs = new Map<string, unknown>();
 
   constructor(heartbeatMs = SSE_HEARTBEAT_INTERVAL_MS) {
     this.heartbeatInterval = heartbeatMs;
+  }
+
+  /**
+   * Stage stripped `rawOutput` for an immediately-following committed
+   * `tool_call_update` so per-task SSE edges can inline it without dual
+   * producer broadcasts while global feed clients receive a separate ephemeral.
+   */
+  stageToolCallRawOutput(
+    taskId: string,
+    toolCallId: string,
+    rawOutput: unknown,
+  ): void {
+    this.stagedToolRawOutputs.set(`${taskId}:${toolCallId}`, rawOutput);
   }
 
   /** Register a callback invoked when a client disconnects. */
@@ -188,8 +202,28 @@ export class SseManager {
    * per-task clients receive the thin legacy event projection with `id: pos`.
    */
   broadcastFeedEntry(entry: EventFeedEntry): void {
+    let stagedRawOutput: { id: string; rawOutput: unknown } | null = null;
+    if (entry.data.type === "tool_call_update") {
+      try {
+        const parsed = JSON.parse(entry.data.data) as { id?: unknown };
+        if (typeof parsed.id === "string") {
+          const key = `${entry.feed}:${parsed.id}`;
+          if (this.stagedToolRawOutputs.has(key)) {
+            stagedRawOutput = {
+              id: parsed.id,
+              rawOutput: this.stagedToolRawOutputs.get(key),
+            };
+            this.stagedToolRawOutputs.delete(key);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
     const snapshot = [...this.clients.values()];
     let feedFrame: string | null = null;
+    let rawOutputFrame: string | null = null;
     let legacyFrame: string | null = null;
     for (const client of snapshot) {
       if (client.res.writableEnded) continue;
@@ -202,7 +236,11 @@ export class SseManager {
         if (legacyFrame === null) {
           const legacy = projectLegacyPerTaskEvent(entry.data);
           if (!legacy) continue;
-          legacyFrame = `id: ${entry.pos}\ndata: ${JSON.stringify(legacy)}\n\n`;
+          const out =
+            stagedRawOutput !== null
+              ? { ...legacy, rawOutput: stagedRawOutput.rawOutput }
+              : legacy;
+          legacyFrame = `id: ${entry.pos}\ndata: ${JSON.stringify(out)}\n\n`;
         }
         try {
           client.res.write(legacyFrame);
@@ -214,6 +252,15 @@ export class SseManager {
         feedFrame ??= `data: ${JSON.stringify(entry)}\n\n`;
         try {
           client.res.write(feedFrame);
+          if (stagedRawOutput !== null) {
+            rawOutputFrame ??= `data: ${JSON.stringify({
+              type: "tool_call_raw_output",
+              taskId: entry.feed,
+              id: stagedRawOutput.id,
+              rawOutput: stagedRawOutput.rawOutput,
+            })}\n\n`;
+            client.res.write(rawOutputFrame);
+          }
         } catch (err) {
           slog.warn("write failed", { clientId: client.id, err: String(err) });
           this.remove(client.id, "write-failed");

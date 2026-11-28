@@ -656,20 +656,26 @@ describe("contract-08 browser sync mechanisms", () => {
       await new Promise((r) => setTimeout(r, 0));
       assert.equal(seenAuthHeaders.length, beforeHeaders);
 
-      // 401 on tok-3: notifies ONLY admitted tabNew (not unadmitted/old ports) and NEVER echoes raw token.
+      // 401 on tok-3: notifies ONLY admitted tabNew with its non-secret admissionId (never raw token).
       ticketStatus = 401;
       tabNew.tabPort.postMessage({
         type: "auth_update",
         token: "tok-3",
         expectedAuthGen: 2,
+        admissionId: "adm-opaque-uuid-3",
       });
       await new Promise((r) => setTimeout(r, 0));
       const invNew = msgsNew.find((m) => m.type === "auth_invalid");
       assert.ok(invNew, "admitted port receives auth_invalid");
+      assert.equal(invNew.admissionId, "adm-opaque-uuid-3");
       assert.equal(
         JSON.stringify(invNew).includes("tok-3"),
         false,
         "auth_invalid must never echo raw token",
+      );
+      assert.ok(
+        msgsOld.some((m) => m.type === "disconnected"),
+        "prior-generation port is disconnected on token rotation",
       );
       assert.equal(
         msgsUnadmitted.some((m) => m.type === "auth_invalid"),

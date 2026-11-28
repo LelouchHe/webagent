@@ -599,6 +599,13 @@ function handleToolCallUpdate(
   const rawOutput = hasRawOutput
     ? stripRawOutputImageData(event.rawOutput)
     : undefined;
+  if (
+    hasRawOutput &&
+    rawOutput !== undefined &&
+    typeof sseManager.stageToolCallRawOutput === "function"
+  ) {
+    sseManager.stageToolCallRawOutput(event.taskId, event.id, rawOutput);
+  }
   store.saveEvent(
     event.taskId,
     event.type,
@@ -614,14 +621,6 @@ function handleToolCallUpdate(
     },
     { from_ref: "agent" },
   );
-  if (hasRawOutput && rawOutput !== undefined) {
-    sseManager.broadcast({
-      type: "tool_call_raw_output",
-      taskId: event.taskId,
-      id: event.id,
-      rawOutput,
-    });
-  }
   return { persisted: true, suppressPush: false };
 }
 

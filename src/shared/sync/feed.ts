@@ -273,8 +273,15 @@ export class SyncFeedConsumer<TData = unknown, TEphemeral = unknown> {
         return null;
       }
       if (!(await this.apply(missing, applied, attempt))) return null;
-      applied = await this.port.applied();
+      const nextApplied = await this.port.applied();
       if (!attempt.isCurrent()) return null;
+      if (nextApplied < missing.pos) {
+        this.protocolError(
+          "persistent apply returned true without advancing applied position",
+        );
+        return null;
+      }
+      applied = nextApplied;
       progress = true;
     }
     if (!progress) {

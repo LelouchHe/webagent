@@ -178,8 +178,79 @@ describe("contract-08 browser DOM reconciliation (F6, F7, F9, F10)", () => {
       } as any);
       await new Promise((r) => setTimeout(r, 10));
       assert.equal(snapshotCalls, 0);
+
+      // R5: reconstructed permission card has labeled, clickable button from { optionId, label }.
+      const permCard = dom.messages.querySelector(
+        '.permission[data-request-id="perm-snap-1"]',
+      );
+      assert.equal(permCard?.querySelector("button")?.textContent, "Allow");
+
+      // R2 + R5: untrusted HTML in permission title stays literal text when settled across disconnect
+      // even after state.pendingPermissionRequestIds was cleared!
+      const xssCard = document.createElement("div");
+      xssCard.className = "permission";
+      xssCard.dataset.requestId = "perm-xss";
+      const titleEl = document.createElement("div");
+      titleEl.className = "title";
+      titleEl.textContent = '<img src=x onerror="window.__xss=1">';
+      const btn = document.createElement("button");
+      btn.textContent = "Allow";
+      xssCard.append(titleEl, btn);
+      dom.messages.appendChild(xssCard);
+      state.pendingPermissionRequestIds.clear();
+
+      applySnapshot({
+        version: 1,
+        seq: 6,
+        task: {
+          id: "t1",
+          title: null,
+          cwd: "/tmp",
+          model: null,
+          mode: null,
+          createdAt: null,
+          lastEventSeq: 0,
+        },
+        runtime: { busy: null, pendingPermissions: [] },
+      });
+      assert.equal(xssCard.querySelector("img"), null, "must not parse HTML");
+      assert.equal(
+        xssCard.querySelector("button"),
+        null,
+        "settled card removes button",
+      );
+      assert.match(
+        xssCard.textContent,
+        /<img src=x onerror="window\.__xss=1"> — resolved/,
+      );
     } finally {
       globalThis.fetch = origFetch;
+    }
+  });
+
+  it("R7: persisted apply renders directly while replayInProgress without enqueuing into replayQueue", () => {
+    state.replayInProgress = true;
+    state.replayQueue = [];
+    try {
+      events.applyPersistedEvent({
+        feed: "t1",
+        pos: 1,
+        prev: 0,
+        data: {
+          id: 1,
+          task_id: "t1",
+          seq: 1,
+          type: "user_message",
+          data: JSON.stringify({ text: "positioned during replay" }),
+          from_ref: "user",
+          created_at: new Date().toISOString(),
+        },
+      });
+      assert.equal(state.replayQueue.length, 0);
+      assert.equal(state.lastEventSeq, 1);
+      assert.match(dom.messages.textContent, /positioned during replay/);
+    } finally {
+      state.replayInProgress = false;
     }
   });
 

@@ -23,6 +23,7 @@ export type TabToHubMessage =
       visible: boolean;
       taskId: string | null;
       expectedAuthGen?: number;
+      admissionId?: string;
     }
   | {
       type: "focus";
@@ -39,6 +40,7 @@ export type TabToHubMessage =
       type: "auth_update";
       token: string | null;
       expectedAuthGen?: number;
+      admissionId?: string;
     }
   | { type: "check_liveness" }
   | { type: "bye" };
@@ -64,7 +66,7 @@ export type HubToTabMessage =
   | { type: "feed_entry"; entry: TaskEventFeedEntry }
   | { type: "ephemeral"; event: Record<string, unknown> }
   | { type: "control"; event: Record<string, unknown> }
-  | { type: "auth_invalid"; authGen: number }
+  | { type: "auth_invalid"; authGen: number; admissionId?: string }
   | { type: "auth_gen"; authGen: number };
 
 export interface SyncPort {
@@ -85,6 +87,7 @@ interface PortState {
   port: SyncPort;
   authenticated: boolean;
   authGen: number;
+  admissionId?: string;
   taskId: string | null;
   focusGen: number;
   visible: boolean;
@@ -268,10 +271,12 @@ export class SyncHub {
 
     if (!this.hasTokenInitialized || msg.token !== this.token) {
       this.hasTokenInitialized = true;
+      entry.admissionId = msg.admissionId;
       this.rotateToken(msg.token, entry.port);
     } else if (!this.authInvalid) {
       entry.authenticated = true;
       entry.authGen = this.authGen;
+      entry.admissionId = msg.admissionId;
     }
     entry.taskId = msg.taskId;
     entry.visible = msg.visible;
@@ -307,12 +312,14 @@ export class SyncHub {
     }
     if (!this.hasTokenInitialized || msg.token !== this.token) {
       this.hasTokenInitialized = true;
+      entry.admissionId = msg.admissionId;
       this.rotateToken(msg.token, entry.port);
       return;
     }
     if (!this.authInvalid) {
       entry.authenticated = true;
       entry.authGen = this.authGen;
+      entry.admissionId = msg.admissionId;
       if (this.sseConnected && this.clientId) {
         entry.port.postMessage({
           type: "connected",
@@ -380,18 +387,26 @@ export class SyncHub {
   }
 
   private rotateToken(nextToken: string | null, initiatorPort: SyncPort): void {
+    const prevGen = this.authGen;
     this.token = nextToken;
     this.authInvalid = false;
     this.authGen += 1;
     this.stopSupervisor();
     this.teardownEventSource();
     this.hasConnectedOnce = false;
-    // Invalidate admission for all other ports until they confirm the new authGen.
+    // Invalidate admission for all other ports and disconnect them from the old
+    // generation until they confirm the new authGen.
     for (const entry of this.ports.values()) {
       const isInitiator = entry.port === initiatorPort;
+      const wasAdmitted = entry.authenticated;
       entry.authenticated = isInitiator;
       if (isInitiator) {
         entry.authGen = this.authGen;
+      } else {
+        entry.admissionId = undefined;
+        if (wasAdmitted) {
+          entry.port.postMessage({ type: "disconnected", authGen: prevGen });
+        }
       }
       entry.port.postMessage({ type: "auth_gen", authGen: this.authGen });
     }
@@ -575,14 +590,18 @@ export class SyncHub {
     this.authInvalid = true;
     const failedGen = this.authGen;
     this.authGen += 1;
-    // Notify ONLY currently admitted ports matching the failed authGen; never echo raw token.
+    // Notify ONLY currently admitted ports matching the failed authGen; return
+    // only their non-secret admissionId, never raw token.
     for (const entry of this.ports.values()) {
       const wasAdmitted = entry.authenticated && entry.authGen === failedGen;
+      const admissionId = entry.admissionId;
       entry.authenticated = false;
+      entry.admissionId = undefined;
       if (wasAdmitted) {
         entry.port.postMessage({
           type: "auth_invalid",
           authGen: failedGen,
+          ...(admissionId !== undefined ? { admissionId } : {}),
         });
       }
     }

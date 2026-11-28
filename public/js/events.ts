@@ -554,6 +554,19 @@ export function setTaskFocusNotifier(fn: (taskId: string) => void): void {
   taskFocusNotifier = fn;
 }
 
+let statePatchGapRecovery: (() => Promise<void>) | null = null;
+export function setStatePatchGapRecovery(fn: () => Promise<void>): void {
+  statePatchGapRecovery = fn;
+}
+
+let routeAnnouncer: ((taskId: string) => void) | null = null;
+export function setRouteAnnouncer(fn: (taskId: string) => void): void {
+  routeAnnouncer = fn;
+}
+export function announceNavigationRoute(taskId: string): void {
+  routeAnnouncer?.(taskId);
+}
+
 export function applySnapshotStreaming(streaming: StreamingSnapshot): void {
   applySnapshotStreamingImpl(streaming, scheduleAssistantRender);
 }
@@ -1886,47 +1899,44 @@ export function drainNavigationEvents(taskId: string): void {
 }
 
 // eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions
-export function handleEvent(msg: AgentEvent) {
+export function handleEvent(
+  msg: AgentEvent,
+  opts?: { fromPersisted?: boolean },
+) {
+  const fromPersisted = opts?.fromPersisted === true;
   // The status bar's reference binding is consumed *before* the per-view
   // filters below: only events for the current task's parent matter, and that
   // parent is usually another task this client is not viewing.
-  if (msg.type === "task_created") {
-    observeTaskCreated(msg.taskId, msg.agentId ?? null);
-    noteTaskCreated(msg.taskId, msg.title ?? null);
-  } else if (
-    msg.type === "system_message" &&
-    msg.kind === "task_created" &&
-    msg.targetTaskId
-  ) {
-    noteTaskCreated(msg.targetTaskId, msg.taskTitle ?? null);
-  } else if (msg.type === "task_deleted") {
-    observeTaskDeleted(msg.taskId);
-    // Before the "is this the current task" branch below: a deleted task is
-    // any row's reference task, not only this client's current one.
-    noteTaskDeleted(msg.taskId);
-  } else if (msg.type === "task_title_updated") {
-    // Same reason: a row rendered in another task names this one, and the name
-    // it recorded may now be stale. Only the current task's own header below
-    // is view-scoped.
-    noteTaskTitleUpdated(msg.taskId, msg.title);
-  } else if (
-    msg.type === "system_message" &&
-    (msg.kind === "task_archive" || msg.kind === "task_unarchive")
-  ) {
-    // The structural fact changes the active tree for every view, not only the
-    // task's own transcript. Consume it before the per-view filter below. The
-    // refreshed active list decides the reference marks: an archived task (and
-    // its subtree) is absent, a restored task is present again.
-    if (msg.kind === "task_archive") {
-      noteTaskArchived(msg.taskId);
-      void loadTaskListFresh()
-        .then((tasks) => {
-          pruneCreatedTasksAbsentFrom(tasks);
-        })
-        .catch(() => undefined);
-    } else {
-      noteTaskUnarchived(msg.taskId);
-      void loadTaskListFresh().catch(() => undefined);
+  if (!fromPersisted) {
+    if (msg.type === "task_created") {
+      observeTaskCreated(msg.taskId, msg.agentId ?? null);
+      noteTaskCreated(msg.taskId, msg.title ?? null);
+    } else if (
+      msg.type === "system_message" &&
+      msg.kind === "task_created" &&
+      msg.targetTaskId
+    ) {
+      noteTaskCreated(msg.targetTaskId, msg.taskTitle ?? null);
+    } else if (msg.type === "task_deleted") {
+      observeTaskDeleted(msg.taskId);
+      noteTaskDeleted(msg.taskId);
+    } else if (msg.type === "task_title_updated") {
+      noteTaskTitleUpdated(msg.taskId, msg.title);
+    } else if (
+      msg.type === "system_message" &&
+      (msg.kind === "task_archive" || msg.kind === "task_unarchive")
+    ) {
+      if (msg.kind === "task_archive") {
+        noteTaskArchived(msg.taskId);
+        void loadTaskListFresh()
+          .then((tasks) => {
+            pruneCreatedTasksAbsentFrom(tasks);
+          })
+          .catch(() => undefined);
+      } else {
+        noteTaskUnarchived(msg.taskId);
+        void loadTaskListFresh().catch(() => undefined);
+      }
     }
   }
   if (msg.type === "inbox_count_changed") {
@@ -1934,10 +1944,9 @@ export function handleEvent(msg: AgentEvent) {
     return;
   }
 
-  // Queue events that arrive while history replay is in progress to avoid duplicates
-  if (state.replayInProgress) {
-    // The queue belongs to the generation that opened the replay; a first push
-    // after a reconnect stamps the new one rather than inheriting an old one.
+  // Never enqueue positioned persisted rows into state.replayQueue (which would
+  // acknowledge/advance cursor for an unapplied row).
+  if (!fromPersisted && state.replayInProgress) {
     if (state.replayQueue.length === 0) {
       state.replayQueueEpoch = state.connectionEpoch;
     }
@@ -2028,9 +2037,13 @@ export function handleEvent(msg: AgentEvent) {
         );
       }
       if (!applied && state.taskId === msg.taskId) {
-        // Real seq gap (missed patches) → reload authoritative snapshot.
-        const taskId = state.taskId;
-        void reloadSnapshot(taskId, () => state.taskId === taskId);
+        // Real seq gap → route through ordered SyncFeedConsumer recovery when active.
+        if (statePatchGapRecovery) {
+          void statePatchGapRecovery();
+        } else {
+          const taskId = state.taskId;
+          void reloadSnapshot(taskId, () => state.taskId === taskId);
+        }
       }
       break;
     }

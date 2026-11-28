@@ -307,10 +307,12 @@ function handleSendError(
       err.status === HTTP_STATUS.UNPROCESSABLE_CONTENT
     ) {
       context.messageEl.remove();
-      if (isLatestSubmission) state.sentMessageForTask = null;
-      setInputValue(context.text);
-      state.pendingAttachments.push(...context.attachments);
-      renderAttachPreview();
+      if (isLatestSubmission) {
+        state.sentMessageForTask = null;
+        setInputValue(context.text);
+        state.pendingAttachments.push(...context.attachments);
+        renderAttachPreview();
+      }
       const command = agentCommandToken(context.text);
       addSystem(
         `err: Unknown command "${command}". Type // to see available commands.`,

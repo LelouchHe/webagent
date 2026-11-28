@@ -33,6 +33,8 @@ import {
   markReplayCompletion,
   previewReconciler,
   setTaskFocusNotifier,
+  setStatePatchGapRecovery,
+  setRouteAnnouncer,
 } from "./events.ts";
 import * as api from "./api.ts";
 import {
@@ -60,33 +62,28 @@ import {
   SyncFeedTerminalError,
   type SyncFeedEntry,
 } from "../../src/shared/sync/index.ts";
+import type { SyncHub, HubToTabMessage, TabToHubMessage } from "./sync-hub.ts";
 import {
-  SyncHub,
-  createDirectPortPair,
-  type HubToTabMessage,
-  type TabToHubMessage,
-} from "./sync-hub.ts";
+  connectToSyncHub,
+  postFallbackClearVisibilityBeacon,
+  type TabPortClient,
+} from "./sync-hub-client.ts";
 import { HTTP_STATUS } from "../../src/http-status.ts";
 
 const clog = log.scope("sse");
 
-const WORKER_READY_TIMEOUT_MS = 2_000;
 const FOREGROUND_LEASE_RENEW_MS = 10_000;
 const CATCHUP_PAGE_SIZE = 200;
 
-interface TabPortClient {
-  postMessage(msg: TabToHubMessage): void;
-  close(): void;
-}
-
 let activePort: TabPortClient | null = null;
 let fallbackHub: SyncHub | null = null;
-let usingFallback = false;
+let activeHubSession: { dispose(): void } | null = null;
 let hubConnected = false;
 let hubClientId: string | null = null;
 let hubAuthGen = 0;
-let tabCapturedToken: string | null = null;
+const admissionTokens = new Map<string, string | null>();
 let physicalConnectionGen = 0;
+let disconnectedDuringPendingNav = false;
 let focusGen = 0;
 let ackedFocusTaskId: string | null = null;
 let ackedFocusGen = 0;
@@ -121,26 +118,30 @@ async function registerPushEndpoint(clientId: string): Promise<void> {
   }
 }
 
-function getWorkerScriptUrl(): string | null {
-  const meta = document.querySelector<HTMLMetaElement>(
-    'meta[name="webagent-sync-worker"]',
-  );
-  const content = meta?.content ?? "";
-  return content.length > 0 ? content : null;
-}
-
 function sendToHub(msg: TabToHubMessage): void {
   activePort?.postMessage(msg);
 }
 
+function recordAdmissionToken(token: string | null): string {
+  const admissionId = api.newOpId();
+  admissionTokens.set(admissionId, token);
+  if (admissionTokens.size > 16) {
+    const oldest = admissionTokens.keys().next().value;
+    if (oldest !== undefined) admissionTokens.delete(oldest);
+  }
+  return admissionId;
+}
+
 function sendHello(): void {
-  tabCapturedToken = getStoredToken();
+  const token = getStoredToken();
+  const admissionId = recordAdmissionToken(token);
   sendToHub({
     type: "hello",
-    token: tabCapturedToken,
+    token,
     visible: !document.hidden,
     taskId: state.taskId,
     expectedAuthGen: hubAuthGen,
+    admissionId,
   });
 }
 
@@ -207,7 +208,7 @@ function startTaskFeedConsumer(
           consumerFocusGen !== focusGen ||
           state.taskId !== taskId
         ) {
-          return true;
+          return false;
         }
         return applyPersistedEvent(
           {
@@ -222,9 +223,13 @@ function startTaskFeedConsumer(
       applyEphemeral: (event) => {
         if (
           consumerConnGen !== physicalConnectionGen ||
-          consumerFocusGen !== focusGen ||
-          state.taskId !== taskId
+          consumerFocusGen !== focusGen
         ) {
+          return;
+        }
+        // Buffer task_runtime_warmed even while state.taskId is still null
+        // during navigation; events.ts stores it in pendingWarmByTask until activation.
+        if (event.type !== "task_runtime_warmed" && state.taskId !== taskId) {
           return;
         }
         handleEvent(event as unknown as AgentEvent);
@@ -384,6 +389,13 @@ setTaskFocusNotifier((taskId) => {
   focusTask(taskId, { needTailLoad: false });
 });
 
+setRouteAnnouncer((taskId) => {
+  stopTaskFeedConsumer();
+  sendFocus(taskId);
+});
+
+setStatePatchGapRecovery(() => triggerCatchUp());
+
 function handleControlEvent(raw: Record<string, unknown>): void {
   handleHubControlEvent(raw, handleEvent);
 }
@@ -404,11 +416,27 @@ function handleHubConnected(
   void refreshTaskListBaseline().catch(() => {});
   if (!initializedOnce) initializedOnce = true;
   setConnectionStatus("connected", "connected");
+  // R3: If a physical disconnect interrupted an initial navigation before
+  // state.taskId was activated, resume that pending navigation now.
+  const resumeInterruptedNav = disconnectedDuringPendingNav;
+  disconnectedDuringPendingNav = false;
+  if (
+    resumeInterruptedNav &&
+    state.taskId === null &&
+    state.pendingNavigationTaskId !== null
+  ) {
+    const pendingId = state.pendingNavigationTaskId;
+    void resumeAndLoad(
+      pendingId,
+      false,
+      state.taskSwitchGen,
+      state.connectionEpoch,
+    );
+    return;
+  }
   const resumeTaskId = activeConsumerTaskId ?? state.taskId;
   if (resumeTaskId && state.taskId === resumeTaskId) {
     if (!activeConsumer) {
-      // Physical reconnect after disconnect stopped the old attempt: start fresh
-      // bounded recovery while preserving state.lastEventSeq.
       startTaskFeedConsumer(resumeTaskId, {
         needTailLoad: false,
         forceRestart: true,
@@ -420,6 +448,47 @@ function handleHubConnected(
   }
 }
 
+function handleHubDisconnected(): void {
+  hubConnected = false;
+  hubClientId = null;
+  watchDualGateFired = false;
+  physicalConnectionGen += 1;
+  disconnectedDuringPendingNav =
+    state.taskId === null && state.pendingNavigationTaskId !== null;
+  const savedTaskId = activeConsumerTaskId;
+  activeConsumer?.stop();
+  activeConsumer = null;
+  watchHooks = null;
+  activeConsumerTaskId = savedTaskId;
+  cleanup();
+}
+
+function handleHubAuthInvalid(
+  msg: Extract<HubToTabMessage, { type: "auth_invalid" }>,
+): void {
+  if (msg.admissionId !== undefined) {
+    if (!admissionTokens.has(msg.admissionId)) return;
+    const admittedToken = admissionTokens.get(msg.admissionId) ?? null;
+    admissionTokens.delete(msg.admissionId);
+    handleUnauthorizedToken(admittedToken);
+  } else if (msg.authGen === hubAuthGen) {
+    handleUnauthorizedToken(getStoredToken());
+  }
+}
+
+function handleHubAuthGen(authGen: number): void {
+  if (authGen <= hubAuthGen) return;
+  hubAuthGen = authGen;
+  const token = getStoredToken();
+  const admissionId = recordAdmissionToken(token);
+  sendToHub({
+    type: "auth_update",
+    token,
+    expectedAuthGen: hubAuthGen,
+    admissionId,
+  });
+}
+
 function handleHubMessage(msg: HubToTabMessage): void {
   switch (msg.type) {
     case "ready":
@@ -427,21 +496,9 @@ function handleHubMessage(msg: HubToTabMessage): void {
     case "connected":
       handleHubConnected(msg);
       return;
-    case "disconnected": {
-      hubConnected = false;
-      hubClientId = null;
-      watchDualGateFired = false;
-      physicalConnectionGen += 1;
-      // Abort any in-flight logical recovery owned by the dead physical stream,
-      // preserving activeConsumerTaskId and state.lastEventSeq for reconnect.
-      const savedTaskId = activeConsumerTaskId;
-      activeConsumer?.stop();
-      activeConsumer = null;
-      watchHooks = null;
-      activeConsumerTaskId = savedTaskId;
-      cleanup();
+    case "disconnected":
+      handleHubDisconnected();
       return;
-    }
     case "focus_ack":
       if (msg.gen !== focusGen) return;
       ackedFocusTaskId = msg.taskId;
@@ -465,6 +522,10 @@ function handleHubMessage(msg: HubToTabMessage): void {
       });
       return;
     case "ephemeral":
+      if (msg.event.type === "task_runtime_warmed" && !watchHooks) {
+        handleEvent(msg.event as unknown as AgentEvent);
+        return;
+      }
       if (!watchHooks) return;
       watchHooks.activity();
       void watchHooks.ephemeral?.(msg.event);
@@ -473,105 +534,19 @@ function handleHubMessage(msg: HubToTabMessage): void {
       handleControlEvent(msg.event);
       return;
     case "auth_invalid":
-      if (msg.authGen === hubAuthGen) {
-        handleUnauthorizedToken(tabCapturedToken);
-      }
+      handleHubAuthInvalid(msg);
       return;
     case "auth_gen":
-      if (msg.authGen > hubAuthGen) {
-        hubAuthGen = msg.authGen;
-        tabCapturedToken = getStoredToken();
-        sendToHub({
-          type: "auth_update",
-          token: tabCapturedToken,
-          expectedAuthGen: hubAuthGen,
-        });
-      }
+      handleHubAuthGen(msg.authGen);
       return;
   }
-}
-
-function startFallbackHub(): void {
-  if (usingFallback) return;
-  usingFallback = true;
-  const hub = new SyncHub();
-  fallbackHub = hub;
-  const { hubPort, tabPort } = createDirectPortPair();
-  activePort = {
-    postMessage: (m) => {
-      tabPort.postMessage(m);
-    },
-    close: () => {},
-  };
-  tabPort.onMessage((msg) => {
-    if (msg.type === "ready") {
-      sendHello();
-      if (activeConsumerTaskId) {
-        startTaskFeedConsumer(activeConsumerTaskId, {
-          needTailLoad: false,
-          forceRestart: true,
-        });
-      }
-      return;
-    }
-    handleHubMessage(msg);
-  });
-  hub.attach(hubPort);
 }
 
 function startSharedWorkerOrFallback(): void {
-  const workerUrl = getWorkerScriptUrl();
-  if (typeof SharedWorker !== "function" || !workerUrl) {
-    startFallbackHub();
-    return;
-  }
-
-  let settled = false;
-  let worker: SharedWorker;
-  try {
-    worker = new SharedWorker(workerUrl, {
-      type: "module",
-      name: "webagent-sync",
-    });
-  } catch {
-    startFallbackHub();
-    return;
-  }
-
-  const port = worker.port;
-  const readyTimer = setTimeout(() => {
-    if (settled) return;
-    settled = true;
-    port.onmessage = null;
-    port.close();
-    clog.warn("SharedWorker ready timed out; falling back to direct SyncHub");
-    startFallbackHub();
-  }, WORKER_READY_TIMEOUT_MS);
-
-  worker.onerror = () => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(readyTimer);
-    port.onmessage = null;
-    port.close();
-    clog.warn("SharedWorker failed to load; falling back to direct SyncHub");
-    startFallbackHub();
-  };
-
-  port.onmessage = (event: MessageEvent) => {
-    const msg = event.data as HubToTabMessage;
-    if (!settled) {
-      if (msg.type !== "ready") return;
-      settled = true;
-      clearTimeout(readyTimer);
-      activePort = {
-        postMessage: (m) => {
-          port.postMessage(m);
-        },
-        close: () => {
-          port.close();
-        },
-      };
+  activeHubSession = connectToSyncHub({
+    onReady(port, fbHub) {
+      activePort = port;
+      fallbackHub = fbHub;
       sendHello();
       if (activeConsumerTaskId) {
         startTaskFeedConsumer(activeConsumerTaskId, {
@@ -579,11 +554,11 @@ function startSharedWorkerOrFallback(): void {
           forceRestart: true,
         });
       }
-      return;
-    }
-    handleHubMessage(msg);
-  };
-  port.start();
+    },
+    onMessage(msg) {
+      handleHubMessage(msg);
+    },
+  });
 }
 
 function ensureLeaseRenewal(): void {
@@ -604,15 +579,14 @@ let tokenSubInstalled = false;
 
 export function connect(): void {
   stopTaskFeedConsumer();
-  fallbackHub?.dispose();
+  activeHubSession?.dispose();
+  activeHubSession = null;
   fallbackHub = null;
-  activePort?.close();
   activePort = null;
-  usingFallback = false;
   hubConnected = false;
   hubClientId = null;
   hubAuthGen = 0;
-  tabCapturedToken = null;
+  admissionTokens.clear();
   physicalConnectionGen += 1;
   initializedOnce = false;
   navigationOwnerTaskId = null;
@@ -623,11 +597,12 @@ export function connect(): void {
   if (!tokenSubInstalled) {
     tokenSubInstalled = true;
     onStoredTokenChange((nextToken) => {
-      tabCapturedToken = nextToken;
+      const admissionId = recordAdmissionToken(nextToken);
       sendToHub({
         type: "auth_update",
         token: nextToken,
         expectedAuthGen: hubAuthGen,
+        admissionId,
       });
     });
   }
@@ -768,13 +743,11 @@ async function resumeAndLoad(
     installTaskFromDetail(task);
     drainNavigationEvents(taskId);
     navigationOwnerTaskId = null;
+    // Start consumer; bounded recovery runs only once BOTH focus_ack AND connected are ready.
     startTaskFeedConsumer(taskId, {
       needTailLoad: false,
       forceRestart: true,
     });
-    if (hubConnected) {
-      await triggerCatchUp();
-    }
   } catch {
     if (navigationOwnerTaskId === taskId) navigationOwnerTaskId = null;
     if (!isCurrent()) return;
@@ -814,33 +787,10 @@ function cleanup(): void {
   setBusy(false);
 }
 
-function postFallbackClearVisibilityBeacon(): void {
-  if (!usingFallback || !fallbackHub) return;
-  const clientId = fallbackHub.getClientId();
-  const token = getStoredToken();
-  if (!clientId || !token) return;
-  const rev = fallbackHub.nextVisibilityRev();
-  const url = `/api/beta/clients/${encodeURIComponent(clientId)}/visibility`;
-  try {
-    void fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-        "X-Visibility-Rev": String(rev),
-      },
-      body: JSON.stringify({ taskIds: [] }),
-      keepalive: true,
-    }).catch(() => {});
-  } catch {
-    /* best-effort */
-  }
-}
-
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     sendToHub({ type: "visibility", visible: false, taskId: state.taskId });
-    postFallbackClearVisibilityBeacon();
+    postFallbackClearVisibilityBeacon(fallbackHub);
   } else {
     sendToHub({ type: "visibility", visible: true, taskId: state.taskId });
     checkStreamLiveness();
@@ -851,8 +801,19 @@ document.addEventListener("visibilitychange", () => {
 });
 
 window.addEventListener("pagehide", () => {
+  // Reset readiness before bye so BFCache pageshow waits for real current
+  // connected + focus_ack (even if the 5s grace elapsed and SSE tore down).
+  hubConnected = false;
+  hubClientId = null;
+  watchDualGateFired = false;
+  physicalConnectionGen += 1;
+  const savedTaskId = activeConsumerTaskId;
+  activeConsumer?.stop();
+  activeConsumer = null;
+  watchHooks = null;
+  activeConsumerTaskId = savedTaskId;
   sendToHub({ type: "bye" });
-  postFallbackClearVisibilityBeacon();
+  postFallbackClearVisibilityBeacon(fallbackHub);
 });
 
 window.addEventListener("pageshow", (event: PageTransitionEvent) => {

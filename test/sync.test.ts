@@ -961,6 +961,41 @@ describe("shared/sync", () => {
     assert.deepEqual(appliedPositions, [1, 2, 3, 4]);
     consumer.stop();
   });
+
+  it("SyncFeedConsumer raises protocol error instead of looping if apply returns true without advancing applied (R1)", async () => {
+    const errors: SyncFeedProtocolError[] = [];
+    let readCount = 0;
+    const consumer = new SyncFeedConsumer<string, string>({
+      liveness: "external",
+      catchUpOnConnect: true,
+      retryDelay: () => 50,
+      onProtocolError: (err) => errors.push(err),
+      port: {
+        applied: () => 0,
+        apply: () => true, // Buggy port: claims success without advancing applied!
+        beforeCatchUp: async () => ({ targetPos: 1 }),
+      },
+      transport: {
+        read: async () => {
+          readCount += 1;
+          return [{ pos: 1, prev: 0, data: "stuck" }];
+        },
+        watch: async (input) => {
+          input.connected();
+          await new Promise<void>((_r, reject) => {
+            input.signal.addEventListener("abort", () => {
+              reject(new Error("aborted"));
+            });
+          });
+        },
+      },
+    });
+    consumer.start();
+    await waitUntil(() => errors.length === 1);
+    assert.equal(readCount, 1);
+    assert.match(errors[0].message, /without advancing applied/);
+    consumer.stop();
+  });
 });
 
 async function watchEntry<T>(

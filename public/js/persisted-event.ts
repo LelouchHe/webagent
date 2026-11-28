@@ -108,7 +108,7 @@ export interface PersistedEventCallbacks {
   liveHooks(): RenderHooks;
   scheduleAssistantRender(): void;
   promptStopNotice(stopReason: unknown): string | null;
-  handleEvent(msg: AgentEvent): void;
+  handleEvent(msg: AgentEvent, opts?: { fromPersisted?: boolean }): void;
 }
 
 export function applySnapshotStreaming(
@@ -184,26 +184,62 @@ export function reconcileSnapshotPermissions(
       `.permission[data-request-id="${perm.requestId}"]`,
     );
     if (!existing) {
+      // Normalize snapshot options ({ optionId, label }) -> { optionId, name, label }
+      // so renderContentEvent renders labeled, clickable buttons.
+      const normalizedOptions = Array.isArray(perm.options)
+        ? perm.options.map((rawOpt: unknown) => {
+            const o = (rawOpt ?? {}) as {
+              optionId?: unknown;
+              name?: unknown;
+              label?: unknown;
+              kind?: unknown;
+            };
+            const label =
+              typeof o.name === "string"
+                ? o.name
+                : typeof o.label === "string"
+                  ? o.label
+                  : typeof o.optionId === "string"
+                    ? o.optionId
+                    : "";
+            return {
+              ...o,
+              optionId: typeof o.optionId === "string" ? o.optionId : "",
+              name: label,
+              label,
+            };
+          })
+        : [];
       handleEvent({
         type: "permission_request",
         taskId,
         requestId: perm.requestId,
         title: typeof perm.title === "string" ? perm.title : "",
-        options: Array.isArray(perm.options) ? perm.options : [],
+        options: normalizedOptions,
       } as unknown as AgentEvent);
     } else {
       state.pendingPermissionRequestIds.add(perm.requestId);
     }
   }
-  for (const requestId of [...state.pendingPermissionRequestIds]) {
-    if (liveIds.has(requestId)) continue;
+  // Reconcile ALL actionable permission cards in the DOM (not just
+  // state.pendingPermissionRequestIds, which disconnect cleared).
+  for (const permEl of dom.messages.querySelectorAll<HTMLElement>(
+    ".permission[data-request-id]",
+  )) {
+    const requestId = permEl.dataset.requestId;
+    if (!requestId || liveIds.has(requestId)) continue;
     state.pendingPermissionRequestIds.delete(requestId);
-    const permEl = dom.messages.querySelector(
-      `.permission[data-request-id="${requestId}"]`,
-    );
-    if (permEl?.querySelector("button")) {
+    if (permEl.querySelector("button")) {
       const title = permEl.querySelector(".title")?.textContent ?? "⚿";
-      permEl.innerHTML = `<span class="dim">${title} — resolved</span>`;
+      const span = document.createElement("span");
+      span.className = "dim";
+      span.textContent = `${title} — resolved`;
+      permEl.replaceChildren(span);
+    }
+  }
+  for (const requestId of [...state.pendingPermissionRequestIds]) {
+    if (!liveIds.has(requestId)) {
+      state.pendingPermissionRequestIds.delete(requestId);
     }
   }
 }
@@ -220,17 +256,6 @@ function findProvisionalPreview(
       ? `.thinking[data-preview-epoch="${data.epoch}"][data-preview-segment-id="${data.segmentId}"]`
       : `.msg.assistant[data-preview-epoch="${data.epoch}"][data-preview-segment-id="${data.segmentId}"]`;
   return dom.messages.querySelector<HTMLElement>(selector);
-}
-
-function appendOrInsertBeforeOptimistic(el: HTMLElement): void {
-  const optimistic = dom.messages.querySelector<HTMLElement>(
-    "[data-optimistic-op-id]",
-  );
-  if (optimistic?.parentNode === dom.messages) {
-    dom.messages.insertBefore(el, optimistic);
-    return;
-  }
-  appendMessageElement(el);
 }
 
 function claimOptimisticUserBubble(
@@ -251,6 +276,12 @@ function claimOptimisticUserBubble(
     if (Array.isArray(attachments) && attachments.length > 0) {
       upgradeOptimisticAttachmentUrls(htmlEl, attachments);
     }
+    claimed = true;
+  }
+  if (
+    !claimed &&
+    dom.messages.querySelector(`.msg.user[data-client-op-id="${opId}"]`)
+  ) {
     claimed = true;
   }
   // Clear the global echo guard ONLY when the matching opId is claimed.
@@ -317,7 +348,7 @@ function applyPersistedThinking(
   if (el) {
     el.dataset.firstEventSeq = String(pos);
     el.dataset.lastEventSeq = String(pos);
-    appendOrInsertBeforeOptimistic(el);
+    appendMessageElement(el);
   }
 }
 
@@ -360,7 +391,7 @@ function applyPersistedAssistant(
     if (el) {
       el.dataset.firstEventSeq = String(pos);
       el.dataset.lastEventSeq = String(pos);
-      appendOrInsertBeforeOptimistic(el);
+      appendMessageElement(el);
     }
   }
   scrollToBottom();
@@ -401,13 +432,16 @@ function forwardPersistedToLive(
     data.targetTaskId === undefined
       ? { targetTaskId: data.taskId }
       : {};
-  cb.handleEvent({
-    ...data,
-    ...extraTaskRef,
-    type,
-    taskId: entry.feed,
-    seq: entry.pos,
-  } as unknown as AgentEvent);
+  cb.handleEvent(
+    {
+      ...data,
+      ...extraTaskRef,
+      type,
+      taskId: entry.feed,
+      seq: entry.pos,
+    } as unknown as AgentEvent,
+    { fromPersisted: true },
+  );
 }
 
 export function applyPersistedEventImpl(

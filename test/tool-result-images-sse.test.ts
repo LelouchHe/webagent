@@ -133,20 +133,19 @@ describe("tool-result images: the live frame", () => {
     );
     const updateFrame = parsedFrames.find(
       (f) => f.type === "tool_call_update",
-    ) as { content: ToolContentItem[] } | undefined;
+    ) as
+      | { content: ToolContentItem[]; rawOutput?: Record<string, unknown> }
+      | undefined;
     assert.ok(updateFrame, "the tool_call_update frame must reach the client");
     assert.equal(attachmentOf(updateFrame.content[1])?.kind, "image");
     assert.equal("data" in (updateFrame.content[1] as object), false);
-
-    const rawOutputFrame = parsedFrames.find(
-      (f) => f.type === "tool_call_raw_output",
-    ) as { rawOutput: Record<string, unknown> } | undefined;
-    assert.ok(
-      rawOutputFrame,
-      "the tool_call_raw_output frame must reach the client",
+    assert.equal(
+      parsedFrames.some((f) => f.type === "tool_call_raw_output"),
+      false,
+      "per-task SSE must inline stripped rawOutput without emitting a separate tool_call_raw_output frame",
     );
     // `rawOutput` keeps its shape and every field, minus the payload.
-    assert.deepEqual(rawOutputFrame.rawOutput, {
+    assert.deepEqual(updateFrame.rawOutput, {
       progress: 100,
       result: {
         output: [
@@ -187,7 +186,7 @@ describe("tool-result images: the live frame", () => {
     assert.equal(frame.includes(base64), false);
 
     const updateFrame = frames
-      .map((chunk) => chunk.replace(/^data: /, "").trim())
+      .map((chunk) => chunk.replace(/^(?:id: \d+\n)?data: /, "").trim())
       .find((chunk) => chunk.includes('"rawOutput"'));
     assert.ok(updateFrame, "the tool_call_update frame must reach the client");
     const payload = JSON.parse(updateFrame) as {
