@@ -54,13 +54,13 @@ function handleTopologyFeedEntry(raw: Record<string, unknown>): void {
 
 export function handleHubControlEvent(
   raw: Record<string, unknown>,
-  handleEvent: (msg: AgentEvent) => void,
+  handleEvent: (msg: AgentEvent, opts?: { fromHubControl?: boolean }) => void,
 ): void {
   if (raw.type === "topology_feed_entry") {
     handleTopologyFeedEntry(raw);
     return;
   }
-  handleEvent(raw as unknown as AgentEvent);
+  handleEvent(raw as unknown as AgentEvent, { fromHubControl: true });
 }
 
 export const previewReconciler = new PreviewReconciler();
@@ -238,9 +238,15 @@ function claimOptimisticUserBubble(
     if (Array.isArray(attachments) && attachments.length > 0) {
       upgradeOptimisticAttachmentUrls(htmlEl, attachments);
     }
-    // Move adopted optimistic bubble to its durable insertion point so any
-    // earlier persisted tail rendered without preview DOM stays above it.
-    dom.messages.appendChild(htmlEl);
+    // Move adopted optimistic bubble to its durable insertion point (before
+    // #waiting if present) so earlier persisted tails stay above it and
+    // #waiting stays below the user's message.
+    const waitingEl = document.getElementById("waiting");
+    if (waitingEl?.parentNode === dom.messages) {
+      dom.messages.insertBefore(htmlEl, waitingEl);
+    } else {
+      dom.messages.appendChild(htmlEl);
+    }
     claimed = true;
   }
   if (

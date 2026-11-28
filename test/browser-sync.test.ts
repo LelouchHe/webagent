@@ -693,11 +693,12 @@ describe("contract-08 browser sync mechanisms", () => {
       );
     });
 
-    it("keeps focus routing isolated from visibility updates during pending navigation (R3-3)", async () => {
+    it("separates routeTaskId from visibleTaskId during pending navigation (R3-3, R4-1)", async () => {
       let activeEs: {
         onmessage?: ((ev: MessageEvent) => void) | null;
         close: () => void;
       } | null = null;
+      const visPosts: string[][] = [];
       class FakeES {
         onmessage: ((ev: MessageEvent) => void) | null = null;
         onerror: (() => void) | null = null;
@@ -710,13 +711,19 @@ describe("contract-08 browser sync mechanisms", () => {
       }
       const hub = new SyncHub({
         EventSourceImpl: FakeES as unknown as typeof EventSource,
-        fetchImpl: (async (url: string) => {
+        fetchImpl: (async (url: string, init?: RequestInit) => {
           if (url.includes("/sse-ticket")) {
             return {
               ok: true,
               status: 200,
               json: async () => ({ ticket: "tk" }),
             } as Response;
+          }
+          if (url.includes("/visibility") && init?.method === "POST") {
+            const body = JSON.parse(
+              typeof init.body === "string" ? init.body : "{}",
+            ) as { taskIds?: string[] };
+            visPosts.push(body.taskIds ?? []);
           }
           return { ok: true, status: 204, json: async () => ({}) } as Response;
         }) as typeof fetch,
@@ -747,12 +754,18 @@ describe("contract-08 browser sync mechanisms", () => {
         gen: 1,
         visible: true,
       });
-      // Visibility renewal sends taskId: null (pre-activation state.taskId) — must NOT overwrite focus routing.
+      // Visibility renewal sends taskId: null (pre-activation state.taskId) —
+      // clears visibleTaskId (push suppression = []) without clearing routeTaskId.
       tab.tabPort.postMessage({
         type: "visibility",
         visible: true,
         taskId: null,
       });
+      assert.deepEqual(
+        visPosts.at(-1),
+        [],
+        "visibility stays [] until task-nav is actually displayed",
+      );
       activeEs!.onmessage?.({
         data: JSON.stringify({
           type: "task_runtime_warmed",
@@ -771,8 +784,15 @@ describe("contract-08 browser sync mechanisms", () => {
             m.event.type === "task_runtime_warmed" &&
             m.event.taskId === "task-nav",
         ),
-        "visibility update must not overwrite focus taskId routing",
+        "visibility update must not overwrite focus routeTaskId routing",
       );
+      // Once task-nav is displayed, visibility reports taskId: "task-nav" -> push suppression activates.
+      tab.tabPort.postMessage({
+        type: "visibility",
+        visible: true,
+        taskId: "task-nav",
+      });
+      assert.deepEqual(visPosts.at(-1), ["task-nav"]);
     });
   });
 

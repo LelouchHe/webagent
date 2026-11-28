@@ -299,12 +299,16 @@ describe("contract-08 browser DOM reconciliation (F6, F7, F9, F10)", () => {
     }
   });
 
-  it("R3-5: adopting optimistic user bubble moves it after an earlier persisted tail without preview DOM", () => {
+  it("R3-5 + R4-3: adopting optimistic user bubble moves it after earlier persisted tail and BEFORE #waiting", () => {
     const userEl = document.createElement("div");
     userEl.className = "msg user";
     userEl.dataset.optimisticOpId = "op-order-1";
     userEl.textContent = "follow-up prompt";
     dom.messages.appendChild(userEl);
+    const waitingEl = document.createElement("div");
+    waitingEl.id = "waiting";
+    waitingEl.textContent = "thinking...";
+    dom.messages.appendChild(waitingEl);
 
     // Persisted assistant tail (seq 1) arrives with NO preview DOM in the page.
     events.applyPersistedEvent({
@@ -321,6 +325,8 @@ describe("contract-08 browser DOM reconciliation (F6, F7, F9, F10)", () => {
         created_at: new Date().toISOString(),
       },
     });
+    // Re-ensure #waiting is at bottom (assistant_message hides it; re-attach to verify user adoption placement).
+    dom.messages.appendChild(waitingEl);
     // Optimistic successor's echo (seq 2) adopts the user bubble.
     events.applyPersistedEvent({
       feed: "t1",
@@ -340,11 +346,37 @@ describe("contract-08 browser DOM reconciliation (F6, F7, F9, F10)", () => {
       },
     });
 
-    const msgs = Array.from(dom.messages.querySelectorAll(".msg"));
-    assert.equal(msgs.length, 2);
-    assert.ok(msgs[0].classList.contains("assistant"));
-    assert.ok(msgs[1].classList.contains("user"));
-    assert.equal(msgs[1].getAttribute("data-optimistic-op-id"), null);
+    const children = Array.from(dom.messages.children);
+    assert.equal(children.length, 3);
+    assert.ok(children[0].classList.contains("assistant"));
+    assert.ok(children[1].classList.contains("user"));
+    assert.equal(children[1].getAttribute("data-optimistic-op-id"), null);
+    assert.equal(
+      children[2].id,
+      "waiting",
+      "#waiting stays below adopted user bubble",
+    );
+  });
+
+  it("R4-2: cold tab holding a #hash ignores foreign raw task_created without rewriting hash", () => {
+    state.taskId = null;
+    state.awaitingNewTask = false;
+    state.pendingNewTaskOpId = null;
+    state.pendingNavigationTaskId = null;
+    window.location.hash = "#my-saved-task";
+
+    persisted.handleHubControlEvent(
+      {
+        type: "task_created",
+        taskId: "foreign-task-id",
+        title: "Foreign",
+        configOptions: [],
+      },
+      events.handleEvent,
+    );
+
+    assert.equal(state.taskId, null);
+    assert.equal(window.location.hash, "#my-saved-task");
   });
 
   it("R3-6: handleHubControlEvent delegates task_title_updated/task_deleted once without duplicate pre-observation", () => {

@@ -140,9 +140,17 @@ function sendHello(): void {
     type: "hello",
     token,
     visible: !document.hidden,
-    taskId: desiredRouteTaskId ?? state.taskId,
+    taskId: state.taskId,
     expectedAuthGen: hubAuthGen,
     admissionId,
+  });
+}
+
+function sendVisibility(): void {
+  sendToHub({
+    type: "visibility",
+    visible: !document.hidden,
+    taskId: state.taskId,
   });
 }
 
@@ -398,6 +406,7 @@ export function triggerCatchUp(): Promise<void> {
 let navigationOwnerTaskId: string | null = null;
 
 setTaskFocusNotifier((taskId) => {
+  sendVisibility();
   // Synthetic task_created from installTaskFromDetail is owned by resumeAndLoad /
   // switchToTask; only auto-start a consumer for newly created tasks (/new).
   if (navigationOwnerTaskId === taskId) return;
@@ -406,6 +415,7 @@ setTaskFocusNotifier((taskId) => {
 
 setRouteAnnouncer((taskId) => {
   stopTaskFeedConsumer();
+  sendVisibility();
   sendFocus(taskId);
 });
 
@@ -460,6 +470,7 @@ function handleHubConnected(
   }
   const resumeTaskId = activeConsumerTaskId ?? state.taskId;
   if (resumeTaskId && state.taskId === resumeTaskId) {
+    sendVisibility();
     if (!activeConsumer || clientChanged) {
       startTaskFeedConsumer(resumeTaskId, {
         needTailLoad: false,
@@ -771,6 +782,7 @@ async function resumeAndLoad(
   // once (when non-incremental), install task metadata, then start the single
   // SyncFeedConsumer for bounded snapshot+delta recovery.
   navigationOwnerTaskId = taskId;
+  if (!incremental) sendVisibility();
   sendFocus(taskId);
   try {
     const [task] = await Promise.all([

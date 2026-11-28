@@ -88,7 +88,8 @@ interface PortState {
   authenticated: boolean;
   authGen: number;
   admissionId?: string;
-  taskId: string | null;
+  routeTaskId: string | null;
+  visibleTaskId: string | null;
   focusGen: number;
   visible: boolean;
   leaseAt: number;
@@ -188,7 +189,8 @@ export class SyncHub {
       port,
       authenticated: false,
       authGen: this.authGen,
-      taskId: null,
+      routeTaskId: null,
+      visibleTaskId: null,
       focusGen: 0,
       visible: false,
       leaseAt: 0,
@@ -278,7 +280,8 @@ export class SyncHub {
       entry.authGen = this.authGen;
       entry.admissionId = msg.admissionId;
     }
-    entry.taskId = msg.taskId;
+    entry.routeTaskId = msg.taskId;
+    entry.visibleTaskId = msg.taskId;
     entry.visible = msg.visible;
     entry.leaseAt = msg.visible ? this.clock.now() : 0;
 
@@ -343,10 +346,8 @@ export class SyncHub {
         return;
       case "focus":
         if (!entry.authenticated || entry.authGen !== this.authGen) return;
-        entry.taskId = msg.taskId;
+        entry.routeTaskId = msg.taskId;
         entry.focusGen = msg.gen;
-        entry.visible = msg.visible;
-        entry.leaseAt = msg.visible ? this.clock.now() : 0;
         entry.port.postMessage({
           type: "focus_ack",
           taskId: msg.taskId,
@@ -354,11 +355,11 @@ export class SyncHub {
           sseConnected: this.sseConnected,
           clientId: this.clientId,
         });
-        this.flushVisibilityIfChanged();
         return;
       case "visibility":
         if (!entry.authenticated || entry.authGen !== this.authGen) return;
         entry.visible = msg.visible;
+        entry.visibleTaskId = msg.taskId;
         entry.leaseAt = msg.visible ? this.clock.now() : 0;
         this.flushVisibilityIfChanged();
         return;
@@ -529,7 +530,7 @@ export class SyncHub {
       if (
         p.authenticated &&
         p.authGen === this.authGen &&
-        p.taskId === entry.feed
+        p.routeTaskId === entry.feed
       ) {
         p.port.postMessage({ type: "feed_entry", entry });
       }
@@ -575,7 +576,7 @@ export class SyncHub {
       if (
         p.authenticated &&
         p.authGen === this.authGen &&
-        p.taskId === taskId
+        p.routeTaskId === taskId
       ) {
         p.port.postMessage({ type: "ephemeral", event: raw });
       }
@@ -638,9 +639,9 @@ export class SyncHub {
     const ids = new Set<string>();
     for (const entry of this.ports.values()) {
       if (!entry.authenticated || entry.authGen !== this.authGen) continue;
-      if (!entry.visible || !entry.taskId) continue;
+      if (!entry.visible || !entry.visibleTaskId) continue;
       if (now - entry.leaseAt > this.leaseTtlMs) continue;
-      ids.add(entry.taskId);
+      ids.add(entry.visibleTaskId);
     }
     return [...ids].sort();
   }

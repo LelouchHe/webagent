@@ -148,6 +148,7 @@ setNavigationLoadInvalidator(() => {
 
 setCreatedTaskActivator((task) => {
   if (typeof task.id !== "string") return;
+  state.pendingNavigationTaskId = task.id;
   handleEvent({
     type: "task_created",
     taskId: task.id,
@@ -1901,7 +1902,7 @@ export function drainNavigationEvents(taskId: string): void {
 // eslint-disable-next-line complexity -- TODO: refactor event type switch with helper functions
 export function handleEvent(
   msg: AgentEvent,
-  opts?: { fromPersisted?: boolean },
+  opts?: { fromPersisted?: boolean; fromHubControl?: boolean },
 ) {
   const fromPersisted = opts?.fromPersisted === true;
   // The status bar's reference binding is consumed *before* the per-view
@@ -2072,17 +2073,27 @@ export function handleEvent(
       if (matchesPendingCreate) {
         finishNewTaskRequest(msg.clientOpId);
       }
+      // Only activate a remote task_created when this tab explicitly owns it
+      // (pending create, pending navigation, or active task refresh).
       if (
         state.pendingNavigationTaskId &&
         msg.taskId !== state.pendingNavigationTaskId
       ) {
         break;
       }
-      // Only switch to the new task if this client requested it
       if (
         !state.awaitingNewTask &&
         state.taskId &&
         msg.taskId !== state.taskId
+      ) {
+        break;
+      }
+      if (
+        opts?.fromHubControl === true &&
+        !matchesPendingCreate &&
+        !state.awaitingNewTask &&
+        state.taskId === null &&
+        state.pendingNavigationTaskId !== msg.taskId
       ) {
         break;
       }
