@@ -174,14 +174,14 @@ describe("connection status indicator transitions", () => {
     assert.equal(dom.status.classList.contains("is-connecting"), false);
   });
 
-  it("does not cancel initial tab /config bootstrap when the first /sse-ticket returns 500", async () => {
-    const jsonResp = (data: unknown, status = 200) => ({
-      ok: status >= 200 && status < 300,
-      status,
-      json: async () => data,
-      text: async () => JSON.stringify(data),
-    });
+  const jsonResp = (data: unknown, status = 200) => ({
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => data,
+    text: async () => JSON.stringify(data),
+  });
 
+  it("does not cancel initial tab /config bootstrap when the first /sse-ticket returns 500", async () => {
     let ticketCalls = 0;
     let releaseConfig!: (resp: ReturnType<typeof jsonResp>) => void;
     const requestedUrls: string[] = [];
@@ -245,7 +245,8 @@ describe("connection status indicator transitions", () => {
     assert.equal(dom.status.classList.contains("is-disconnected"), true);
     assert.equal(MockEventSource.instances.length, 0);
 
-    // /config resolves while waiting for SSE retry.
+    // /config resolves and REST task bootstrap finishes while still in SSE backoff:
+    // task activates, but indicator must stay red (no SSE stream exists yet).
     releaseConfig(
       jsonResp({
         rootTaskId: ROOT_ID,
@@ -254,6 +255,20 @@ describe("connection status indicator transitions", () => {
       }),
     );
     await flush(50);
+
+    assert.equal(
+      state.taskId,
+      ROOT_ID,
+      "initial tab bootstrap must activate the task while SSE is in backoff",
+    );
+    assert.equal(
+      dom.status.classList.contains("is-disconnected"),
+      true,
+      "REST task bootstrap must not overwrite the red backoff indicator before SSE connects",
+    );
+    assert.equal(dom.status.classList.contains("is-connected"), false);
+    assert.equal(ticketCalls, 1);
+    assert.equal(MockEventSource.instances.length, 0);
 
     // Retry timer fires -> ticket 200 -> indicator turns yellow -> handshake turns green.
     const retryIdx = timeoutCalls.indexOf(RECONNECT_DELAY_MS);

@@ -719,7 +719,6 @@ async function resumeFromTaskList(
 }
 
 async function initTask(connectionEpoch: number): Promise<void> {
-  setConnectionStatus("connecting", "task loading");
   const gen = state.taskSwitchGen;
   const isCurrent = () =>
     gen === state.taskSwitchGen && connectionEpoch === state.connectionEpoch;

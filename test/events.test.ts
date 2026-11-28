@@ -123,8 +123,9 @@ describe("events", () => {
         assert.equal(state.taskCwd, "/home");
         assert.equal(state.taskTitle, "Test Task");
         assert.equal(state.awaitingNewTask, false);
-        assert.equal(dom.status.dataset.state, "connected");
-        assert.equal(dom.status.getAttribute("aria-label"), "connected");
+        // Connection indicator is owned exclusively by the SSE lifecycle,
+        // not by task_created / REST task bootstrap.
+        assert.equal(dom.status.dataset.state, "disconnected");
       });
 
       it("recovers a committed create when its HTTP response is interrupted", async () => {
